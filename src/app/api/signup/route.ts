@@ -12,13 +12,8 @@ function rateLimitKey(headers: Headers): string {
   return headers.get('x-real-ip') ?? 'unknown'
 }
 
-/**
- * Distributed rate limiter backed by Supabase (no in-memory state).
- * Works across Vercel serverless instances. Uses a dedicated table
- * `rate_limits` with automatic cleanup of expired entries.
- */
 async function isRateLimited(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createClient<any, 'public', any>>,
   key: string,
 ): Promise<boolean> {
   const now = Date.now()
@@ -27,10 +22,9 @@ async function isRateLimited(
   try {
     await supabase.from('rate_limits').delete().lt('created_at', windowStart)
   } catch {
-    // Ignore cleanup errors
+    return true
   }
 
-  // Count attempts in current window
   const { count, error } = await supabase
     .from('rate_limits')
     .select('id', { count: 'exact', head: true })
@@ -38,8 +32,6 @@ async function isRateLimited(
     .gte('created_at', windowStart)
 
   if (error) {
-    // Fail CLOSED on DB error — never allow unlimited signups during a DB issue.
-    // A brief signup block is preferable to unchecked org/user creation.
     return true
   }
 
@@ -47,13 +39,14 @@ async function isRateLimited(
     return true
   }
 
-  // Record this attempt (fire-and-forget, unique constraint prevents duplicates)
-  try {
-    await (supabase as unknown as { from: (t: string) => { insert: (r: Record<string, unknown>) => Promise<unknown> } })
-      .from('rate_limits')
-      .insert({ key, action: 'signup' })
-  } catch {
-    // Ignore duplicate key errors (unique constraint) and DB errors
+  const { error: insertError } = await (supabase as unknown as {
+    from: (t: string) => { insert: (r: Record<string, unknown>) => Promise<{ error: unknown }> }
+  })
+    .from('rate_limits')
+    .insert({ key, action: 'signup' })
+
+  if (insertError) {
+    return true
   }
   return false
 }
@@ -68,7 +61,15 @@ export async function POST(request: Request) {
     )
   }
 
-  let body: { orgName?: string; email?: string; password?: string }
+  const inviteCode = process.env.SIGNUP_INVITE_CODE
+  if (!inviteCode) {
+    return NextResponse.json(
+      { error: 'Signup is not available.' },
+      { status: 503 },
+    )
+  }
+
+  let body: { orgName?: string; email?: string; password?: string; inviteCode?: string }
   try {
     body = await request.json()
   } catch {
@@ -86,12 +87,18 @@ export async function POST(request: Request) {
     )
   }
 
+  if (!body.inviteCode || body.inviteCode !== inviteCode) {
+    return NextResponse.json(
+      { error: 'A valid invite code is required to sign up.' },
+      { status: 403 },
+    )
+  }
+
   const service = createClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
-  // Distributed rate limit check (works across serverless instances)
-  if (await isRateLimited(service as unknown as ReturnType<typeof createClient>, rateLimitKey(request.headers))) {
+  if (await isRateLimited(service, rateLimitKey(request.headers))) {
     return NextResponse.json(
       { error: 'Too many attempts. Please try again later.' },
       { status: 429 },

@@ -502,19 +502,29 @@ export async function sendPreparedEmail(input: {
       updated_at: new Date().toISOString(),
     })
 
-  const sendResult = await provider.send({
-    fromEmail: (mailboxRow as Row).sender_email as string,
-    fromName: (mailboxRow as Row).sender_name as string,
-    toEmail: email,
-    subject,
-    body,
-    metadata: {
-      organizationId: input.orgId,
-      leadId: input.leadId,
-      draftId: draft.id,
-      idempotencyKey: idem,
-    },
-  })
+  let sendResult: Awaited<ReturnType<typeof provider.send>>
+  try {
+    sendResult = await provider.send({
+      fromEmail: (mailboxRow as Row).sender_email as string,
+      fromName: (mailboxRow as Row).sender_name as string,
+      toEmail: email,
+      subject,
+      body,
+      metadata: {
+        organizationId: input.orgId,
+        leadId: input.leadId,
+        draftId: draft.id,
+        idempotencyKey: idem,
+      },
+    })
+  } catch (sendError) {
+    await input.client
+      .from('email_send_attempts')
+      .update({ status: 'FAILED', failure_reason: sendError instanceof Error ? sendError.message : 'network_error', updated_at: new Date().toISOString() })
+      .eq('organization_id', input.orgId)
+      .eq('idempotency_key', idem)
+    throw sendError
+  }
 
   if (!sendResult.accepted || sendResult.status === 'FAILED') {
     await input.client

@@ -7,7 +7,7 @@ import { injectStyleCard } from '@/lib/style/inject'
 import { buildContentDnaPromptBlock } from '@/lib/content/content-dna'
 import type { ContentGenerationInput } from '@/lib/ai/content'
 import type { TrendingAngle, ContentResearchFinding, ContentDraftFeedback } from '@/lib/domain/types'
-import { sanitizeContentCaption } from '@/lib/facts/sanitize'
+import { normalizeCaptionTypography } from '@/lib/facts/sanitize'
 
 export const dynamic = 'force-dynamic'
 
@@ -205,7 +205,7 @@ export async function POST(req: NextRequest) {
           sourceKind: finding ? 'field_update' : (useStoredOpinion ? 'conviction' : 'answer'),
           sourceMaterial: sourceForGeneration,
           platform,
-          caption: sanitizeContentCaption(result.caption),
+          caption: normalizeCaptionTypography(result.caption),
         hookScore: result.hookScore,
         hookFeedback: result.hookFeedback,
           selfCheckPassed: result.selfCheckPassed,

@@ -23,14 +23,6 @@ function digitsOnly(s: string): string {
   return s.replace(/\./g, '')
 }
 
-/** Removes all emoji from text and reports whether any were present. */
-function stripEmojis(text: string): { hadEmoji: boolean; text: string } {
-  const re = new RegExp(EMOJI_RE.source, 'gu')
-  const hadEmoji = re.test(text)
-  re.lastIndex = 0
-  return { hadEmoji, text: text.replace(re, '') }
-}
-
 /** Truthy when the facts table says the public site is live. */
 export function siteIsLive(facts: Fact[]): boolean {
   const flag = facts.find(
@@ -114,8 +106,10 @@ export function sanitizeDraft(
 ): { text: string; strippedNumbers: string[]; hadEmDash: boolean; hadExclamation: boolean; hadEmoji: boolean; requestedCall: boolean } {
   const before = draft
   const hadEmoji = EMOJI_RE.test(before)
+  EMOJI_RE.lastIndex = 0
   const hadEmDash = /[\u2014\u2013]/.test(before)
   const noEmoji = before.replace(EMOJI_RE, '')
+  EMOJI_RE.lastIndex = 0
   const noDashes = stripEmDashes(noEmoji)
   const { text: noNumbers, stripped } = stripUnauthorizedNumbers(noDashes, facts)
   const withoutDeadLinks = stripDeadSiteLinks(noNumbers, facts)
@@ -161,7 +155,3 @@ export function normalizeCaptionTypography(caption: string): string {
   return text
 }
 
-/** @deprecated Use normalizeCaptionTypography instead. Kept for backwards compatibility. */
-export function sanitizeContentCaption(caption: string): string {
-  return normalizeCaptionTypography(caption)
-}

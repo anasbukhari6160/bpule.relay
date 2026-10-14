@@ -39,7 +39,15 @@ export async function GET(request: Request) {
   const url = new URL(request.url)
   const code = url.searchParams.get('code')
   const requested = url.searchParams.get('next') || '/'
-  const redirectTo = requested.startsWith('/') ? requested : '/'
+  let redirectTo = '/'
+  try {
+    const parsed = new URL(requested, url.origin)
+    if (parsed.origin === url.origin && parsed.pathname.startsWith('/')) {
+      redirectTo = parsed.pathname
+    }
+  } catch {
+    redirectTo = '/'
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY

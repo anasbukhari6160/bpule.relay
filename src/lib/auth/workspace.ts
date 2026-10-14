@@ -1,6 +1,8 @@
 import { cache } from 'react'
 import { getCurrentUser } from './current'
 import { createScoutStore } from '@/lib/store'
+import { isDemoMode } from '@/lib/ai/config'
+import { createServerSupabase } from '@/lib/supabase/server'
 
 
 /**
@@ -144,6 +146,7 @@ async function resolveDailyWorkspace(): Promise<{
         remaining: number
         status: string
       }>
+      outreachRemaining: number
     }>
   }
   day: {
@@ -189,40 +192,54 @@ async function resolveDailyWorkspace(): Promise<{
     }
   }
 
-  // Use the store's existing method which handles both demo and supabase modes
   const accountability = await store.getMyTodayAccountability()
 
   let repliesWaiting = 0
   let followUpsDue = 0
-
-  // Count pending replies/follow-ups from leads
-  const allLeads = await store.fetchLeadsAll().catch(() => [])
-  for (const lead of allLeads) {
-    if (lead.status === 'replied') repliesWaiting++
-    if (lead.status === 'followed_up') followUpsDue++
+  if (!isDemoMode()) {
+    const client = await createServerSupabase()
+    const [{ count: repliesCount }, { count: followUpsCount }] = await Promise.all([
+      client
+        .from('leads')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_rep_id', rep.id)
+        .eq('status', 'replied')
+        .eq('archived', false),
+      client
+        .from('leads')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_rep_id', rep.id)
+        .eq('status', 'followed_up')
+        .eq('archived', false),
+    ])
+    repliesWaiting = repliesCount ?? 0
+    followUpsDue = followUpsCount ?? 0
   }
 
-  const byIdentity = accountability.assignedIdentities.map((ai) => ({
-    assignmentId: ai.assignmentId,
-    revenueIdentityId: ai.identity.id,
-    identityName: ai.identity.identityName,
-    title: ai.identity.title,
-    channel: ai.identity.channel,
-    targets: ai.targets.map((t) => ({
+  const byIdentity = accountability.assignedIdentities.map((ai) => {
+    const targets = ai.targets.map((t) => ({
       targetId: t.targetId,
       activityType: t.activityType,
       targetCount: t.targetCount,
       completedCount: t.completedCount,
       remaining: t.remaining,
       status: t.status,
-    })),
-  }))
-
-  const outreachRemaining = byIdentity.reduce((sum, ident) => {
-    return sum + ident.targets
+    }))
+    const outreachRemaining = targets
       .filter((t) => t.activityType === 'dm' || t.activityType === 'connection_request')
       .reduce((s, t) => s + t.remaining, 0)
-  }, 0)
+    return {
+      assignmentId: ai.assignmentId,
+      revenueIdentityId: ai.identity.id,
+      identityName: ai.identity.identityName,
+      title: ai.identity.title,
+      channel: ai.identity.channel,
+      targets,
+      outreachRemaining,
+    }
+  })
+
+  const outreachRemaining = byIdentity.reduce((sum, ident) => sum + ident.outreachRemaining, 0)
 
   return {
     rep: { id: rep.id, name: rep.name },
