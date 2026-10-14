@@ -205,7 +205,16 @@ export async function POST(
         const prospectReplyMsg = body.replyToMessageId && body.replyToMessageId !== 'manual'
           ? detail.messages.find((m) => m.id === body.replyToMessageId)
           : null
-        const prospectReply = body.replyText?.trim() || prospectReplyMsg?.sentText || prospectReplyMsg?.draftText || ''
+        let prospectReply = body.replyText?.trim() || prospectReplyMsg?.sentText || prospectReplyMsg?.draftText || ''
+        // Fallback: if no explicit reply text, use the latest inbound message
+        if (!prospectReply) {
+          const latestInbound = detail.messages
+            .filter((m) => m.direction === 'inbound' && m.sentText)
+            .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0]
+          if (latestInbound) {
+            prospectReply = latestInbound.sentText || ''
+          }
+        }
 
         if (prospectReply) {
           const priorMessages = detail.messages.filter((m) => m.sentAt && m.sentAt < (prospectReplyMsg?.sentAt ?? ''))
