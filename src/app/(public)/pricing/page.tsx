@@ -130,8 +130,8 @@ export default function PricingPage() {
                 key={plan.name}
                 className={
                   plan.featured
-                    ? "relative rounded-2xl border-2 border-orange bg-bone-raised p-8 shadow-md"
-                    : "rounded-2xl border border-line bg-bone-raised p-8"
+                    ? "relative srf-console srf-console-edge p-8"
+                    : "srf-dossier p-8"
                 }
               >
                 {plan.featured && (
@@ -170,7 +170,7 @@ export default function PricingPage() {
                       <ArrowRight className="size-4" />
                     </Link>
                   ) : (
-                    <div className="flex h-11 w-full items-center justify-center rounded-lg border border-dashed border-line text-[14px] font-medium text-stone">
+                    <div className="flex h-11 w-full items-center justify-center rounded border border-line/60 text-[14px] font-medium text-stone">
                       {plan.cta}
                     </div>
                   )}

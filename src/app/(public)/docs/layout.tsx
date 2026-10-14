@@ -58,7 +58,7 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
             <ArrowLeft className="size-3.5" />
             Back to {siteConfig.name}
           </Link>
-          <details className="group rounded-lg border border-line">
+          <details className="group srf-dossier">
             <summary className="cursor-pointer px-4 py-3 text-[14px] font-medium text-ink">
               Documentation
             </summary>
