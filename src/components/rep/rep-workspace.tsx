@@ -380,12 +380,12 @@ function NoAssignmentsState({ repName }: { repName: string }) {
       <motion.section
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-lg border border-line bg-bone-raised p-5"
+        className="srf-console srf-console-edge p-5"
       >
-        <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">
+        <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-console-mute">
           Your Day
         </p>
-        <h2 className="mt-1 text-[24px] font-light tracking-[-0.02em] text-ink">
+        <h2 className="mt-1 text-[24px] font-light tracking-[-0.02em] text-console-text">
           Good day, {repName}
         </h2>
       </motion.section>
@@ -393,11 +393,13 @@ function NoAssignmentsState({ repName }: { repName: string }) {
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1, duration: 0.3 }}
-        className="rounded-lg border border-dashed border-line bg-bone-raised/40 px-6 py-12 text-center"
+        className="srf-dossier flex flex-col items-center gap-3 px-6 py-10 text-center"
       >
-        <Shield className="mx-auto size-8 text-stone" />
-        <p className="mt-3 text-[14px] font-medium text-ink">No work profile assigned yet</p>
-        <p className="mt-1 max-w-xs mx-auto text-[13px] text-graphite">
+        <div className="flex size-12 items-center justify-center rounded-full bg-orange/10">
+          <Shield className="size-5 text-orange" />
+        </div>
+        <p className="text-[14px] font-medium text-ink">No work profile assigned yet</p>
+        <p className="max-w-xs text-[13px] text-graphite">
           Your admin needs to assign a Revenue Identity before you can start revenue work.
           You don&apos;t need to do anything yet.
         </p>

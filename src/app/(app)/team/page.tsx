@@ -1,3 +1,4 @@
+import { Users } from 'lucide-react'
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
@@ -5,6 +6,7 @@ import { getCurrentUser } from '@/lib/auth/current'
 import { can, getAuthContext } from '@/lib/auth/organization'
 import { loadTeamLive } from '@/lib/admin/load-team-live'
 import { filterTeamLive, type TeamLivePayload } from '@/lib/admin/team-live'
+import { EmptyState } from '@/components/ui/empty-state'
 import { TeamLiveBoard } from '@/components/admin/team-live-board'
 
 export const dynamic = 'force-dynamic'
@@ -33,9 +35,28 @@ export default async function TeamPage() {
         </p>
       </header>
 
-      <Suspense fallback={<div className="h-40 animate-pulse rounded-lg border border-line bg-bone-raised" />}>
-        <TeamLiveBoard initial={live} />
-      </Suspense>
+      {!live || (!live.teamSummary && !live.repRows?.length) ? (
+        <EmptyState
+          icon={Users}
+          title="No team activity yet"
+          description={canSeeTeam ? 'Invite reps and assign profiles to start tracking team performance.' : 'Your activity will appear here once you complete your first actions.'}
+          action={
+            canSeeTeam ? (
+              <Link href="/profiles" className="relay-cta text-[12px]">
+                Invite team
+              </Link>
+            ) : (
+              <Link href="/prospect" className="relay-cta text-[12px]">
+                Start prospecting
+              </Link>
+            )
+          }
+        />
+      ) : (
+        <Suspense fallback={<div className="h-40 animate-pulse rounded-lg border border-line bg-bone-raised" />}>
+          <TeamLiveBoard initial={live} />
+        </Suspense>
+      )}
 
       {canSeeTeam && (
         <Link href="/team/eval" className="inline-flex text-[13px] font-medium text-ink">

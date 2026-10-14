@@ -369,7 +369,7 @@ async function RelayBody({ relayPromise }: { relayPromise: Promise<RelayData> })
 
       {/* Empty state */}
       {!topAction && restQueue.length === 0 && (
-        <section className="reveal-up stagger-2 rounded border border-dashed border-line py-12 text-center">
+        <section className="reveal-up stagger-2 srf-dossier py-10 text-center">
           <div className="mx-auto max-w-sm space-y-3">
             <p className="text-[15px] font-medium text-ink">
               Relay has nothing prepared right now.

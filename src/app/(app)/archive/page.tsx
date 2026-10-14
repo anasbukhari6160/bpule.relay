@@ -254,7 +254,7 @@ export default function SearchPage() {
               </ul>
             </div>
           ) : (
-            <div className="rounded-2xl border border-dashed border-line py-12 text-center">
+            <div className="srf-dossier py-10 text-center">
               <p className="text-sm text-slate">No matches for &ldquo;{query.trim()}&rdquo; in {scopeLabel.toLowerCase()}.</p>
               <p className="mt-1 text-xs text-slate">Try a broader term, remove status filters, or clear search.</p>
             </div>

@@ -80,7 +80,7 @@ export function ContentDashboard({ personas }: { personas: PersonaWithExtras[] }
 
       {/* ── Empty state ── */}
       {personas.length === 0 && (
-        <section className="rounded border border-dashed border-line bg-bone-raised p-10 text-center">
+        <section className="srf-dossier p-10 text-center">
           <div className="mx-auto max-w-sm space-y-4">
             <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-cobalt/[0.07]">
               <PenLine className="size-5 text-cobalt" aria-hidden="true" />

@@ -1,7 +1,9 @@
+import { UserPlus } from 'lucide-react'
 import { createScoutStore } from '@/lib/store'
 import { getCurrentUser } from '@/lib/auth/current'
 import { getAuthContext } from '@/lib/auth/organization'
 import { isProductAdmin } from '@/lib/auth/admin-page'
+import { EmptyState } from '@/components/ui/empty-state'
 import { ProfilesManager } from '@/components/profiles-manager'
 
 
@@ -38,12 +40,25 @@ export default async function ProfilesPage() {
           <Stat label="Upwork" value={upworkCount} />
         </div>
       </section>
-      <ProfilesManager
-        initialProfiles={profiles}
-        ownerByRepId={isAdmin ? ownerByRepId : undefined}
-        isAdmin={isAdmin}
-        reps={isAdmin ? reps.map((r) => ({ id: r.id, name: r.name })) : undefined}
-      />
+      {profiles.length === 0 ? (
+        <EmptyState
+          icon={UserPlus}
+          title="No profiles yet"
+          description="Create your first Revenue Identity to start outreach. Profiles define who your team writes as."
+          action={
+            <a href="/onboarding" className="relay-cta text-[12px]">
+              Create profile
+            </a>
+          }
+        />
+      ) : (
+        <ProfilesManager
+          initialProfiles={profiles}
+          ownerByRepId={isAdmin ? ownerByRepId : undefined}
+          isAdmin={isAdmin}
+          reps={isAdmin ? reps.map((r) => ({ id: r.id, name: r.name })) : undefined}
+        />
+      )}
     </div>
   )
 }
