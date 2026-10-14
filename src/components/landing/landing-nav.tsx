@@ -92,9 +92,6 @@ export function LandingNav() {
         </nav>
 
         <div className="lg3-nav__right">
-          <span className="lg3-nav__status" style={{ color: signalColor }} aria-hidden="true">
-            {tone === 'orange' ? 'RELAY / CAPTURE' : 'STUDIO / CREATE'}
-          </span>
           <Link href="/login" className="lg3-nav__signin">
             Sign in
           </Link>

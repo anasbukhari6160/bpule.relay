@@ -128,7 +128,7 @@ export function ContextSection() {
               <span className="size-1 rounded-full bg-line" />
               <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Today</p>
             </div>
-            <span className="text-mono-medium text-[10px] text-stone">Mon · 9:42 AM</span>
+            <span className="text-mono-medium text-[10px] text-stone">{new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
           </div>
           <div className="lg3-console__progress">
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-line/60">
@@ -363,7 +363,7 @@ export function ConversationSection() {
                       <p className="text-[13px] leading-relaxed text-ink">{step.text}</p>
                       <div className="mt-2.5 flex flex-wrap gap-1.5">
                         {REFINEMENT_CHIPS.map((chip) => (
-                          <span key={chip} className="rounded-sm border border-line bg-bone-raised px-1.5 py-0.5 font-mono text-[9px] tracking-[0.04em] text-stone">
+                          <span key={chip} className="font-mono text-[9px] tracking-[0.04em] text-stone/70">
                             {chip}
                           </span>
                         ))}
@@ -394,7 +394,7 @@ export function ConversationSection() {
                 'lg3-button lg3-button--primary',
                 sent && 'lg3-button--sent',
               )}
-              onClick={() => setSent(true)}
+              onClick={() => setSent(s => !s)}
               data-convo-send=""
               aria-live="polite"
             >

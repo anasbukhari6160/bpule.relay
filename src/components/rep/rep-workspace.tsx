@@ -411,21 +411,30 @@ function NoAssignmentsState({ repName }: { repName: string }) {
 export function RepWorkspaceSkeleton() {
   return (
     <div className="space-y-6 pb-8">
-      <div className="rounded-lg border border-line bg-bone-raised p-5">
+      {/* Completion bar */}
+      <div className="srf-console p-4">
+        <div className="flex items-center gap-3">
+          <Skeleton className="size-8 rounded-full" />
+          <div className="flex-1 space-y-1">
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-1.5 w-full max-w-48" />
+          </div>
+          <Skeleton className="h-3 w-8" />
+        </div>
+      </div>
+      {/* Do This Next */}
+      <div className="srf-console srf-console-edge p-4">
         <Skeleton className="h-3 w-16" />
-        <Skeleton className="mt-3 h-7 w-64" />
-        <Skeleton className="mt-4 h-10 w-48" />
+        <Skeleton className="mt-2 h-5 w-48" />
+        <Skeleton className="mt-2 h-4 w-64" />
+        <Skeleton className="mt-3 h-9 w-32" />
       </div>
-      <div className="rounded-lg border border-orange/30 bg-orange/[0.03] p-5">
-        <Skeleton className="h-3 w-20" />
-        <Skeleton className="mt-3 h-6 w-72" />
-        <Skeleton className="mt-4 h-9 w-32" />
-      </div>
+      {/* Working as grid */}
       <div className="space-y-3">
-        <Skeleton className="h-3 w-28" />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Skeleton className="h-40" />
-          <Skeleton className="h-40" />
+        <Skeleton className="h-3 w-20" />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Skeleton className="h-20 rounded" />
+          <Skeleton className="h-20 rounded" />
         </div>
       </div>
     </div>

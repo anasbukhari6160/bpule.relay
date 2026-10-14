@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Progress } from '@/components/ui/progress'
 import { WorkPaceChart } from '@/components/rep/work-pace-chart'
@@ -67,6 +68,7 @@ function StatusBadgeForStatus({ status }: { status: string }) {
 }
 
 export function MyDayCard({ data }: { data: MyDayData }) {
+  const router = useRouter()
   const [closing, setClosing] = useState(false)
   const [closeResult, setCloseResult] = useState<{ blocked: boolean; remaining?: Record<string, number>; message?: string } | null>(null)
   const [showExceptionForm, setShowExceptionForm] = useState(false)
@@ -88,7 +90,7 @@ export function MyDayCard({ data }: { data: MyDayData }) {
       if (res.ok && json.eligible) {
         setCloseResult({ blocked: false, message: json.message })
         // Reload to reflect new state
-        window.location.reload()
+        router.refresh()
       } else {
         setCloseResult({
           blocked: true,
@@ -122,7 +124,7 @@ export function MyDayCard({ data }: { data: MyDayData }) {
       if (res.ok) {
         setExceptionResult({ success: true, message: json.message || 'Exception requested.' })
         setShowExceptionForm(false)
-        window.location.reload()
+        router.refresh()
       } else {
         setExceptionResult({ success: false, message: json.error || 'Failed to submit exception.' })
       }

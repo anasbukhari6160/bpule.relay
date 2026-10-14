@@ -243,14 +243,14 @@ export function BdDailyDesk({
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Link
           href="/prospect"
-          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-colors hover:border-orange/40 hover:bg-orange/[0.03]"
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-all duration-300 hover:border-orange/40 hover:bg-orange/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30 focus-visible:border-orange/40"
         >
           <UserPlus className="size-5 text-orange" />
           <span className="text-[11px] font-medium text-ink">Extract Profile</span>
         </Link>
         <Link
           href="/leads?filter=followup"
-          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-colors hover:border-orange/40 hover:bg-orange/[0.03]"
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-all duration-300 hover:border-orange/40 hover:bg-orange/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30 focus-visible:border-orange/40"
         >
           <MessageSquare className="size-5 text-orange" />
           <span className="text-[11px] font-medium text-ink">Follow-ups</span>
@@ -260,7 +260,7 @@ export function BdDailyDesk({
         </Link>
         <Link
           href="/leads?filter=reply"
-          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-colors hover:border-orange/40 hover:bg-orange/[0.03]"
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-all duration-300 hover:border-orange/40 hover:bg-orange/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30 focus-visible:border-orange/40"
         >
           <Handshake className="size-5 text-orange" />
           <span className="text-[11px] font-medium text-ink">Replies</span>
@@ -270,7 +270,7 @@ export function BdDailyDesk({
         </Link>
         <Link
           href="/upwork/new"
-          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-colors hover:border-orange/40 hover:bg-orange/[0.03]"
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-all duration-300 hover:border-orange/40 hover:bg-orange/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30 focus-visible:border-orange/40"
         >
           <Briefcase className="size-5 text-orange" />
           <span className="text-[11px] font-medium text-ink">Add Upwork</span>

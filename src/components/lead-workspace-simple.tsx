@@ -221,7 +221,7 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
       await fetch(`/api/leads/${lead.id}/connection-accepted`, { method: 'POST' })
       setLeadVersion((v) => v + 1)
       notifySuccess('Connection accepted — send DM next.')
-    } catch { /* non-fatal */ } finally {
+    } catch { notifyError('Failed to mark connection as accepted.') } finally {
       setMarkingAccepted(false)
     }
   }, [lead.id, lead.connectionAcceptedAt, markingAccepted])
@@ -521,7 +521,7 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
                         )}
                       />
                     </div>
-                    {typeof dim.note === 'string' && <p className="mt-0.5 text-[10px] text-stone/60 truncate">{dim.note}</p>}
+                    {typeof dim.note === 'string' && <p className="mt-0.5 text-[11px] text-graphite truncate">{dim.note}</p>}
                   </motion.div>
                 )
               })}
@@ -852,13 +852,16 @@ function CommandStation({
                 className="w-full justify-center sm:w-auto"
                 onClick={async () => {
                   try {
-                    await fetch(`/api/leads/${lead.id}/contact`, {
+                    const res = await fetch(`/api/leads/${lead.id}/contact`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ type: 'connection', sentText: '', sendWithoutNote: true, direction: 'outbound' }),
                     })
+                    if (!res.ok) throw new Error('Failed to send connection')
                     onLeadUpdate()
-                  } catch { /* non-fatal */ }
+                  } catch (err) {
+                    notifyError(err instanceof Error ? err.message : 'Failed to send')
+                  }
                 }}
               >
                 Send without note

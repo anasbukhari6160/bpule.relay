@@ -270,7 +270,7 @@ export function DailyJobs({
         <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-stone">Today</p>
         <h2 className="mt-1 text-[22px] font-medium tracking-[-0.02em] text-ink">{verdict.title}</h2>
         <p className="mt-1 max-w-xl text-[14px] text-graphite">{verdict.detail}</p>
-        <div className="mt-4 flex items-center gap-4">
+        <div className="mt-4 flex flex-wrap items-center gap-4">
           <div className="relative size-[72px] shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -331,7 +331,7 @@ export function DailyJobs({
               </span>
             </span>
             <span className="flex shrink-0 items-center gap-2">
-              <kbd className="rounded border border-line px-1.5 py-0.5 text-[11px] text-stone">P</kbd>
+              <kbd className="rounded border border-line px-1.5 py-0.5 text-[11px] text-graphite">P</kbd>
               <span className={buttonVariants({ size: 'sm' })}>Pull</span>
             </span>
           </Link>
@@ -383,7 +383,7 @@ export function DailyJobs({
                     <p className={cn('text-[12px] font-medium', covered ? 'text-status-success' : behind ? 'text-status-danger' : isNext ? 'text-orange' : 'text-graphite')}>
                       {status} · {job.done}/{job.goal}
                     </p>
-                    <kbd className="rounded border border-line px-1.5 py-0.5 text-[11px] text-stone">{index + 1}</kbd>
+                    <kbd className="rounded border border-line px-1.5 py-0.5 text-[11px] text-graphite">{index + 1}</kbd>
                   </div>
                   {!covered && workingDay && (
                     <Link href={job.href} className={cn('mt-2', buttonVariants({ variant: isNext ? 'orange' : 'outline', size: 'xs' }))}>
