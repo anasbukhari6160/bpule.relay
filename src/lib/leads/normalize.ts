@@ -123,3 +123,48 @@ export function contactKey(name: string | null | undefined): string | null {
   const key = (name ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
   return key.length > 0 ? key : null
 }
+
+// LinkedIn / UI chrome that must never be treated as a person's name.
+const PERSON_NAME_BLOCKLIST = [
+  'view', 'view profile', 'view connection', 'follow', 'follow back',
+  'connect', 'message', 'recommend', 'endorse', 'more', 'see all',
+  'load more', 'show all', 'skip', 'close', 'edit', 'share',
+  'report', 'block', 'remove', 'accept', 'decline', 'pending',
+  'invitation sent', 'mutual connections', 'connections', 'connection',
+  'profile', 'profile photo', 'profile image', 'cover image',
+  'banner image', 'linkedin', 'logo', 'company logo', 'sponsored',
+  'promoted', 'see more', 'see less', 'show more', 'learn more',
+  'join', 'sign in', 'search', 'filter', 'sort by',
+]
+
+/**
+ * Clean an extracted person name by stripping LinkedIn UI artifacts and
+ * rejecting names that are clearly not real people. Returns null if the
+ * name is invalid or is UI chrome.
+ */
+export function cleanPersonName(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let name = raw.trim()
+  if (!name) return null
+
+  // Reject if it's in the blocklist (case-insensitive, prefix match)
+  const lower = name.toLowerCase()
+  if (PERSON_NAME_BLOCKLIST.some((word) => lower === word || lower.startsWith(word + ' '))) {
+    return null
+  }
+
+  // Reject single-word names that look like UI chrome (unless they're a known single-name person)
+  const words = name.split(/\s+/).filter(Boolean)
+  if (words.length === 1 && words[0].length <= 4 && !/^[A-Z][a-z]+$/.test(words[0])) {
+    return null
+  }
+
+  // Reject if it doesn't look like a name (needs at least one capital letter)
+  if (!/[A-Z]/.test(name)) return null
+
+  // Reject if it's mostly non-letter characters
+  const letterCount = (name.match(/[A-Za-z]/g) || []).length
+  if (letterCount < name.length * 0.5) return null
+
+  return name
+}

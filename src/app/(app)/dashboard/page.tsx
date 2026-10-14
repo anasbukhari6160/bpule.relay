@@ -11,6 +11,8 @@ import { buildRelayQueue } from '@/lib/relay/queue-engine'
 import { loadAccountabilityDashboard } from '@/lib/relay/dashboard-loader'
 import type { RelayTodayAction } from '@/components/relay-today-workspace'
 import { RepWorkspace, type RepWorkspaceData } from '@/components/rep/rep-workspace'
+import { AdminDashboard } from '@/components/dashboard/admin-dashboard'
+import { RepDashboard } from '@/components/dashboard/rep-dashboard'
 
 export const dynamic = 'force-dynamic'
 

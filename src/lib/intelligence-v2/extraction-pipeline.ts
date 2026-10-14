@@ -26,6 +26,7 @@ import { generate } from '@/lib/ai/runtime'
 import { classifyBusinessModel, classifySentence, deriveRelationship, isNonBuyerRelationship, stripThirdPartyRepostBlocks } from './subject-attribution'
 import { applyBuyerIntentBoundary } from './commercial-reading'
 import { classifyNeedOwnership } from './need-ownership'
+import { cleanPersonName } from '@/lib/leads/normalize'
 import { cleanCompanyName } from '@/lib/leads/normalize'
 
 
@@ -626,9 +627,9 @@ function normalizePassA(
     }
   }
 
-  // Person normalization
+  // Person normalization — clean LinkedIn UI artifacts from AI extraction
   const person: ExtractedPerson = {
-    fullName: passA.person.fullName?.trim() || null,
+    fullName: cleanPersonName(passA.person.fullName) || null,
     firstName: passA.person.firstName?.trim() || extractFirstName(passA.person.fullName),
     title: passA.person.title?.trim() || null,
     seniority: normalizeSeniority(passA.person.seniority, passA.person.title),
