@@ -115,6 +115,7 @@ export async function POST(request: Request) {
     rawText?: string
     profileId?: string
     forceReanalyze?: boolean
+    generateNote?: boolean
     /**
      * "Try Another Angle" support (Relay team bug bash — TEAM-005). The
      * client already holds the canonical intelligence result from the
@@ -141,6 +142,7 @@ export async function POST(request: Request) {
   }
 
   const rawText = body.rawText?.trim()
+  const generateNote = body.generateNote === true
   if (!rawText) {
     return new Response(JSON.stringify({ error: 'Paste some profile text first.' }), {
       status: 400,
@@ -673,253 +675,261 @@ export async function POST(request: Request) {
       bestSenderProof,
     )
 
-    emit({ type: 'status', message: 'Drafting the connection note' })
-
-    const safeFact = classifyLeadFact(
-      extracted.signalEvidence ?? '',
-      extracted.signalEvidence ?? '',
-      extracted.signalType ?? null,
-    )
-
-    let outreachStrategy: ReturnType<typeof createOutreachStrategy> | null = null
-    if (bestSender) {
-      outreachStrategy = applyRevenueStrategyToOutreach(
-        createOutreachStrategy({
-          leadCompany: extracted.company,
-          contactName: extracted.name,
-          contactTitle: extracted.title,
-          signalType: extracted.signalType,
-          signalEvidence: extracted.signalEvidence,
-          verbatimQuote: extracted.verbatimQuote,
-          tags: extracted.tags ?? [],
-          safeFacts: [safeFact],
-          senderProfile: bestSender,
-          matchedProof: bestSenderProof,
-          channel: 'connection',
-          relationshipStage: 'first_touch',
-        }),
-        revenue,
-      )
-    } else if (revenue.messageJob) {
-      outreachStrategy = {
-        leadContext: `${extracted.company} — ${extracted.title ?? extracted.name}`,
-        safeTrigger: extracted.signalEvidence?.slice(0, 120) ?? 'Shared interest area',
-        probableNeed: revenue.commercialSituation ?? 'Potential fit',
-        sender: 'Our team',
-        relevantProof: [],
-        messageGoal: 'Earn connection',
-        relationshipStage: 'first_touch',
-        channel: 'connection',
-        tone: 'Warm, specific, low-pressure',
-        risk: 'Low',
-        ctaStrategy: 'Brief, no-commitment connection',
-        mode: 'warm_conversational',
-        assessment: revenue.assessment,
-        messageJob: revenue.messageJob,
-        wordBudget: { min: 15, max: 35, label: 'connection' },
-      }
-    }
-
-    let conversationContext: string | null = null
-    if (connectionStrategy.candidateAngles.length > 0) {
-      const angle = connectionStrategy.candidateAngles[0]
-      conversationContext = [
-        `## Connection Note Strategy`,
-        ``,
-        `**Goal:** ${angle.label} — ${angle.approach}`,
-        `**Tone:** ${connectionStrategy.tone}`,
-        connectionStrategy.strongestSafeSignal ? `**Relevant signal:** ${connectionStrategy.strongestSafeSignal}` : null,
-        connectionStrategy.forbidden.length > 0 ? `**DO NOT mention:** ${connectionStrategy.forbidden.join('; ')}` : null,
-        ``,
-        `**Direction:** ${angle.systemDirective}`,
-        ``,
-        `**Hard rules:**`,
-        `- Max ${CONNECTION_NOTE_MAX_CHARS} characters for LinkedIn connection notes`,
-        `- Specific observation + genuine overlap + simple reason to connect`,
-        `- NO questions. NO "curious about", "how do you", "would love to learn"`,
-        `- NO pitch. NO service description. NO "I can help", "we build"`,
-        `- NO praise. NO "impressive", "caught my attention"`,
-        `- Must sound natural if spoken aloud. Zero effort to respond to.`,
-      ].filter(Boolean).join('\n')
-    }
-
-    // Few-shot selection
-    let fewShotSelection: { examples: Array<{ company: string; signalEvidence: string; sentText: string }> } = { examples: [] }
-    try {
-      const leadForFewShot = {
-        id: 'prospect-ephemeral',
-        organizationId: '',
-        ownerRepId: null,
-        company: extracted.company,
-        companyKey: extracted.company.toLowerCase().replace(/[^a-z0-9]/g, ''),
-        contactName: extracted.name,
-        contactTitle: extracted.title,
-        url: extracted.url,
-        rawInput: null,
-        signalType: extracted.signalType,
-        signalEvidence: extracted.signalEvidence,
-        verbatimQuote: extracted.verbatimQuote,
-        score: getDisplayScore(canonical) ?? 5,
-        verdict: canonical.qualification === 'strong' || canonical.qualification === 'worth_pursuing' ? 'send' as const : canonical.qualification === 'maybe' ? 'research_more' as const : 'skip' as const,
-        status: 'new' as const,
-        playId: null,
-        tags: extracted.tags ?? [],
-        createdAt: new Date().toISOString(),
-      }
-      const fewShotResult = selectFewShotExamples(fewShotPool as Parameters<typeof selectFewShotExamples>[0], {
-        leadId: 'prospect-ephemeral',
-        lead: leadForFewShot,
-        extracted,
-        score: { total: canonical.canonicalScore, verdict: canonical.qualification === 'strong' || canonical.qualification === 'worth_pursuing' ? 'send' as const : 'research_more' as const, breakdown: canonical.scoreBreakdown.dimensions as unknown as { category: string; label: string; points: number; max: number; note: string }[] },
-        type: 'connection' as DraftMessageType,
-        styleCard: null,
-        facts: [],
-        plays: [],
-        history: [],
-        profile: bestSender,
-        matchedProof: null,
-      }, [])
-      fewShotSelection = {
-        examples: fewShotResult.examples.map((e) => ({
-          company: e.company,
-          signalEvidence: e.signalEvidence ?? '',
-          sentText: e.sentText,
-        })),
-      }
-    } catch {
-      // Few-shot is optional
-    }
-
-    // Proof matching for draft
-    let matchedProofItem: import('@/lib/domain/types').ProofItem | null = null
-    try {
-      if (store) {
-        const tagMatches = await store.matchProofItems(tagsForMatching, 5, bestSender?.id ?? null)
-        const leadEmbedding = await embedTextSafe(`${extracted.company} ${extracted.signalEvidence} ${tagsForMatching.join(' ')}`)
-        let semanticMatches: Array<{ item: Parameters<typeof mergeProofMatches>[1][0]; similarity: number }> = []
-        if (leadEmbedding) {
-          semanticMatches = await store.matchProofItemsByEmbedding(leadEmbedding, 5, bestSender?.id ?? null) as typeof semanticMatches
-        }
-        const merged = mergeProofMatches(semanticMatches, tagMatches, 5)
-        matchedProofItem = merged[0] ?? null
-      }
-    } catch {
-      // Proof matching optional
-    }
-
+    // Connection note generation only runs when explicitly requested
+    // (BUG-06: Analyze = intelligence only; Generate = outreach copy).
     let draftText = ''
     let draftFailed = false
     let qualityResult: ReturnType<typeof validateAndRepair> | null = null
-    const writeMessage = shouldWriteMessage(revenue)
 
-    const leadForDraft = {
-      id: 'prospect-ephemeral',
-      organizationId: '',
-      ownerRepId: null,
-      company: extracted.company,
-      companyKey: extracted.company.toLowerCase().replace(/[^a-z0-9]/g, ''),
-      contactName: extracted.name,
-      contactTitle: extracted.title,
-      url: extracted.url,
-      rawInput: null,
-      signalType: extracted.signalType,
-      signalEvidence: extracted.signalEvidence,
-      verbatimQuote: extracted.verbatimQuote,
-      score: getDisplayScore(canonical) ?? 5,
-      verdict: canonical.qualification === 'strong' || canonical.qualification === 'worth_pursuing' ? 'send' as const : 'research_more' as const,
-      status: 'new' as const,
-      playId: null,
-      tags: extracted.tags ?? [],
-      createdAt: new Date().toISOString(),
-    }
+    if (generateNote) {
+      emit({ type: 'status', message: 'Drafting the connection note' })
 
-    try {
-      if (!writeMessage) {
-        emit({ type: 'status', message: revenue.contact.noMessageReason ?? 'No message recommended' })
-        throw new Error('NO_MESSAGE')
+      const safeFact = classifyLeadFact(
+        extracted.signalEvidence ?? '',
+        extracted.signalEvidence ?? '',
+        extracted.signalType ?? null,
+      )
+
+      let outreachStrategy: ReturnType<typeof createOutreachStrategy> | null = null
+      if (bestSender) {
+        outreachStrategy = applyRevenueStrategyToOutreach(
+          createOutreachStrategy({
+            leadCompany: extracted.company,
+            contactName: extracted.name,
+            contactTitle: extracted.title,
+            signalType: extracted.signalType,
+            signalEvidence: extracted.signalEvidence,
+            verbatimQuote: extracted.verbatimQuote,
+            tags: extracted.tags ?? [],
+            safeFacts: [safeFact],
+            senderProfile: bestSender,
+            matchedProof: bestSenderProof,
+            channel: 'connection',
+            relationshipStage: 'first_touch',
+          }),
+          revenue,
+        )
+      } else if (revenue.messageJob) {
+        outreachStrategy = {
+          leadContext: `${extracted.company} — ${extracted.title ?? extracted.name}`,
+          safeTrigger: extracted.signalEvidence?.slice(0, 120) ?? 'Shared interest area',
+          probableNeed: revenue.commercialSituation ?? 'Potential fit',
+          sender: 'Our team',
+          relevantProof: [],
+          messageGoal: 'Earn connection',
+          relationshipStage: 'first_touch',
+          channel: 'connection',
+          tone: 'Warm, specific, low-pressure',
+          risk: 'Low',
+          ctaStrategy: 'Brief, no-commitment connection',
+          mode: 'warm_conversational',
+          assessment: revenue.assessment,
+          messageJob: revenue.messageJob,
+          wordBudget: { min: 15, max: 35, label: 'connection' },
+        }
       }
-      const draftResult = await streamDraft(
-        {
+
+      let conversationContext: string | null = null
+      if (connectionStrategy.candidateAngles.length > 0) {
+        const angle = connectionStrategy.candidateAngles[0]
+        conversationContext = [
+          `## Connection Note Strategy`,
+          ``,
+          `**Goal:** ${angle.label} — ${angle.approach}`,
+          `**Tone:** ${connectionStrategy.tone}`,
+          connectionStrategy.strongestSafeSignal ? `**Relevant signal:** ${connectionStrategy.strongestSafeSignal}` : null,
+          connectionStrategy.forbidden.length > 0 ? `**DO NOT mention:** ${connectionStrategy.forbidden.join('; ')}` : null,
+          ``,
+          `**Direction:** ${angle.systemDirective}`,
+          ``,
+          `**Hard rules:**`,
+          `- Max ${CONNECTION_NOTE_MAX_CHARS} characters for LinkedIn connection notes`,
+          `- Specific observation + genuine overlap + simple reason to connect`,
+          `- NO questions. NO "curious about", "how do you", "would love to learn"`,
+          `- NO pitch. NO service description. NO "I can help", "we build"`,
+          `- NO praise. NO "impressive", "caught my attention"`,
+          `- Must sound natural if spoken aloud. Zero effort to respond to.`,
+        ].filter(Boolean).join('\n')
+      }
+
+      // Few-shot selection
+      let fewShotSelection: { examples: Array<{ company: string; signalEvidence: string; sentText: string }> } = { examples: [] }
+      try {
+        const leadForFewShot = {
+          id: 'prospect-ephemeral',
+          organizationId: '',
+          ownerRepId: null,
+          company: extracted.company,
+          companyKey: extracted.company.toLowerCase().replace(/[^a-z0-9]/g, ''),
+          contactName: extracted.name,
+          contactTitle: extracted.title,
+          url: extracted.url,
+          rawInput: null,
+          signalType: extracted.signalType,
+          signalEvidence: extracted.signalEvidence,
+          verbatimQuote: extracted.verbatimQuote,
+          score: getDisplayScore(canonical) ?? 5,
+          verdict: canonical.qualification === 'strong' || canonical.qualification === 'worth_pursuing' ? 'send' as const : canonical.qualification === 'maybe' ? 'research_more' as const : 'skip' as const,
+          status: 'new' as const,
+          playId: null,
+          tags: extracted.tags ?? [],
+          createdAt: new Date().toISOString(),
+        }
+        const fewShotResult = selectFewShotExamples(fewShotPool as Parameters<typeof selectFewShotExamples>[0], {
           leadId: 'prospect-ephemeral',
-          lead: leadForDraft,
+          lead: leadForFewShot,
           extracted,
           score: { total: canonical.canonicalScore, verdict: canonical.qualification === 'strong' || canonical.qualification === 'worth_pursuing' ? 'send' as const : 'research_more' as const, breakdown: canonical.scoreBreakdown.dimensions as unknown as { category: string; label: string; points: number; max: number; note: string }[] },
-          canonicalScore: canonical.canonicalScore,
           type: 'connection' as DraftMessageType,
           styleCard: null,
           facts: [],
           plays: [],
           history: [],
           profile: bestSender,
-          matchedProof: matchedProofItem,
-          fewShotExamples: fewShotSelection.examples,
-          strategy: outreachStrategy,
-          safeFacts: [safeFact],
-          matchedProofCards: bestSenderProof,
-          conversationContext: conversationContext ?? undefined,
-        },
-        emit,
-        matchedProofItem,
-        bestSender,
-      )
-      draftText = draftResult.draftText
-    } catch (err) {
-      draftFailed = writeMessage && !(err instanceof Error && err.message === 'NO_MESSAGE')
-    }
-
-    // Quality gate for connection notes — never invent a fallback pitch
-    qualityResult = draftText
-      ? validateAndRepair({
-          text: draftText,
-          profile: bestSender,
-          prospectName: extracted.name,
-          prospectCompany: extracted.company,
-          matchedProof: bestSenderProof,
-        })
-      : {
-          text: '',
-          charCount: 0,
-          maxChars: CONNECTION_NOTE_MAX_CHARS,
-          withinLimit: true,
-          passed: !writeMessage,
-          failures: writeMessage ? ['empty_draft'] : [],
-          repaired: null,
+          matchedProof: null,
+        }, [])
+        fewShotSelection = {
+          examples: fewShotResult.examples.map((e) => ({
+            company: e.company,
+            signalEvidence: e.signalEvidence ?? '',
+            sentText: e.sentText,
+          })),
         }
-
-    if (qualityResult.text) {
-      qualityResult = {
-        ...qualityResult,
-        text: normalizeGreeting(qualityResult.text, extracted.name),
-        charCount: normalizeGreeting(qualityResult.text, extracted.name).length,
+      } catch {
+        // Few-shot is optional
       }
-    }
 
-    // Post-generation consistency check: a candidate note that fails the
-    // quality gate after repair is withheld rather than shown as final.
-    // BUT: if we have a repaired version or a fallback, use that instead of
-    // returning empty. An empty note with CONNECT_WITH_NOTE is worse than
-    // a note that needs light editing.
-    if (writeMessage && !qualityResult.passed) {
-      const repairedText = qualityResult.repaired?.trim()
-      if (repairedText && repairedText.length >= 10) {
+      // Proof matching for draft
+      let matchedProofItem: import('@/lib/domain/types').ProofItem | null = null
+      try {
+        if (store) {
+          const tagMatches = await store.matchProofItems(tagsForMatching, 5, bestSender?.id ?? null)
+          const leadEmbedding = await embedTextSafe(`${extracted.company} ${extracted.signalEvidence} ${tagsForMatching.join(' ')}`)
+          let semanticMatches: Array<{ item: Parameters<typeof mergeProofMatches>[1][0]; similarity: number }> = []
+          if (leadEmbedding) {
+            semanticMatches = await store.matchProofItemsByEmbedding(leadEmbedding, 5, bestSender?.id ?? null) as typeof semanticMatches
+          }
+          const merged = mergeProofMatches(semanticMatches, tagMatches, 5)
+          matchedProofItem = merged[0] ?? null
+        }
+      } catch {
+        // Proof matching optional
+      }
+
+      try {
+        const draftResult = await streamDraft(
+          {
+            leadId: 'prospect-ephemeral',
+            lead: {
+              id: 'prospect-ephemeral',
+              organizationId: '',
+              ownerRepId: null,
+              company: extracted.company,
+              companyKey: extracted.company.toLowerCase().replace(/[^a-z0-9]/g, ''),
+              contactName: extracted.name,
+              contactTitle: extracted.title,
+              url: extracted.url,
+              rawInput: null,
+              signalType: extracted.signalType,
+              signalEvidence: extracted.signalEvidence,
+              verbatimQuote: extracted.verbatimQuote,
+              score: getDisplayScore(canonical) ?? 5,
+              verdict: canonical.qualification === 'strong' || canonical.qualification === 'worth_pursuing' ? 'send' as const : 'research_more' as const,
+              status: 'new' as const,
+              playId: null,
+              tags: extracted.tags ?? [],
+              createdAt: new Date().toISOString(),
+            },
+            extracted,
+            score: { total: canonical.canonicalScore, verdict: canonical.qualification === 'strong' || canonical.qualification === 'worth_pursuing' ? 'send' as const : 'research_more' as const, breakdown: canonical.scoreBreakdown.dimensions as unknown as { category: string; label: string; points: number; max: number; note: string }[] },
+            canonicalScore: canonical.canonicalScore,
+            type: 'connection' as DraftMessageType,
+            styleCard: null,
+            facts: [],
+            plays: [],
+            history: [],
+            profile: bestSender,
+            matchedProof: matchedProofItem,
+            fewShotExamples: fewShotSelection.examples,
+            strategy: outreachStrategy,
+            safeFacts: [classifyLeadFact(extracted.signalEvidence ?? '', extracted.signalEvidence ?? '', extracted.signalType ?? null)],
+            matchedProofCards: bestSenderProof,
+            conversationContext: conversationContext ?? undefined,
+          },
+          emit,
+          matchedProofItem,
+          bestSender,
+        )
+        draftText = draftResult.draftText
+      } catch {
+        draftFailed = true
+      }
+
+      // Quality gate for connection notes — never invent a fallback pitch
+      qualityResult = draftText
+        ? validateAndRepair({
+            text: draftText,
+            profile: bestSender,
+            prospectName: extracted.name,
+            prospectCompany: extracted.company,
+            matchedProof: bestSenderProof,
+          })
+        : {
+            text: '',
+            charCount: 0,
+            maxChars: CONNECTION_NOTE_MAX_CHARS,
+            withinLimit: true,
+            passed: false,
+            failures: ['empty_draft'],
+            repaired: null,
+          }
+
+      if (qualityResult.text) {
         qualityResult = {
           ...qualityResult,
-          text: repairedText,
-          charCount: repairedText.length,
-          passed: true,
-          failures: qualityResult.failures.filter((f) => !f.includes('withheld')),
+          text: normalizeGreeting(qualityResult.text, extracted.name),
+          charCount: normalizeGreeting(qualityResult.text, extracted.name).length,
         }
-      } else {
-        const withheldReason = qualityResult.text.trim().length === 0
-          ? 'No safe connection note could be generated for this prospect.'
-          : `Generated note failed quality checks (${qualityResult.failures.join('; ') || 'unspecified'}) and was withheld.`
-        qualityResult = {
-          ...qualityResult,
-          text: '',
-          charCount: 0,
-          withinLimit: true,
-          failures: [...new Set([...qualityResult.failures, withheldReason])],
+      }
+
+      // Post-generation consistency check: a candidate note that fails the
+      // quality gate after repair is withheld rather than shown as final.
+      // BUT: if we have a repaired version or a fallback, use that instead of
+      // returning empty. An empty note with CONNECT_WITH_NOTE is worse than
+      // a note that needs light editing.
+      if (!qualityResult.passed) {
+        const repairedText = qualityResult.repaired?.trim()
+        if (repairedText && repairedText.length >= 10) {
+          qualityResult = {
+            ...qualityResult,
+            text: repairedText,
+            charCount: repairedText.length,
+            passed: true,
+            failures: qualityResult.failures.filter((f) => !f.includes('withheld')),
+          }
+        } else {
+          const withheldReason = qualityResult.text.trim().length === 0
+            ? 'No safe connection note could be generated for this prospect.'
+            : `Generated note failed quality checks (${qualityResult.failures.join('; ') || 'unspecified'}) and was withheld.`
+          qualityResult = {
+            ...qualityResult,
+            text: '',
+            charCount: 0,
+            withinLimit: true,
+            failures: [...new Set([...qualityResult.failures, withheldReason])],
+          }
         }
+      }
+    } else {
+      emit({ type: 'status', message: 'Analysis complete' })
+      qualityResult = {
+        text: '',
+        charCount: 0,
+        maxChars: CONNECTION_NOTE_MAX_CHARS,
+        withinLimit: true,
+        passed: true,
+        failures: [],
+        repaired: null,
       }
     }
 

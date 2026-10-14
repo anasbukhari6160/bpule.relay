@@ -317,7 +317,16 @@ export async function generateDailyBrief(
          }
        }
 
-      let visualDirection: VisualDirection | null = null
+       // Platform-aware hashtags: append a small relevant set beneath the
+       // post body for LinkedIn; for X, keep them inline within char budget.
+       if (postCaption && input.platform === 'linkedin') {
+          const tags = generateHashtags(postCaption, idea, input.persona.personaRole ?? '')
+         if (tags.length > 0) {
+           postCaption = postCaption.trimEnd() + '\n\n' + tags.map(t => `#${t}`).join(' ')
+         }
+       }
+
+       let visualDirection: VisualDirection | null = null
        try {
          visualDirection = await generateVisualDirection(idea, input.persona, costTracking)
        } catch (visErr) {
@@ -1435,4 +1444,50 @@ interface VisualDirection {
   avoid?: string[]
   realism?: string
   reason: string
+}
+
+/**
+ * Generate a small set of relevant LinkedIn hashtags from post content.
+ * Extracts topic keywords and normalizes them to PascalCase tags.
+ * Returns 2-4 tags — never generic spam like #Success #Business.
+ */
+function generateHashtags(postCaption: string, idea: { title?: string; territory?: string; angle?: string }, personaRole: string): string[] {
+  const source = `${idea.title ?? ''} ${idea.territory ?? ''} ${idea.angle ?? ''} ${personaRole} ${postCaption}`.toLowerCase()
+  const candidates: Array<{ tag: string; score: number }> = []
+
+  const topicPatterns: Array<{ pattern: RegExp; tag: string }> = [
+    { pattern: /\b(devops|sre|site reliability)\b/i, tag: 'DevOps' },
+    { pattern: /\b(platform engineering|platform team)\b/i, tag: 'PlatformEngineering' },
+    { pattern: /\b(kubernetes|k8s)\b/i, tag: 'Kubernetes' },
+    { pattern: /\b(infrastructure|infra)\b/i, tag: 'Infrastructure' },
+    { pattern: /\b(microservices|monolith)\b/i, tag: 'Microservices' },
+    { pattern: /\b(software engineering|software development)\b/i, tag: 'SoftwareEngineering' },
+    { pattern: /\b(leadership|management|cto|vp engineering)\b/i, tag: 'EngineeringLeadership' },
+    { pattern: /\b(startup|founder|entrepreneur)\b/i, tag: 'Startup' },
+    { pattern: /\b(machine learning|ml|ai|artificial intelligence)\b/i, tag: 'MachineLearning' },
+    { pattern: /\b(data|analytics|metrics)\b/i, tag: 'DataEngineering' },
+    { pattern: /\b(security|infosec|cybersecurity)\b/i, tag: 'Cybersecurity' },
+    { pattern: /\b(cloud|aws|azure|gcp)\b/i, tag: 'CloudComputing' },
+    { pattern: /\b(api|rest|graphql)\b/i, tag: 'API' },
+    { pattern: /\b(remote work|distributed team|remote)\b/i, tag: 'RemoteWork' },
+    { pattern: /\b(hiring|recruiting|talent)\b/i, tag: 'Hiring' },
+    { pattern: /\b(open source|oss|github)\b/i, tag: 'OpenSource' },
+    { pattern: /\b(agile|scrum|kanban)\b/i, tag: 'Agile' },
+    { pattern: /\b(performance|optimization|latency)\b/i, tag: 'Performance' },
+    { pattern: /\b(observability|monitoring|logging)\b/i, tag: 'Observability' },
+    { pattern: /\b(ci\/cd|continuous integration|continuous delivery|deployment)\b/i, tag: 'CICD' },
+  ]
+
+  for (const { pattern, tag } of topicPatterns) {
+    if (pattern.test(source)) {
+      candidates.push({ tag, score: 1 })
+    }
+  }
+
+  // Deduplicate and take top 3, ensuring no generic tags
+  const seen = new Set<string>()
+  return candidates
+    .filter(c => !seen.has(c.tag) && seen.add(c.tag))
+    .slice(0, 3)
+    .map(c => c.tag)
 }

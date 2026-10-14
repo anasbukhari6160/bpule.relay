@@ -14,6 +14,7 @@ import {
   SkipForward,
   Sparkles,
   User,
+  UserPlus,
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -192,7 +193,7 @@ export default function ProspectCheckPage() {
     setDuplicateConflict(null)
   }, [])
 
-  async function analyze(mode: 'analyze' | 'try-another-angle' = 'analyze', profileIdOverride?: string) {
+  async function analyze(mode: 'analyze' | 'try-another-angle' | 'generate' = 'analyze', profileIdOverride?: string) {
     const guard = pasteGuard(rawInput)
     if (guard) {
       setError(guard)
@@ -223,6 +224,7 @@ export default function ProspectCheckPage() {
         body: JSON.stringify({
           rawText: rawInput,
           profileId: effectiveProfileId,
+          generateNote: mode === 'generate',
           ...(existingCanonical ? { existingCanonical } : {}),
         }),
         signal: abortRef.current.signal,
@@ -499,7 +501,7 @@ export default function ProspectCheckPage() {
           {result.score ? (
             <div>
               <div className="flex items-baseline gap-3">
-                <ScoreRing canonicalScore={result.score.total} size={64} />
+                <ScoreRing score={result.score.displayScore ?? 5} max={10} size={64} />
                 <div className="min-w-0">
                   <h2 className="text-[15px] font-medium text-ink">
                     {result.extracted.name ?? 'Unnamed prospect'}
@@ -715,63 +717,76 @@ export default function ProspectCheckPage() {
             </div>
           )}
 
-          <div>
-            <div className="flex items-center justify-between">
-              <h3 className="text-[12px] font-medium text-ink">
-                {result.revenue && !result.revenue.messageRecommended ? 'Message' : 'Connection note'}
-              </h3>
-              <span className={cn(
-                'font-mono text-[11px]',
-                result.charCount > result.maxChars ? 'text-status-danger' : 'text-stone',
-              )}>
-                {result.charCount} / {result.maxChars}
-              </span>
-            </div>
-            <div className="mt-2 rounded-md bg-bone p-3">
-              <p className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">
-                {result.connectionNote
-                  || (result.revenue && !result.revenue.messageRecommended
-                    ? result.revenue.noMessageReason ?? 'No message recommended.'
-                    : result.score ? 'No note generated.' : 'Qualification blocked until you add enough context.')}
-              </p>
-            </div>
-
-            {!result.quality.passed && Array.isArray(result.quality.failures) && result.quality.failures.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {result.quality.failures.slice(0, 3).map((f, i) => (
-                  <span key={i} className="text-[10px] text-status-warning">{f}</span>
-                ))}
+          {result.connectionNote ? (
+            <div>
+              <div className="flex items-center justify-between">
+                <h3 className="text-[12px] font-medium text-ink">
+                  {result.revenue && !result.revenue.messageRecommended ? 'Message' : 'Connection note'}
+                </h3>
+                <span className={cn(
+                  'font-mono text-[11px]',
+                  result.charCount > result.maxChars ? 'text-status-danger' : 'text-stone',
+                )}>
+                  {result.charCount} / {result.maxChars}
+                </span>
               </div>
-            )}
-            {result.quality.wasRepaired && (
-              <p className="mt-1 text-[10px] text-stone">Auto-repaired to meet quality standards.</p>
-            )}
-            {result.draftFailed && (
-              <p className="mt-1 text-[10px] text-status-warning">Draft generation failed — using fallback.</p>
-            )}
+              <div className="mt-2 rounded-md bg-bone p-3">
+                <p className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">
+                  {result.connectionNote}
+                </p>
+              </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button variant="orange" size="sm" onClick={() => void copyNote()} disabled={!result.score || !result.connectionNote}>
-                {copied ? <Check className="size-3" aria-hidden="true" /> : <Copy className="size-3" aria-hidden="true" />}
-                {copied ? 'Copied' : 'Copy note'}
-              </Button>
-               <Button variant="outline" size="sm" onClick={() => void analyze('analyze')} disabled={analyzing}>
-                <RefreshCw className="size-3" aria-hidden="true" />
-                Try another angle
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => void saveAsLead()} disabled={saving || !canSaveLead}>
-                {saving ? 'Creating...' : (
-                  <>
-                    {canSaveLead ? 'Create lead' : 'Lead not eligible'}
-                    <ArrowRight className="size-3" aria-hidden="true" />
-                  </>
-                )}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={skip}>
-                <X className="size-3" aria-hidden="true" />
-                Skip
-              </Button>
+              {!result.quality.passed && Array.isArray(result.quality.failures) && result.quality.failures.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {result.quality.failures.slice(0, 3).map((f, i) => (
+                    <span key={i} className="text-[10px] text-status-warning">{f}</span>
+                  ))}
+                </div>
+              )}
+              {result.quality.wasRepaired && (
+                <p className="mt-1 text-[10px] text-stone">Auto-repaired to meet quality standards.</p>
+              )}
+              {result.draftFailed && (
+                <p className="mt-1 text-[10px] text-status-warning">Draft generation failed — using fallback.</p>
+              )}
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button variant="orange" size="sm" onClick={() => void copyNote()} disabled={!result.score || !result.connectionNote}>
+                  {copied ? <Check className="size-3" aria-hidden="true" /> : <Copy className="size-3" aria-hidden="true" />}
+                  {copied ? 'Copied' : 'Copy note'}
+                </Button>
+              </div>
             </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-line bg-bone-raised/40 p-3">
+              <p className="text-[12px] text-graphite">
+                Analysis complete — qualification and signals are shown above.
+                Generate a connection note when you're ready to reach out.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={() => void analyze('generate')} disabled={analyzing || !result.score}>
+                  <UserPlus className="size-3" aria-hidden="true" />
+                  {analyzing ? 'Generating...' : 'Generate connection note'}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void analyze('analyze')} disabled={analyzing}>
+                  <RefreshCw className="size-3" aria-hidden="true" />
+                  Try another angle
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => void saveAsLead()} disabled={saving || !canSaveLead}>
+                  {saving ? 'Creating...' : (
+                    <>
+                      {canSaveLead ? 'Create lead' : 'Lead not eligible'}
+                      <ArrowRight className="size-3" aria-hidden="true" />
+                    </>
+                  )}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={skip}>
+                  <X className="size-3" aria-hidden="true" />
+                  Skip
+                </Button>
+              </div>
+            </div>
+          )}
 
             {!canSaveLead && (
               <div className="mt-2 flex items-start gap-2 rounded-md border border-status-warning/30 bg-status-warning/5 px-3 py-2">
@@ -791,7 +806,6 @@ export default function ProspectCheckPage() {
                 </div>
               </div>
             )}
-          </div>
 
           {result.demoMode && (
             <Alert>

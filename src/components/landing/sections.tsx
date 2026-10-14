@@ -17,6 +17,15 @@ import {
 } from './data'
 import { useInViewOnce, useReducedMotion } from './hooks'
 
+/** Stable time string: renders placeholder on server, updates after mount. */
+function useClock(): string {
+  const [time, setTime] = useState('')
+  useEffect(() => {
+    setTime(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))
+  }, [])
+  return time
+}
+
 /* ═══════════════════════════════════════════════════════════
    Shared section shell
    ═══════════════════════════════════════════════════════════ */
@@ -128,7 +137,7 @@ export function ContextSection() {
               <span className="size-1 rounded-full bg-line" />
               <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Today</p>
             </div>
-            <span className="text-mono-medium text-[10px] text-stone">{new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+             <span className="text-mono-medium text-[10px] text-stone">{useClock()}</span>
           </div>
           <div className="lg3-console__progress">
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-line/60">

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeSupabase } from './helpers/fake-supabase'
 
 const ORG_ID = 'org-test'
@@ -6,12 +6,12 @@ const LEAD_ID = 'lead-1'
 const EMAIL_MESSAGE_ID = 'email-msg-1'
 const CONTACT_ID = 'cp-1'
 
-const { createServerSupabaseMock } = vi.hoisted(() => ({
-  createServerSupabaseMock: vi.fn(),
+const { createServiceSupabaseMock } = vi.hoisted(() => ({
+  createServiceSupabaseMock: vi.fn(),
 }))
 
-vi.mock('@/lib/supabase/server', () => ({
-  createServerSupabase: createServerSupabaseMock,
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceSupabase: createServiceSupabaseMock,
 }))
 
 function buildWebhookHarness() {
@@ -98,7 +98,7 @@ function buildWebhookHarness() {
     relay_events: [],
   })
 
-  createServerSupabaseMock.mockResolvedValue(fake.client)
+  createServiceSupabaseMock.mockReturnValue(fake.client)
   return fake
 }
 
@@ -106,7 +106,7 @@ async function postWebhook(payload: Record<string, unknown>) {
   const { POST } = await import('@/app/api/email/webhook/route')
   const req = new Request('http://localhost/api/email/webhook', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-relay-webhook-secret': 'test-webhook-secret' },
     body: JSON.stringify(payload),
   })
   const res = await POST(req)
@@ -114,9 +114,15 @@ async function postWebhook(payload: Record<string, unknown>) {
 }
 
 describe('Email webhook lifecycle integration', () => {
+  const originalSecret = process.env.EMAIL_WEBHOOK_SECRET
   beforeEach(() => {
     vi.clearAllMocks()
-    createServerSupabaseMock.mockReset()
+    createServiceSupabaseMock.mockReset()
+    process.env.EMAIL_WEBHOOK_SECRET = 'test-webhook-secret'
+  })
+  afterEach(() => {
+    if (originalSecret === undefined) delete process.env.EMAIL_WEBHOOK_SECRET
+    else process.env.EMAIL_WEBHOOK_SECRET = originalSecret
   })
 
   it('handles SENT -> DELIVERED -> REPLIED with duplicate/out-of-order events without duplicate activity', async () => {
@@ -232,7 +238,7 @@ describe('Email webhook lifecycle integration', () => {
     const unsubscribed = await postWebhook({
       provider: 'relay_noop',
       eventId: 'event-unsub-1',
-      eventType: 'UNSUBSCRIBED',
+      eventType: 'UNSUBSCRIBE',
       providerMessageId: 'provider-msg-1',
       payload: { recipientEmail: 'sarah@acmehealth.com' },
       occurredAt: '2026-01-01T10:05:00.000Z',

@@ -109,7 +109,7 @@ import type {
   UpworkSnapshot,
 } from '@/lib/store/types'
 import { companyFuzzyKey, companyKey, contactKey, normalizeLeadUrl } from '@/lib/leads/normalize'
-import { businessDaysBetween, FOLLOWUP_DUE_BUSINESS_DAYS } from '@/lib/leads/followup'
+import { calendarDaysBetween, followupDueInDays } from '@/lib/leads/followup'
 import { emitAction } from '@/lib/action-ledger'
 import { dailyConnectionSendLimit, dailySendLimit, messageTypeLimit } from '@/lib/ai/config'
 import { defaultTargetsForChannel } from '@/lib/accountability/default-targets'
@@ -2060,10 +2060,10 @@ export class SupabaseStore implements ScoutStore {
       if (repliedLeadIds.has(lead.id)) continue
       const lastSent = lastSentByLead.get(lead.id)
       if (!lastSent) continue
-      const daysSinceContact = businessDaysBetween(new Date(lastSent), now)
-      if (daysSinceContact >= FOLLOWUP_DUE_BUSINESS_DAYS) {
-        const followupCount = followupCountByLead.get(lead.id) ?? 0
-        if (followupCount >= 3) continue
+      const followupCount = followupCountByLead.get(lead.id) ?? 0
+      if (followupCount >= 3) continue
+      const daysSinceContact = calendarDaysBetween(new Date(lastSent), now)
+      if (daysSinceContact >= followupDueInDays(followupCount)) {
         due.push({ lead, daysSinceContact })
       }
     }

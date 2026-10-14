@@ -64,7 +64,7 @@ export function derivePipelineStage(lead: LeadRow): PipelineStage {
   // Follow-up due: contacted but no reply, and enough time has passed
   if (hasOutbound && !hasRepliedSinceOutbound && lead.lastOutboundAt) {
     const hasReplied = hasRepliedSinceOutbound
-    if (isFollowupDue(lead.lastOutboundAt, hasReplied)) {
+    if (isFollowupDue(lead.lastOutboundAt, hasReplied, new Date(), lead.followupCount ?? 0)) {
       return 'follow_up_due'
     }
   }

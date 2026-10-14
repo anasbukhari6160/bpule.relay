@@ -26,6 +26,7 @@ import { generate } from '@/lib/ai/runtime'
 import { classifyBusinessModel, classifySentence, deriveRelationship, isNonBuyerRelationship, stripThirdPartyRepostBlocks } from './subject-attribution'
 import { applyBuyerIntentBoundary } from './commercial-reading'
 import { classifyNeedOwnership } from './need-ownership'
+import { cleanCompanyName } from '@/lib/leads/normalize'
 
 
 export interface ExtractionPipelineOptions {
@@ -636,9 +637,9 @@ function normalizePassA(
     otherUrls: passA.person.otherUrls.map(normalizeUrl).filter((u): u is string => u !== null),
   }
 
-  // Company normalization
+  // Company normalization — clean LinkedIn UI artifacts (e.g. "Lotus logo")
   const company: ExtractedCompany = {
-    name: passA.company.name?.trim() || null,
+    name: cleanCompanyName(passA.company.name),
     domain: passA.company.domain?.trim() || null,
     linkedinUrl: normalizeLinkedInUrl(passA.company.linkedinUrl),
     industry: passA.company.industry?.trim() || null,

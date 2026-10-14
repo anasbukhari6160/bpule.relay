@@ -1,5 +1,5 @@
 import type { Lead, Message, OutreachStrategy } from '@/lib/domain/types'
-import { businessDaysBetween } from '@/lib/leads/followup'
+import { calendarDaysBetween, followupDueInDays } from '@/lib/leads/followup'
 
 /**
  * Follow-up Engine
@@ -76,16 +76,17 @@ export function determineFollowup(context: FollowupContext): FollowupStrategy {
     }
   }
 
-  const daysSince = businessDaysBetween(new Date(lastSentAt), now)
-  if (daysSince < 5) {
+  const dueIn = followupDueInDays(followupCount)
+  const daysSince = calendarDaysBetween(new Date(lastSentAt), now)
+  if (daysSince < dueIn) {
     return {
       shouldFollowUp: false,
-      reason: `Only ${daysSince} business days since last send. Wait for 5.`,
+      reason: `Only ${daysSince} calendar days since last send. Wait for ${dueIn}.`,
       approach: 'none',
       tone: 'none',
       ctaApproach: 'none',
       valueAdd: null,
-      waitReason: `Wait ${5 - daysSince} more business day(s).`,
+      waitReason: `Wait ${dueIn - daysSince} more calendar day(s).`,
     }
   }
 
@@ -157,7 +158,10 @@ function chooseFollowupApproach(
 }
 
 /**
- * Build the follow-up prompt context.
+ * Build the follow-up prompt context. Includes ALL prior outbound messages
+ * (connection note, first DM, previous follow-ups) so the writer can
+ * differentiate this follow-up from everything sent before — never repeat
+ * the same offer, angle, or opening.
  */
 export function buildFollowupPrompt(
   context: FollowupContext,
@@ -177,14 +181,31 @@ export function buildFollowupPrompt(
   }
 
   parts.push(``)
-  parts.push(`### What was sent before:`)
-  const lastSent = context.priorMessages
-    .filter((m) => m.sentText && m.sentAt)
+  parts.push(`### ALL previous outbound messages (connection note → DM → follow-ups) — DO NOT repeat any of these:`)
+  const outbound = context.priorMessages
+    .filter((m) => m.sentText && m.sentAt && m.direction !== 'inbound')
     .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
-    .at(-1)
 
-  if (lastSent?.sentText) {
-    parts.push(`"${lastSent.sentText}"`)
+  if (outbound.length === 0) {
+    parts.push(`(none recorded)`)
+  } else {
+    for (const m of outbound) {
+      const label = m.type ?? 'message'
+      parts.push(`[${label}] ${m.sentText}`)
+    }
+  }
+
+  parts.push(``)
+  parts.push(`### Inbound from prospect (if any):`)
+  const inbound = context.priorMessages
+    .filter((m) => m.sentText && m.sentAt && m.direction === 'inbound')
+    .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+  if (inbound.length === 0) {
+    parts.push(`(no reply yet — this is a follow-up to an unanswered message)`)
+  } else {
+    for (const m of inbound) {
+      parts.push(`"${m.sentText}"`)
+    }
   }
 
   parts.push(``)
@@ -192,7 +213,8 @@ export function buildFollowupPrompt(
   parts.push(`- Do NOT say "just following up" or "checking in" or "bumping this"`)
   parts.push(`- 15–45 words. Add ONE new reason to reply, or close the loop.`)
   parts.push(`- Give them an easy way to say "not now"`)
-  parts.push(`- Do not repeat the exact same offer as the first message`)
+  parts.push(`- Do NOT repeat the same offer, angle, opening, or CTA from any previous outbound message above`)
+  parts.push(`- If the previous message asked a question, do NOT re-ask it — add a new observation or insight instead`)
   parts.push(`- Do not dump biography, proof, or BPulse positioning`)
 
   return parts.join('\n')

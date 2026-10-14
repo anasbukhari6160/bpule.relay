@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createServerSupabase } from '@/lib/supabase/server'
+import { createServiceSupabase } from '@/lib/supabase/service'
 import { safeErrorResponse } from '@/lib/errors'
 
 type Row = Record<string, unknown>
@@ -26,6 +26,7 @@ function eventToDeliveryStatus(type: string): 'DELIVERED' | 'BOUNCED' | 'FAILED'
     case 'REPLIED':
       return 'REPLIED'
     case 'UNSUBSCRIBED':
+    case 'UNSUBSCRIBE':
       return 'SUPPRESSED'
     default:
       return 'SENT'
@@ -39,7 +40,7 @@ function stableDeliveryStatus(current: string | null | undefined, incoming: Retu
   return incomingRank >= currentRank ? incoming : currentStatus
 }
 
-async function updateConversationOnReply(supabase: Awaited<ReturnType<typeof createServerSupabase>>, emailMessage: Row, replyBody: string | null): Promise<void> {
+async function updateConversationOnReply(supabase: ReturnType<typeof createServiceSupabase>, emailMessage: Row, replyBody: string | null): Promise<void> {
   const organizationId = emailMessage.organization_id as string
   const leadId = emailMessage.lead_id as string
   const revenueIdentityId = emailMessage.revenue_identity_id as string
@@ -142,11 +143,12 @@ async function updateConversationOnReply(supabase: Awaited<ReturnType<typeof cre
 
 export async function POST(request: Request) {
   const requiredSecret = process.env.EMAIL_WEBHOOK_SECRET
-  if (requiredSecret) {
-    const provided = request.headers.get('x-relay-webhook-secret')
-    if (!provided || provided !== requiredSecret) {
-      return NextResponse.json({ error: 'Unauthorized webhook.' }, { status: 401 })
-    }
+  if (!requiredSecret) {
+    return NextResponse.json({ error: 'Webhook not configured.' }, { status: 500 })
+  }
+  const provided = request.headers.get('x-relay-webhook-secret')
+  if (!provided || provided !== requiredSecret) {
+    return NextResponse.json({ error: 'Unauthorized webhook.' }, { status: 401 })
   }
 
   let body: {
@@ -170,8 +172,12 @@ export async function POST(request: Request) {
   const eventType = body.eventType?.trim().toUpperCase() || ''
   if (!eventType) return NextResponse.json({ error: 'eventType is required.' }, { status: 400 })
 
+  if (!body.providerMessageId && !body.providerThreadId) {
+    return NextResponse.json({ error: 'providerMessageId or providerThreadId is required.' }, { status: 400 })
+  }
+
   try {
-    const supabase = await createServerSupabase()
+    const supabase = createServiceSupabase()
 
     const messageLookup = body.providerMessageId
       ? await supabase
@@ -196,7 +202,7 @@ export async function POST(request: Request) {
     }
 
     const organizationId = emailMessage.organization_id as string
-    const eventId = body.eventId?.trim() || `${provider}:${eventType}:${body.providerMessageId ?? body.providerThreadId ?? 'unknown'}`
+    const eventId = body.eventId?.trim() || `${provider}:${eventType}:${body.providerMessageId ?? body.providerThreadId}`
 
     const { data: existingEvent } = await supabase
       .from('email_delivery_events')
@@ -241,8 +247,8 @@ export async function POST(request: Request) {
       .eq('id', emailMessage.id as string)
       .eq('organization_id', organizationId)
 
-    if (status === 'BOUNCED' || eventType === 'UNSUBSCRIBED') {
-      const reason = eventType === 'UNSUBSCRIBED' ? 'UNSUBSCRIBE' : 'BOUNCE'
+    if (status === 'BOUNCED' || eventType === 'UNSUBSCRIBE') {
+      const reason = eventType === 'UNSUBSCRIBE' ? 'UNSUBSCRIBE' : 'BOUNCE'
       const contactPointId = (emailMessage.contact_point_id as string) ?? null
 
       let suppressedEmail: string | null = null

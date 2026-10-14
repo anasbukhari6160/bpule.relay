@@ -311,7 +311,7 @@ describe('Follow-up and waiting', () => {
       lastReplyAt: null,
     })
     expect(result.shouldFollowUp).toBe(false)
-    expect(result.waitReason).toMatch(/business day/)
+    expect(result.waitReason).toMatch(/calendar day/)
   })
 
   // Approved product design change: the follow-up cap was raised from 1 to

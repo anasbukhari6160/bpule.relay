@@ -1,18 +1,34 @@
 /**
- * Follow-up policy: UP TO THREE follow-ups, five working days after the last
- * send each time, then never again. A lead that has already received 3
- * follow-ups (followupCount >= 3) is permanently locked out of another one —
- * there is no fourth follow-up, ever, regardless of how much time passes.
- * (Raised from a 1-follow-up cap to 3 — approved product design change, see
- * src/lib/relay/followup-engine.ts.) A reply is permanent too: once a lead
- * has replied, follow-up is off the table.
+ * Follow-up policy: UP TO THREE follow-ups, with calendar-day spacing that
+ * widens after each send. A lead that has already received 3 follow-ups
+ * (followupCount >= 3) is permanently locked out — there is no fourth
+ * follow-up, ever.
  *
- * Five working days means business days — Saturday and Sunday do not count
- * toward the wait, matching how the rule is meant to read to a rep ("five
- * working days"), not five days on a wall calendar.
+ * Canonical schedule (calendar days since last outbound send):
+ *   followupCount 0 → first follow-up due at 3 days
+ *   followupCount 1 → second follow-up due at 6 days
+ *   followupCount 2 → third follow-up due at 6 days
+ *
+ * Calendar days (not business days) — weekends count. The rep experiences
+ * "3 days" as three days on a wall calendar, not "3 working days".
  */
 
-const FOLLOWUP_DUE_BUSINESS_DAYS = 5
+/** Calendar days required before the next follow-up is due, indexed by followupCount. */
+const FOLLOWUP_DUE_CALENDAR_DAYS: Record<number, number> = {
+  0: 3,
+  1: 6,
+  2: 6,
+}
+
+/** Maximum follow-ups per lead. */
+export const MAX_FOLLOWUPS_PER_LEAD = 3
+
+/** Number of whole calendar days between two instants, floor-rounded. */
+export function calendarDaysBetween(from: Date, to: Date): number {
+  if (to <= from) return 0
+  const ms = to.getTime() - from.getTime()
+  return Math.floor(ms / (24 * 60 * 60 * 1000))
+}
 
 /** Number of whole business days (Mon-Fri) between two instants, floor-rounded. */
 export function businessDaysBetween(from: Date, to: Date): number {
@@ -31,12 +47,16 @@ export function businessDaysBetween(from: Date, to: Date): number {
   return count
 }
 
-export function isFollowupDue(sentAt: string, hasReplied: boolean, now: Date = new Date()): boolean {
-  if (hasReplied) return false
-  return businessDaysBetween(new Date(sentAt), now) >= FOLLOWUP_DUE_BUSINESS_DAYS
+/** Calendar days required before the next follow-up is due, given how many have already been sent. */
+export function followupDueInDays(followupCount: number): number {
+  if (followupCount < 0) return FOLLOWUP_DUE_CALENDAR_DAYS[0]
+  return FOLLOWUP_DUE_CALENDAR_DAYS[followupCount] ?? FOLLOWUP_DUE_CALENDAR_DAYS[2]
 }
 
-export { FOLLOWUP_DUE_BUSINESS_DAYS }
+export function isFollowupDue(sentAt: string, hasReplied: boolean, now: Date = new Date(), followupCount = 0): boolean {
+  if (hasReplied) return false
+  return calendarDaysBetween(new Date(sentAt), now) >= followupDueInDays(followupCount)
+}
 
 /**
  * Lead archival: how many follow-ups a lead may receive before it is

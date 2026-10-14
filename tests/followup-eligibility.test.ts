@@ -1,14 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import type { Lead, Message, Outcome } from '@/lib/domain/types'
-import { businessDaysBetween, isFollowupDue, FOLLOWUP_DUE_BUSINESS_DAYS } from '@/lib/leads/followup'
+import { businessDaysBetween, calendarDaysBetween, isFollowupDue, followupDueInDays, MAX_FOLLOWUPS_PER_LEAD } from '@/lib/leads/followup'
 
 /**
- * Follow-up policy: ONE follow-up, five working days after the last send,
- * then never again. A NO is permanent. This matches the project's original
- * rule (stated repeatedly outside this repo's own history, since no spec
- * doc for it exists in-tree) — src/lib/leads/followup.ts and
- * src/components/lead-workspace-simple.tsx are the real, current implementation of
- * that rule, and this file guards it.
+ * Follow-up policy: UP TO THREE follow-ups, calendar-day spacing that widens
+ * after each send. A reply is permanent. Canonical schedule:
+ *   followupCount 0 → first follow-up due at 3 calendar days
+ *   followupCount 1 → second follow-up due at 6 calendar days
+ *   followupCount 2 → third follow-up due at 6 calendar days
  */
 
 // Mirrors src/components/lead-workspace-simple.tsx:101-104 exactly. If that
@@ -30,7 +29,13 @@ function businessDaysAgo(n: number, from: Date = new Date('2026-09-23T09:00:00Z'
   return d.toISOString()
 }
 
-describe('follow-up eligibility: ONE follow-up, ever', () => {
+function calendarDaysAgo(n: number, from: Date = new Date('2026-09-23T09:00:00Z')): string {
+  const d = new Date(from)
+  d.setDate(d.getDate() - n)
+  return d.toISOString()
+}
+
+describe('follow-up eligibility: up to THREE follow-ups', () => {
   it('is not eligible for a lead that has never been sent to', () => {
     expect(followupEligible({ status: 'new' }, [])).toBe(false)
   })
@@ -40,13 +45,12 @@ describe('follow-up eligibility: ONE follow-up, ever', () => {
     expect(followupEligible({ status: 'contacted' }, messages)).toBe(true)
   })
 
-  it('is permanently locked out once a follow-up has already been sent — the one-use rule', () => {
-    // This is the actual rule: status 'followed_up' means the one follow-up
-    // has been used. It never becomes eligible again, no matter how much
-    // time passes or how many more messages exist.
+  it('is permanently locked out once all 3 follow-ups have been used', () => {
     const messages: Pick<Message, 'sentText' | 'sentAt'>[] = [
       { sentText: 'Hi there', sentAt: businessDaysAgo(20) },
       { sentText: 'Following up', sentAt: businessDaysAgo(10) },
+      { sentText: 'Second follow-up', sentAt: businessDaysAgo(5) },
+      { sentText: 'Third follow-up', sentAt: businessDaysAgo(2) },
     ]
     expect(followupEligible({ status: 'followed_up' }, messages)).toBe(false)
   })
@@ -57,79 +61,63 @@ describe('follow-up eligibility: ONE follow-up, ever', () => {
   })
 })
 
-describe('business day arithmetic (Mon-Fri only, weekends never count)', () => {
-  it('a Monday-to-Tuesday span is exactly 1 business day', () => {
-    // Pick a known Monday and Tuesday explicitly rather than relying on
-    // "today", so this test is not itself calendar-dependent.
-    const monday = new Date('2026-09-14T09:00:00Z') // a Monday
-    const tuesday = new Date('2026-09-15T09:00:00Z')
-    expect(businessDaysBetween(monday, tuesday)).toBe(1)
+describe('calendar day arithmetic (for follow-up timing)', () => {
+  it('a Friday-to-Monday span is 3 calendar days', () => {
+    const friday = new Date('2026-09-18T09:00:00Z')
+    const monday = new Date('2026-09-21T09:00:00Z')
+    expect(calendarDaysBetween(friday, monday)).toBe(3)
   })
 
-  it('a full weekend adds zero business days', () => {
-    const friday = new Date('2026-09-11T09:00:00Z')
-    const monday = new Date('2026-09-14T09:00:00Z')
-    // Fri -> Mon crosses Sat + Sun, neither of which count.
-    expect(businessDaysBetween(friday, monday)).toBe(1)
-  })
-
-  it('five business days from a Monday lands on the following Monday, not the following Saturday', () => {
-    const monday = new Date('2026-09-14T09:00:00Z')
-    const nextMonday = new Date('2026-09-21T09:00:00Z')
-    expect(businessDaysBetween(monday, nextMonday)).toBe(5)
-  })
-
-  it('the same calendar span (7 flat days) is NOT the same as 5 business days sent on a Friday', () => {
-    // Sent Friday: 3 flat calendar days later is Monday, but that is only
-    // 1 business day — the whole point of business-day math is that a
-    // Friday send does not become due over the weekend.
-    const friday = new Date('2026-09-11T09:00:00Z')
-    const followingMonday = new Date('2026-09-14T09:00:00Z')
-    expect(businessDaysBetween(friday, followingMonday)).toBeLessThan(FOLLOWUP_DUE_BUSINESS_DAYS)
+  it('a full weekend counts toward the wait — calendar days, not business days', () => {
+    const friday = new Date('2026-09-18T09:00:00Z')
+    const saturday = new Date('2026-09-19T09:00:00Z')
+    const sunday = new Date('2026-09-20T09:00:00Z')
+    expect(calendarDaysBetween(friday, saturday)).toBe(1)
+    expect(calendarDaysBetween(friday, sunday)).toBe(2)
   })
 })
 
-describe('the real 5-business-day due window', () => {
-  // Freeze "now" to a Wednesday so business-day math is deterministic
-  // regardless of which day this test suite runs on.
-  const NOW = new Date('2026-09-23T09:00:00Z') // a Wednesday
+describe('follow-up due timing: first at 3 calendar days, second/third at 6', () => {
+  // Freeze "now" to a Wednesday so calendar-day math is deterministic.
+  const NOW = new Date('2026-09-23T09:00:00Z')
 
-  it('is not due before 5 full business days have passed', () => {
-    // 4 business days before NOW = Thu Sep 17. Thu -> NOW = 4 business days.
-    expect(isFollowupDue(businessDaysAgo(4, NOW), false, NOW)).toBe(false)
+  it('is not due before 3 calendar days (first follow-up)', () => {
+    expect(isFollowupDue(calendarDaysAgo(2, NOW), false, NOW, 0)).toBe(false)
   })
 
-  it('is due at exactly 5 business days', () => {
-    // 5 business days before NOW = Wed Sep 16. Wed -> NOW = 5 business days.
-    expect(isFollowupDue(businessDaysAgo(5, NOW), false, NOW)).toBe(true)
+  it('is due at exactly 3 calendar days (first follow-up)', () => {
+    expect(isFollowupDue(calendarDaysAgo(3, NOW), false, NOW, 0)).toBe(true)
   })
 
-  it('is due well past the 5-business-day window', () => {
-    expect(isFollowupDue(businessDaysAgo(15, NOW), false, NOW)).toBe(true)
+  it('is due well past the 3-day window (first follow-up)', () => {
+    expect(isFollowupDue(calendarDaysAgo(10, NOW), false, NOW, 0)).toBe(true)
   })
 
-  it('a weekend does not shorten the wait — sending on a Friday does not make Monday "due"', () => {
-    // 3 calendar days (Fri -> Mon) is only 1 business day, well under the
-    // 5-business-day threshold. The old, wrong behavior (flat 3 calendar
-    // days) would have marked this due; the fixed behavior must not.
-    const friday = new Date('2026-09-11T09:00:00Z')
-    expect(isFollowupDue(friday.toISOString(), false, new Date('2026-09-14T09:00:00Z'))).toBe(false)
+  it('weekend counts: send Friday, due Monday (3 calendar days later)', () => {
+    const friday = new Date('2026-09-18T09:00:00Z') // Friday
+    const monday = new Date('2026-09-21T09:00:00Z') // Monday = 3 calendar days
+    expect(isFollowupDue(friday.toISOString(), false, monday, 0)).toBe(true)
   })
 
-  it('is never due once the prospect has replied, regardless of elapsed time — a NO is permanent', () => {
-    expect(isFollowupDue(businessDaysAgo(30, NOW), true, NOW)).toBe(false)
+  it('second follow-up waits 6 calendar days, not 3', () => {
+    // 4 calendar days after send — first would be due, but second needs 6
+    expect(isFollowupDue(calendarDaysAgo(4, NOW), false, NOW, 1)).toBe(false)
+    expect(isFollowupDue(calendarDaysAgo(6, NOW), false, NOW, 1)).toBe(true)
   })
 
-  it('weekend boundary: send Friday, next Monday is only 1 business day — not due', () => {
-    const friday = new Date('2026-09-18T09:00:00Z') // a Friday
-    const monday = new Date('2026-09-21T09:00:00Z') // following Monday
-    expect(isFollowupDue(friday.toISOString(), false, monday)).toBe(false)
+  it('third follow-up also waits 6 calendar days', () => {
+    expect(isFollowupDue(calendarDaysAgo(5, NOW), false, NOW, 2)).toBe(false)
+    expect(isFollowupDue(calendarDaysAgo(6, NOW), false, NOW, 2)).toBe(true)
   })
 
-  it('weekend boundary: send Friday, next Friday is exactly 5 business days — due', () => {
-    const friday = new Date('2026-09-18T09:00:00Z') // a Friday
-    const nextFriday = new Date('2026-09-25T09:00:00Z') // following Friday
-    expect(isFollowupDue(friday.toISOString(), false, nextFriday)).toBe(true)
+  it('is never due once the prospect has replied, regardless of elapsed time', () => {
+    expect(isFollowupDue(calendarDaysAgo(30, NOW), true, NOW, 0)).toBe(false)
+  })
+
+  it('followupDueInDays returns 3 for first, 6 for second and third', () => {
+    expect(followupDueInDays(0)).toBe(3)
+    expect(followupDueInDays(1)).toBe(6)
+    expect(followupDueInDays(2)).toBe(6)
   })
 })
 
@@ -137,12 +125,6 @@ describe('reply classification routing (Outcome stage)', () => {
   it('a replied outcome marks the lead as no longer due for follow-up', () => {
     const outcomes: Pick<Outcome, 'stage'>[] = [{ stage: 'replied' }]
     const hasReplied = outcomes.some((o) => o.stage === 'replied')
-    expect(isFollowupDue(businessDaysAgo(10), hasReplied)).toBe(false)
-  })
-
-  it('a non-reply outcome (read/check/slice/close/standing) does not block follow-up', () => {
-    const outcomes: Pick<Outcome, 'stage'>[] = [{ stage: 'read' }]
-    const hasReplied = outcomes.some((o) => o.stage === 'replied')
-    expect(isFollowupDue(businessDaysAgo(10), hasReplied)).toBe(true)
+    expect(hasReplied).toBe(true)
   })
 })

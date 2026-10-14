@@ -192,10 +192,28 @@ export function OnboardingWizard() {
     setCreating(true)
     setError('')
     try {
+      // Map component state field names to the API's expected contract.
+      // Without this, selectedComfort/platforms/humorStyle silently drop.
       const res = await fetch('/api/content/onboarding/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(state),
+        body: JSON.stringify({
+          displayName: state.displayName,
+          platforms: ['linkedin'],
+          personaRole: state.personaRole,
+          personaCompany: state.personaCompany,
+          personaLocation: state.personaLocation,
+          contentComfort: state.selectedComfort,
+          sourceText: state.sourceText,
+          sourceType: state.sourceType,
+          selectedGoals: state.selectedGoals,
+          selectedAudiences: state.selectedAudiences,
+          selectedInterests: state.selectedInterests,
+          selectedTerritories: state.selectedTerritories,
+          voiceSelection: state.voiceSelection,
+          humorStyle: state.voiceSelection,
+          identity: state.identity,
+        }),
       })
       const data = await res.json().catch(() => null)
       if (!res.ok) {

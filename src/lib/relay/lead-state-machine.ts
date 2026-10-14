@@ -1,6 +1,7 @@
 
 import type { LeadDetail } from '@/lib/store/types'
 import type { Message } from '@/lib/domain/types'
+import { followupDueInDays } from '@/lib/leads/followup'
 
 export type LeadAction =
   | 'SEND_CONNECTION'
@@ -70,7 +71,12 @@ export function deriveNextLeadAction(lead: LeadDetail): LeadActionResult {
     }
   }
 
-  const connectionMsg = latestMessage(messages, 'connection')
+  // A connection is "sent" even without a note — the presence of a
+  // connection-type message (even with empty sentText) means the request
+  // was made. Sending without a note must still advance the lifecycle.
+  const connectionMsg = messages
+    .filter((m) => m.type === 'connection' && m.sentAt)
+    .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0] ?? null
   const connectionSent = Boolean(connectionMsg)
   const connectionAccepted = lead.connectionAcceptedAt != null
 
@@ -143,8 +149,9 @@ export function deriveNextLeadAction(lead: LeadDetail): LeadActionResult {
     }
   }
 
-  // 4. DM sent, client replied, rep hasn't answered
-  if (dmSent && clientReplied && !replySent) {
+  // 4. Client replied, rep hasn't answered — takes priority over SEND_DM.
+  // A reply is the next action whether or not a DM was sent first.
+  if (clientReplied && !replySent) {
     return {
       action: 'SEND_REPLY',
       primaryLabel: `Reply to ${lead.contactName ?? 'them'}`,
@@ -158,11 +165,12 @@ export function deriveNextLeadAction(lead: LeadDetail): LeadActionResult {
   // 5. DM sent, waiting for reply, follow-up due
   if (dmSent && !clientReplied && followupsRemaining > 0 && lastOutbound?.sentAt) {
     const daysSince = (now - new Date(lastOutbound.sentAt).getTime()) / (1000 * 60 * 60 * 24)
-    if (daysSince >= 5) {
+    const dueIn = followupDueInDays(followupCount)
+    if (daysSince >= dueIn) {
       return {
         action: 'SEND_FOLLOWUP',
         primaryLabel: 'Send follow-up',
-        reason: `No reply after ${Math.floor(daysSince)} days. ${followupsRemaining} follow-ups remaining.`,
+        reason: `No reply after ${Math.floor(daysSince)} days (due at ${dueIn}). ${followupsRemaining} follow-ups remaining.`,
         requiresAction: true,
         followupDue: true,
         followupsRemaining,

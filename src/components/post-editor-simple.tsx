@@ -30,6 +30,18 @@ export function SimplePostEditor({ post }: { post: PostData }) {
   const [showVisual, setShowVisual] = useState(false)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [imageLoading, setImageLoading] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  // Persist edits to sessionStorage so the Studio view picks them up on return.
+  const saveChanges = useCallback(() => {
+    try {
+      const existing = sessionStorage.getItem(`studio-idea-${post.id}`)
+      const data = existing ? JSON.parse(existing) : {}
+      sessionStorage.setItem(`studio-idea-${post.id}`, JSON.stringify({ ...data, postCaption: caption }))
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch { /* sessionStorage unavailable */ }
+  }, [caption, post.id])
 
   const handleCopy = () => {
     navigator.clipboard.writeText(caption)
@@ -112,11 +124,25 @@ export function SimplePostEditor({ post }: { post: PostData }) {
           />
           <div className="flex items-center gap-2">
             <button
-              onClick={handleCopy}
+              onClick={saveChanges}
+              className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink/60 hover:border-cobalt/40 hover:text-cobalt"
+            >
+              {saved ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {saved ? 'Saved!' : 'Save changes'}
+            </button>
+            <button
+              onClick={() => { saveChanges(); router.back() }}
               className="flex items-center gap-2 rounded-lg bg-cobalt px-4 py-2 text-sm font-medium text-on-accent hover:bg-cobalt/90"
             >
+              <Check className="h-4 w-4" />
+              Done
+            </button>
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink/60 hover:border-cobalt/40 hover:text-cobalt"
+            >
               <Copy className="h-4 w-4" />
-              {copied ? 'Copied!' : 'Copy post'}
+              Copy
             </button>
           </div>
         </div>

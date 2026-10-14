@@ -112,7 +112,7 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
         return `${betterProfile.label ?? 'Another profile'} is a ${diff}% stronger match than ${senderProfile?.label ?? 'current'}`
       })()
     : null
-  const lastInboundMessage = lead.messages.filter((m) => m.direction === 'inbound').at(-1) ?? null
+  const lastInboundMessage = lead.messages.filter((m) => m.direction === 'inbound').at(0) ?? null
 
 
   const generateDraft = useCallback(async (type: string) => {
@@ -205,6 +205,10 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
       })
       if (!res.ok) throw new Error('Failed to save reply.')
       setCapturedReplyText('')
+      // After capturing a reply, the next generate action must produce a
+      // reply — not another first DM. Without this, the mode stays stale
+      // and the user gets the same first message again.
+      setMode('reply')
       setLeadVersion((v) => v + 1)
     } catch {
       notifyError('Failed to save reply.')
@@ -296,22 +300,32 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
   // Auto-generation was burning AI credits on every page visit.
 
 
-  // Full message history: drafts, sent, received — clearly distinguished
+  // Full message history: drafts, sent, received — clearly distinguished.
+  // Hide drafts whose content was later sent — the sent message stands in
+  // for them (BUG-05: one send = one timeline item, not a duplicate pair).
   const allMessages = lead.messages
     .sort((a, b) => (a.sentAt ?? a.createdAt).localeCompare(b.sentAt ?? b.createdAt))
 
-  const sentMessages = allMessages.filter((m) => m.sentText)
-  const draftMessages = allMessages.filter((m) => !m.sentText && m.draftText && m.direction !== 'inbound')
+  const sentTypes = new Set(
+    allMessages.filter((m) => m.sentText && m.direction !== 'inbound').map((m) => m.type),
+  )
+  const visibleMessages = allMessages.filter(
+    (m) => m.direction === 'inbound' || m.sentText || !sentTypes.has(m.type),
+  )
+
+  const sentMessages = visibleMessages.filter((m) => m.sentText)
+  const draftMessages = visibleMessages.filter((m) => !m.sentText && m.draftText && m.direction !== 'inbound')
 
   const showFollowupOption = relationshipState.phase === 'dm_sent' && !followupGate.alreadyUsed
-  const showReplyOption = relationshipState.phase === 'replied' || sentMessages.some((m) => m.direction === 'inbound')
+  const hasOutboundReply = sentMessages.some((m) => m.type === 'reply')
+  const showReplyOption = (relationshipState.phase === 'replied' || sentMessages.some((m) => m.direction === 'inbound')) && !hasOutboundReply
   const showDmOption = Boolean(dmGate.connectionAccepted || lead.connectionAcceptedAt)
 
   // Keyboard shortcuts for rapid processing
   useHotkeys('g', () => {
     if (relationshipState.phase === 'connection_due' && !lead.connectionAcceptedAt) {
       setMode('connection'); generateDraft('connection')
-    } else if (relationshipState.phase === 'replied') {
+    } else if (showReplyOption) {
       setMode('reply'); generateDraft('reply')
     } else if (relationshipState.phase === 'follow_up_due') {
       setMode('followup'); generateDraft('followup')
@@ -534,9 +548,9 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
       })()}
 
       {/* Conversation history — grouped by day */}
-      {allMessages.length > 0 && (() => {
-        const grouped = new Map<string, typeof allMessages>()
-        for (const msg of allMessages) {
+      {visibleMessages.length > 0 && (() => {
+        const grouped = new Map<string, typeof visibleMessages>()
+        for (const msg of visibleMessages) {
           const raw = msg.sentAt ?? msg.createdAt
           const dateKey = raw ? raw.slice(0, 10) : 'unknown'
           if (!grouped.has(dateKey)) grouped.set(dateKey, [])
@@ -548,7 +562,7 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
           <div className="rounded-xl border border-line p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-[12px] font-medium text-stone uppercase tracking-wider">History</h2>
-              <span className="text-[10px] text-stone">{allMessages.length} message{allMessages.length !== 1 ? 's' : ''}</span>
+              <span className="text-[10px] text-stone">{visibleMessages.length} message{visibleMessages.length !== 1 ? 's' : ''}</span>
             </div>
             <div className="space-y-4">
               {sortedEntries.map(([dateKey, msgs]) => (
@@ -869,7 +883,7 @@ function CommandStation({
             </div>
           )}
 
-          {phase === 'replied' && showReplyOption && (
+          {showReplyOption && (
             <Button variant="orange" size="sm" onClick={() => { setMode('reply'); generateDraft('reply') }} className="w-full justify-center">
               <MessageSquare className="size-3.5" /> {relationshipState.lastClientMessage?.sentText ? `Reply to "${relationshipState.lastClientMessage.sentText.slice(0, 40)}..."` : 'Generate reply'}
             </Button>

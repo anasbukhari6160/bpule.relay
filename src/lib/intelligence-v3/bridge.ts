@@ -7,6 +7,7 @@ import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
 import { initializeV3 } from '@/lib/intelligence-v3/index'
 import { extractEventsFromSource } from './event-extractor'
 import { buildV3ReuseKey, buildV3ReuseCacheKey } from './decision-reuse'
+import { cleanCompanyName } from '@/lib/leads/normalize'
 
 
 function buildV3BridgeInput(
@@ -190,7 +191,14 @@ function extractCompanyFromProfile(
 
   if (title) {
     const dashMatch = title.match(/[—–-]\s*([A-Z][A-Za-z0-9._&\-\s]+)$/i)
-    if (dashMatch) return cleanOrgName(dashMatch[1])
+    if (dashMatch) {
+      const candidate = dashMatch[1].trim()
+      // Reject single-word role fragments like "Operations", "Manager",
+      // "Engineering" — these are title qualifiers, not company names.
+      const wordCount = candidate.split(/\s+/).length
+      const isSingleRoleWord = wordCount === 1 && looksLikeRole(candidate)
+      if (isLikelyCompanyName(candidate) && !isSingleRoleWord) return cleanOrgName(candidate)
+    }
   }
 
   if (title) {
@@ -267,14 +275,9 @@ function extractCompanyFromProfile(
   return null
 }
 
-/** Clean up extracted organization name */
+/** Clean up extracted organization name — delegates to canonical cleaner */
 function cleanOrgName(name: string): string {
-  return name
-    .replace(/\s{2,}/g, ' ')
-    .replace(/[,;]+$/, '')
-    .replace(/\s*[|·—–-]+\s*$/, '')
-    .trim()
-    .slice(0, 80)
+  return cleanCompanyName(name.trim()) ?? ''
 }
 
 /** Check if a string looks like a company name (not a role or noise) */

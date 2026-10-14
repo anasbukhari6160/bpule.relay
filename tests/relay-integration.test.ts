@@ -208,7 +208,7 @@ describe('Vertical Integration: Full Flow', () => {
       lastReplyAt: null,
     })
     expect(followupCheck.shouldFollowUp).toBe(false)
-    expect(followupCheck.waitReason).toContain('business day')
+    expect(followupCheck.waitReason).toContain('calendar day')
   })
 
   it('handles edit learning when BD edits AI copy', async () => {

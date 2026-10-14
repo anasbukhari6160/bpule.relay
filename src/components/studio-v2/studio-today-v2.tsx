@@ -22,13 +22,21 @@ interface BriefData {
 export function StudioTodayV2({ personaId, displayName }: Props) {
   const router = useRouter()
   const [platform, setPlatform] = useState<Platform>('linkedin')
+  const [personas, setPersonas] = useState<Array<{ id: string; displayName: string }>>([])
+  const [personasLoading, setPersonasLoading] = useState(false)
   const [data, setData] = useState<BriefData | null>(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
+  // Track whether a brief exists for today so we can show a "Generate" CTA
+  // instead of auto-generating on every mount (which spends AI tokens on
+  // persona browsing).
+  const [briefExists, setBriefExists] = useState(false)
   const [copied, setCopied] = useState(false)
   const [posted, setPosted] = useState(false)
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null)
+  const [customMode, setCustomMode] = useState(false)
+  const [customText, setCustomText] = useState('')
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [imageLoading, setImageLoading] = useState(false)
   const [imageError, setImageError] = useState('')
@@ -42,14 +50,33 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
       if (!res.ok) return false
       const json = await res.json()
       if (json.ideas?.length > 0) {
-        setData({ ...json, platform })
-        const rec = json.ideas.find((i: DailyContentIdea) => i.ideaType === 'recommended')
-        setActiveIdeaId(rec?.id ?? json.ideas[0].id)
+        const merged = applyEditedCaptions({ ...json, platform })
+        setData(merged)
+        const rec = merged.ideas.find((i: DailyContentIdea) => i.ideaType === 'recommended')
+        setActiveIdeaId(rec?.id ?? merged.ideas[0].id)
+        setBriefExists(true)
         return true
       }
+      setBriefExists(false)
       return false
-    } catch { return false }
+    } catch { setBriefExists(false); return false }
   }, [personaId, platform])
+
+  // After loading, check sessionStorage for any captions edited in the
+  // post-editor and apply them to the live data (BUG-17: edited posts persist).
+  const applyEditedCaptions = useCallback((briefData: BriefData): BriefData => {
+    try {
+      const updated = { ...briefData, ideas: briefData.ideas.map(idea => {
+        const stored = sessionStorage.getItem(`studio-idea-${idea.id}`)
+        if (!stored) return idea
+        const parsed = JSON.parse(stored)
+        return parsed.postCaption && parsed.postCaption !== idea.postCaption
+          ? { ...idea, postCaption: parsed.postCaption }
+          : idea
+      })}
+      return updated
+    } catch { return briefData }
+  }, [])
 
   const generateBrief = useCallback(async () => {
     setGenerating(true)
@@ -64,12 +91,13 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
       if (!res.ok) throw new Error('Failed')
       const json = await res.json()
       if (json.ideas?.length > 0) {
-        setData({ ...json, platform })
-        setActiveIdeaId(json.ideas[0].id)
+        const merged = applyEditedCaptions({ ...json, platform })
+        setData(merged)
+        setActiveIdeaId(merged.ideas[0].id)
       }
     } catch { setError('Generation failed. Try again.') }
     finally { setGenerating(false) }
-  }, [personaId, platform])
+  }, [personaId, platform, applyEditedCaptions])
 
   const tryAnother = useCallback(async () => {
     if (!data) return
@@ -98,8 +126,26 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
   }, [personaId, data, platform])
 
   useEffect(() => {
-    fetchBrief().then(ok => { if (!ok) generateBrief() }).finally(() => setLoading(false))
-  }, [fetchBrief, generateBrief])
+    // Reset state when persona changes — prevents stale ideas from showing
+    // against the wrong persona (BUG-14: switch profile).
+    setData(null)
+    setActiveIdeaId(null)
+    setBriefExists(false)
+    setError('')
+    // Only fetch — never auto-generate on mount (ENH-01: explicit Generate button).
+    fetchBrief().finally(() => setLoading(false))
+  }, [fetchBrief])
+
+  // Fetch persona list for the switcher (BUG-14: in-component switch).
+  useEffect(() => {
+    if (personas.length > 0) return
+    setPersonasLoading(true)
+    fetch('/api/content/personas')
+      .then(r => r.ok ? r.json() : { personas: [] })
+      .then(json => setPersonas(json.personas ?? []))
+      .catch(() => {})
+      .finally(() => setPersonasLoading(false))
+  }, [personas.length])
 
 
   const handleCopy = () => {
@@ -228,13 +274,30 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
                  X
                </button>
              </div>
-             <button
-               onClick={() => router.push('/content?manage=1')}
-               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-ink/50 transition-colors hover:bg-bone-raised hover:text-cobalt"
-             >
-               <Users className="h-3.5 w-3.5" />
-               <span className="hidden sm:inline">Switch</span>
-             </button>
+              {/* Persona switcher (BUG-14: in-component switch) */}
+              {personas.length > 1 && (
+                <select
+                  value={personaId}
+                  onChange={(e) => {
+                    const id = e.target.value
+                    if (id && id !== personaId) router.push(`/content-v2/${id}/today`)
+                  }}
+                  className="rounded-lg border border-line bg-bone px-2 py-1 text-xs text-ink/70 hover:border-cobalt/40 focus:outline-none focus:border-cobalt"
+                  disabled={personasLoading}
+                >
+                  {personas.map((p) => (
+                    <option key={p.id} value={p.id}>{p.displayName}</option>
+                  ))}
+                </select>
+              )}
+              <button
+                onClick={() => router.push('/content?manage=1')}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-ink/50 transition-colors hover:bg-bone-raised hover:text-cobalt"
+                title="Manage personas"
+              >
+                <Users className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Manage</span>
+              </button>
              <button
                onClick={() => router.push('/content/new')}
                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-ink/50 transition-colors hover:bg-bone-raised hover:text-cobalt"
@@ -264,6 +327,80 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
             <AlertCircle className="h-4 w-4 shrink-0 text-status-danger" />
             <p className="text-sm text-ink/70 flex-1">{error}</p>
             <button onClick={generateBrief} className="text-sm font-medium text-cobalt hover:underline">Retry</button>
+          </div>
+        )}
+
+        {/* No brief yet — prompt to generate (ENH-01: explicit CTA, no auto-spend) */}
+        {!loading && !activeIdea && !error && (
+          <div className="flex flex-col items-center justify-center py-24">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-cobalt/10">
+              <Sparkles className="h-8 w-8 text-cobalt" />
+            </div>
+            <h2 className="text-lg font-medium text-ink">Ready to create</h2>
+            <p className="mt-2 max-w-sm text-center text-sm text-ink/50">
+              Generate a post for {displayName} on {platform === 'linkedin' ? 'LinkedIn' : 'X'}.
+            </p>
+            {!customMode ? (
+              <div className="mt-6 flex flex-col items-center gap-3">
+                <button
+                  onClick={generateBrief}
+                  disabled={generating}
+                  className="flex items-center gap-2 rounded-lg bg-cobalt px-6 py-2.5 text-sm font-medium text-on-accent transition-colors hover:bg-cobalt-dark disabled:opacity-50"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Generate Post
+                </button>
+                <button
+                  onClick={() => setCustomMode(true)}
+                  className="text-sm text-ink/40 hover:text-ink/70 transition-colors"
+                >
+                  or write your own
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4 w-full max-w-lg space-y-3">
+                <textarea
+                  value={customText}
+                  onChange={(e) => setCustomText(e.target.value)}
+                  rows={6}
+                  placeholder="Write your post idea, thought, or paste a draft to refine..."
+                  className="w-full rounded-lg border border-line bg-bone p-3 text-sm leading-relaxed text-ink focus:border-cobalt focus:outline-none resize-y"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (!customText.trim()) return
+                      const id = `custom-${Date.now()}`
+                      setData({
+                        brief: { id, status: 'custom', localDate: new Date().toISOString().slice(0, 10) },
+                        ideas: [{
+                          id,
+                          title: customText.slice(0, 80),
+                          angle: '',
+                          whyNow: '',
+                          postCaption: customText,
+                          postPlatform: platform,
+                        } as DailyContentIdea],
+                        platform,
+                      })
+                      setActiveIdeaId(id)
+                      setCustomMode(false)
+                    }}
+                    disabled={!customText.trim()}
+                    className="flex items-center gap-2 rounded-lg bg-cobalt px-4 py-2 text-sm font-medium text-on-accent hover:bg-cobalt-dark disabled:opacity-50"
+                  >
+                    <Check className="h-4 w-4" />
+                    Use this post
+                  </button>
+                  <button
+                    onClick={() => { setCustomMode(false); setCustomText('') }}
+                    className="text-sm text-ink/40 hover:text-ink/70"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
