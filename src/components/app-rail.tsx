@@ -27,6 +27,7 @@ import {
 import { cn } from 'cn'
 import { RelayBrand } from '@/components/brand'
 import { IdentityChip } from '@/components/identity-chip'
+import { NotificationCenter } from '@/components/notification-center'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { APP_VERSION } from '@/lib/version'
 import type { RepRole } from '@/lib/domain/types'
@@ -425,6 +426,7 @@ export function AppRail({
           </div>
           <div className="flex items-center gap-1.5">
             {sendCounter}
+            <NotificationCenter />
             <ThemeToggle />
             <button
               type="button"

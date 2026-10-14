@@ -35,7 +35,7 @@ export default async function TeamPage() {
         </p>
       </header>
 
-      {!live || (!live.teamSummary && !live.repRows?.length) ? (
+      {!live || !live.people?.length ? (
         <EmptyState
           icon={Users}
           title="No team activity yet"

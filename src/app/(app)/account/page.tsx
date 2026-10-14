@@ -9,11 +9,14 @@ import {
   Palette,
   Gauge,
   ArrowRight,
+  Clock,
+  Mail,
 } from 'lucide-react'
 import { getCurrentUser } from '@/lib/auth/current'
 import { createScoutStore } from '@/lib/store'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { SignOutButton } from '@/components/sign-out-button'
+import { WorkingHoursSettings, NotificationPreferences } from '@/components/account-settings'
 
 export const dynamic = 'force-dynamic'
 
@@ -143,6 +146,10 @@ export default async function AccountPage() {
         </article>
       </section>
 
+      <WorkingHoursSettings />
+
+      <NotificationPreferences />
+
       <section className="srf-console">
         <div className="flex items-center gap-3 px-4 py-3">
           <Palette className="size-4 text-stone" aria-hidden="true" />
@@ -154,7 +161,7 @@ export default async function AccountPage() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-line bg-bone-raised shadow-sm">
+      <section className="srf-console">
         <Link
           href="/pricing"
           className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-muted"
