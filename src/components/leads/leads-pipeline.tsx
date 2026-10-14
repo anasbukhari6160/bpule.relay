@@ -341,7 +341,7 @@ function LeadCard({ lead, orgView, now, onDragStart, index }: LeadCardProps) {
           </div>
           <div className="shrink-0">
             {score !== null ? (
-              <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} size={32} />
+              <ScoreRing score={lead.score} canonicalScore={lead.score == null ? lead.canonicalScore : null} size={32} />
             ) : (
               <div className="flex size-8 items-center justify-center rounded-full bg-bone border border-line/60">
                 <span className="text-[9px] font-medium text-stone">{getInitials(lead.company)}</span>

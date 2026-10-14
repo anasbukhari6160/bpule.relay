@@ -1177,13 +1177,26 @@ function identityBlockLines(lines: string[]): string[] {
   return end === -1 ? lines : lines.slice(0, end)
 }
 
+// LinkedIn UI chrome that must never be treated as a person's name.
+const LINKEDIN_NAME_BLOCKLIST = [
+  'view', 'view profile', 'view connection', 'follow', 'follow back',
+  'connect', 'message', 'recommend', 'endorse', 'more', 'see all',
+  'load more', 'show all', 'skip', 'close', 'edit', 'share',
+  'report', 'block', 'remove', 'accept', 'decline', 'pending',
+  'invitation sent', 'mutual connections', 'connections', 'connection',
+]
+
 function extractName(lines: string[]): string | null {
   for (const [index, line] of lines.slice(0, 8).entries()) {
-    if (/^(job|description|skills|posted|budget|client|company)\b/i.test(line)) continue
-    const explicitName = line.match(/^name:\s*(.+)$/i)
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    if (/^(job|description|skills|posted|budget|client|company)\b/i.test(trimmed)) continue
+    // Skip LinkedIn UI chrome and action labels
+    if (LINKEDIN_NAME_BLOCKLIST.some((word) => trimmed.toLowerCase() === word || trimmed.toLowerCase().startsWith(word + ' '))) continue
+    const explicitName = trimmed.match(/^name:\s*(.+)$/i)
     if (explicitName?.[1]) return explicitName[1].trim()
     // Skip section headers, labels, and all-caps structural labels
-    if (/^(===|source|identity|about|current|past|activity|education|skills|other|hiring|batch|prospect|experience|contact)\b/i.test(line)) continue
+    if (/^(===|source|identity|about|current|past|activity|education|skills|other|hiring|batch|prospect|experience|contact)\b/i.test(trimmed)) continue
     // An all-caps line is usually a structural label ("ABOUT", "SKILLS"), but
     // LinkedIn also renders SOME display names in all caps ("MD ABUL
     // MANSUR"). The very first non-empty line of a pasted profile is always
