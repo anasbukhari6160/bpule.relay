@@ -317,7 +317,7 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
   const draftMessages = visibleMessages.filter((m) => !m.sentText && m.draftText && m.direction !== 'inbound')
 
   const showFollowupOption = relationshipState.phase === 'dm_sent' && !followupGate.alreadyUsed
-  const hasOutboundReply = sentMessages.some((m) => m.type === 'reply')
+  const hasOutboundReply = sentMessages.some((m) => m.type === 'reply' && m.direction !== 'inbound')
   const showReplyOption = (relationshipState.phase === 'replied' || sentMessages.some((m) => m.direction === 'inbound')) && !hasOutboundReply
   const showDmOption = Boolean(dmGate.connectionAccepted || lead.connectionAcceptedAt)
 
