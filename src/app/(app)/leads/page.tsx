@@ -8,7 +8,7 @@ import { isProductAdmin } from '@/lib/auth/admin-page'
 import { PageHeader } from '@/components/ui/page-header'
 import { EmptyState } from '@/components/ui/empty-state'
 import { SkeletonText, SkeletonCircle } from '@/components/ui/skeleton'
-import { LeadsPipeline } from '@/components/leads/leads-pipeline'
+import { LeadsBoardV2 } from '@/components/leads/leads-board-v2'
 import type { Lead } from '@/lib/domain/types'
 import { computeLifecycleState, type LifecycleResult } from '@/lib/leads/lifecycle-policy'
 
@@ -205,7 +205,7 @@ async function LeadsBody({ leadsPromise }: { leadsPromise: Promise<LeadsPayload>
     )
   }
 
-  return <LeadsPipeline leads={leads} orgView={orgView} />
+  return <LeadsBoardV2 leads={leads} />
 }
 
 function LeadsBodySkeleton() {

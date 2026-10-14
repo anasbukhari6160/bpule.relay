@@ -91,13 +91,14 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
   // Derived
   const relationshipState = computeRelationshipState(lead, now)
   const signal = signalById(lead.signalType)
-  // Prefer legacy score (0-12) for display; fall back to canonical (0-100) only when legacy is absent.
-  const hasLegacyScore = lead.score != null
-  const rawDisplay = hasLegacyScore ? lead.score : lead.canonicalScore
-  const displayScore = rawDisplay ?? 0
-  const scoreLabel = hasLegacyScore
-    ? (displayScore >= 10 ? 'Strong' : displayScore >= 7 ? 'Good' : displayScore >= 4 ? 'Fair' : 'Weak')
-    : (displayScore >= 85 ? 'Strong' : displayScore >= 70 ? 'Good' : displayScore >= 55 ? 'Fair' : 'Weak')
+  // Canonical (V3) is the source of truth — it is what was shown during extraction.
+  // Legacy (V2) is a fallback for old leads that pre-date canonical scoring.
+  const canonical = lead.canonicalScore ?? null
+  const hasCanonical = canonical != null
+  const displayScore = hasCanonical ? Math.round(canonical / 10) : (lead.score ?? 0)
+  const scoreLabel = hasCanonical
+    ? (displayScore >= 7 ? 'Strong' : displayScore >= 5 ? 'Good' : displayScore >= 3 ? 'Fair' : 'Weak')
+    : (displayScore >= 10 ? 'Strong' : displayScore >= 7 ? 'Good' : displayScore >= 4 ? 'Fair' : 'Weak')
 
   // Sender profile context
   const senderProfile = profiles.find((p) => p.id === lead.senderProfileId) ?? profiles[0] ?? null
@@ -421,10 +422,10 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
             </div>
           </div>
           <div className="flex flex-col items-center gap-1.5 shrink-0 rounded-lg border border-line/40 bg-bone-raised/30 px-3 py-2">
-            <ScoreRing score={lead.score} canonicalScore={lead.score == null ? lead.canonicalScore : null} size={44} />
+            <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} size={44} />
             <span className="text-[11px] font-medium text-ink">{scoreLabel}</span>
-            {displayScore > 0 && (
-              <span className="text-[10px] text-stone">{hasLegacyScore ? `${displayScore}/12` : `${Math.round(displayScore / 10)}/10`}</span>
+            {hasCanonical && (
+              <span className="text-[10px] text-stone">{displayScore}/10</span>
             )}
           </div>
         </div>
@@ -508,7 +509,7 @@ export function LeadWorkspaceSimple({ lead: initialLead, profiles, dailyLimit, t
       {(() => {
         // Only show breakdown when displaying canonical score (V3 dimensions match 0-100 scale).
         // Legacy 0-12 score has no per-dimension breakdown to display.
-        if (hasLegacyScore) return null
+        if (hasCanonical) return null
         const ci = lead.canonicalIntelligence as Record<string, unknown> | null
         const breakdown = ci?.scoreBreakdown as Record<string, unknown> | null
         const dimensions = Array.isArray(breakdown?.dimensions) ? breakdown.dimensions as Array<Record<string, unknown>> : []

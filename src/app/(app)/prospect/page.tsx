@@ -501,7 +501,7 @@ export default function ProspectCheckPage() {
           {result.score ? (
             <div>
               <div className="flex items-baseline gap-3">
-                <ScoreRing score={result.score.displayScore ?? 5} max={10} size={64} />
+                <ScoreRing canonicalScore={result.score.total} size={64} />
                 <div className="min-w-0">
                   <h2 className="text-[15px] font-medium text-ink">
                     {result.extracted.name ?? 'Unnamed prospect'}

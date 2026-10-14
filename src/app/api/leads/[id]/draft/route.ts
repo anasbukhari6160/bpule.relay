@@ -202,8 +202,8 @@ export async function POST(
 
       let replyKnowledge: ReturnType<typeof analyzeReply>['knowledge'] | null = null
       if (type === 'reply') {
-        const prospectReplyMsg = body.replyToMessageId && body.replyToMessageId !== 'manual'
-          ? detail.messages.find((m) => m.id === body.replyToMessageId)
+        let prospectReplyMsg = body.replyToMessageId && body.replyToMessageId !== 'manual'
+          ? detail.messages.find((m) => m.id === body.replyToMessageId) ?? null
           : null
         let prospectReply = body.replyText?.trim() || prospectReplyMsg?.sentText || prospectReplyMsg?.draftText || ''
         // Fallback: if no explicit reply text, use the latest inbound message
@@ -213,6 +213,7 @@ export async function POST(
             .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0]
           if (latestInbound) {
             prospectReply = latestInbound.sentText || ''
+            prospectReplyMsg = latestInbound  // ensure priorMessages filter works
           }
         }
 
