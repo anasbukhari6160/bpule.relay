@@ -176,7 +176,7 @@ export default function NewUpworkJobPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
-      <section className="rounded-xl border border-line bg-bone-raised/30 px-5 py-5 sm:px-6">
+      <section className="srf-console px-5 py-5 sm:px-6">
         <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-stone">Intake / Upwork Opportunity</p>
         <h1 className="mt-2 text-[22px] font-medium text-ink">
           Qualify job posts before spending Connects.

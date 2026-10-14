@@ -447,7 +447,7 @@ export default function ProspectCheckPage() {
         </Alert>
       ) : null}
 
-      <div className="rounded-lg border border-line bg-bone-raised p-4 shadow-sm sm:p-5">
+      <div className="srf-console p-4 sm:p-5">
         <div className="flex items-center gap-2">
           <Search className="size-4 text-orange" aria-hidden="true" />
           <h2 className="text-sm font-medium text-ink">Paste a LinkedIn profile</h2>
