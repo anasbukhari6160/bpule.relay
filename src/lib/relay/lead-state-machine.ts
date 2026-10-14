@@ -137,25 +137,25 @@ export function deriveNextLeadAction(lead: LeadDetail): LeadActionResult {
     }
   }
 
-  // 3. Connection accepted, DM not sent
-  if (connectionAccepted && !dmSent) {
-    return {
-      action: 'SEND_DM',
-      primaryLabel: 'Send first message',
-      reason: 'Connection accepted. Start the conversation.',
-      requiresAction: true,
-      followupDue: false,
-      followupsRemaining,
-    }
-  }
-
-  // 4. Client replied, rep hasn't answered — takes priority over SEND_DM.
+  // 3. Client replied, rep hasn't answered — takes priority over everything.
   // A reply is the next action whether or not a DM was sent first.
   if (clientReplied && !replySent) {
     return {
       action: 'SEND_REPLY',
       primaryLabel: `Reply to ${lead.contactName ?? 'them'}`,
       reason: `Client replied ${lastInbound?.sentAt ? timeAgo(lastInbound.sentAt, now) : ''}.`,
+      requiresAction: true,
+      followupDue: false,
+      followupsRemaining,
+    }
+  }
+
+  // 4. Connection accepted, DM not sent
+  if (connectionAccepted && !dmSent) {
+    return {
+      action: 'SEND_DM',
+      primaryLabel: 'Send first message',
+      reason: 'Connection accepted. Start the conversation.',
       requiresAction: true,
       followupDue: false,
       followupsRemaining,
