@@ -97,7 +97,7 @@ export function ConversationsClient({ conversations }: ConversationsClientProps)
         </div>
 
         {/* Selected conversation workspace */}
-        <div className="min-w-0 rounded-xl border border-line bg-bone-raised/10 p-4 min-h-[60vh]">
+        <div className="min-w-0 srf-console p-4 min-h-[60vh]">
           {selected ? (
             <div className="h-full flex flex-col">
               <div className="pb-3 border-b border-line mb-3">
