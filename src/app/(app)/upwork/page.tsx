@@ -42,11 +42,11 @@ export default async function UpworkPage() {
           }
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-line">
-          <ul className="divide-y divide-line/60">
+        <div className="srf-console overflow-hidden">
+          <ul className="divide-y divide-console-line/50">
             {jobs.map((job) => (
               <li key={job.id}>
-                <Link href={`/upwork/${job.id}`} className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-bone-raised">
+                <Link href={`/upwork/${job.id}`} className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-console-raised">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-medium text-ink">{job.title}</p>
                     <p className="text-[11px] text-graphite capitalize">{job.status}</p>

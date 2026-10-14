@@ -47,21 +47,21 @@ export default async function AccountPage() {
       </header>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-line bg-bone-raised px-3 py-2.5 shadow-sm">
+        <div className="srf-proof px-3 py-2.5">
           <p className="text-mono-medium text-[9px] uppercase tracking-[0.14em] text-stone">Plan</p>
           <p className="mt-1 text-lg font-medium text-ink">{planLabel}</p>
         </div>
-        <div className="rounded-lg border border-line bg-bone-raised px-3 py-2.5 shadow-sm">
+        <div className="srf-proof px-3 py-2.5">
           <p className="text-mono-medium text-[9px] uppercase tracking-[0.14em] text-stone">Role</p>
           <p className="mt-1 text-lg font-medium capitalize text-ink">{user.rep.role}</p>
         </div>
-        <div className="rounded-lg border border-line bg-bone-raised px-3 py-2.5 shadow-sm">
+        <div className="srf-proof px-3 py-2.5">
           <p className="text-mono-medium text-[9px] uppercase tracking-[0.14em] text-stone">Sends Left Today</p>
           <p className="mt-1 text-lg font-medium text-ink">{sendsLeft}</p>
         </div>
       </div>
 
-      <div className="rounded-lg border border-line bg-bone-raised p-4 shadow-sm">
+      <div className="srf-console p-4">
         <div className="flex items-end justify-between gap-3">
           <p className="text-[12px] text-graphite">Daily send budget</p>
           <p className="text-[12px] font-medium text-ink">{totalUsed} / {totalLimit}</p>
@@ -93,7 +93,7 @@ export default async function AccountPage() {
       </div>
 
       <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-        <article className="rounded-lg border border-line bg-bone-raised shadow-sm">
+        <article className="srf-console srf-console-edge">
           <div className="border-b border-line px-4 py-3">
             <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Identity Record</p>
           </div>
@@ -124,7 +124,7 @@ export default async function AccountPage() {
           </div>
         </article>
 
-        <article className="rounded-lg border border-line bg-bone-raised p-4 shadow-sm">
+        <article className="srf-console p-4">
           <div className="flex items-center gap-2 text-[12px] font-medium text-ink">
             <Gauge className="size-3.5 text-orange" />
             Calibration
@@ -143,7 +143,7 @@ export default async function AccountPage() {
         </article>
       </section>
 
-      <section className="rounded-lg border border-line bg-bone-raised shadow-sm">
+      <section className="srf-console">
         <div className="flex items-center gap-3 px-4 py-3">
           <Palette className="size-4 text-stone" aria-hidden="true" />
           <div className="flex-1">
