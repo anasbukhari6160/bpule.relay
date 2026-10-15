@@ -38,12 +38,12 @@ export async function GET(request: Request) {
 
    const localDate = getLocalDate(user.rep.timezone ?? 'UTC')
 
-   const existing = await store.getDailyContentBriefWithIdeas(personaId, localDate)
-   if (existing && existing.ideas.length > 0) {
-     return NextResponse.json({ brief: existing.brief, ideas: existing.ideas, fromCache: true, platform })
-   }
+    const existing = await store.getDailyContentBriefWithIdeas(personaId, localDate)
+    if (existing && existing.ideas.length > 0) {
+      return NextResponse.json({ brief: existing.brief, ideas: existing.ideas, fromCache: true, platform })
+    }
 
-   return generateAndRespond(store, persona, localDate, user.rep.timezone ?? 'UTC', platform)
+    return NextResponse.json({ brief: null, ideas: [], platform })
  }
 
 export async function POST(request: Request) {

@@ -1486,8 +1486,24 @@ function generateHashtags(postCaption: string, idea: { title?: string; territory
 
   // Deduplicate and take top 3, ensuring no generic tags
   const seen = new Set<string>()
-  return candidates
+  const tags = candidates
     .filter(c => !seen.has(c.tag) && seen.add(c.tag))
     .slice(0, 3)
     .map(c => c.tag)
+
+  // Fallback: extract capitalized multi-word phrases or significant nouns from the post
+  if (tags.length === 0) {
+    const words = postCaption.split(/\s+/).filter(w => w.length > 4)
+    const seenWords = new Set<string>()
+    for (const word of words) {
+      const clean = word.replace(/[^a-zA-Z]/g, '')
+      if (clean.length > 4 && !seenWords.has(clean.toLowerCase())) {
+        seenWords.add(clean.toLowerCase())
+        tags.push(clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase())
+      }
+      if (tags.length >= 3) break
+    }
+  }
+
+  return tags.slice(0, 3)
 }

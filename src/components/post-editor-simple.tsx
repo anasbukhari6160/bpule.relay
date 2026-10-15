@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Copy, Check, RefreshCw, Image, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Copy, Check, RefreshCw, Image, ExternalLink, Download } from 'lucide-react'
 
 interface PostData {
   id: string
@@ -135,7 +135,22 @@ export function SimplePostEditor({ post }: { post: PostData }) {
               className="flex items-center gap-2 rounded-lg bg-cobalt px-4 py-2 text-sm font-medium text-on-accent hover:bg-cobalt/90"
             >
               <Check className="h-4 w-4" />
-              Done
+              Okay
+            </button>
+            <button
+              onClick={() => {
+                const blob = new Blob([caption], { type: 'text/plain' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `relay-post-${Date.now()}.txt`
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+              className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink/60 hover:border-cobalt/40 hover:text-cobalt"
+            >
+              <Download className="h-4 w-4" />
+              Download
             </button>
             <button
               onClick={handleCopy}
