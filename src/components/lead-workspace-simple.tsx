@@ -132,7 +132,19 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   const visibleMessages = messages.filter((m) => m.sentText || m.direction === 'inbound').sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
 
   const scoreBreakdown = (lead.canonicalIntelligence as Record<string, unknown>)?.scoreBreakdown as Record<string, unknown> | null
-  const dimensions = Array.isArray(scoreBreakdown?.dimensions) ? scoreBreakdown.dimensions as Array<Record<string, unknown>> : []
+  const rawDimensions = Array.isArray(scoreBreakdown?.dimensions) ? scoreBreakdown.dimensions as Array<Record<string, unknown>> : []
+  // Normalize V2 (points/max) and V3 (contribution/weight) into a single shape
+  const dimensions = rawDimensions.map((d) => {
+    if (d.points != null && d.max != null) {
+      // V2 format
+      return { label: String(d.label ?? d.key), points: Number(d.points ?? 0), max: Number(d.max ?? 0), note: d.note != null ? String(d.note) : null }
+    }
+    // V3 format: contribution = raw * weight * 100, max = weight * 100
+    const contribution = Number(d.contribution ?? 0)
+    const weight = Number(d.weight ?? 0)
+    const max = weight * 100
+    return { label: String(d.label ?? d.key), points: contribution, max: max > 0 ? max : 100, note: d.note != null ? String(d.note) : null }
+  })
 
   return (
     <div className="space-y-6">
@@ -190,20 +202,18 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
             <span className="ml-auto text-stone hidden group-open:inline"><ChevronUp className="size-4" /></span>
           </summary>
           <div className="grid gap-3 p-5 sm:grid-cols-2 border-t border-line/40">
-            {dimensions.map((dim) => {
-              const points = Number(dim.points ?? 0)
-              const max = Number(dim.max ?? 0)
-              const pct = max > 0 ? Math.min(100, Math.round((points / max) * 100)) : 0
+            {dimensions.map((dim, i) => {
+              const pct = dim.max > 0 ? Math.min(100, Math.round((dim.points / dim.max) * 100)) : 0
               return (
-                <div key={String(dim.key)} className="rounded-lg border border-line/50 bg-bone p-3">
+                <div key={`${dim.label}-${i}`} className="rounded-lg border border-line/50 bg-bone p-3">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[12px] font-medium text-ink">{String(dim.label ?? dim.key)}</span>
-                    <span className="text-[11px] font-mono text-stone">{points.toFixed(1)} / {max}</span>
+                    <span className="text-[12px] font-medium text-ink">{dim.label}</span>
+                    <span className="text-[11px] font-mono text-stone">{dim.points.toFixed(1)} / {dim.max.toFixed(0)}</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-line/40 overflow-hidden">
                     <div className={cn('h-full rounded-full', pct >= 70 ? 'bg-status-success' : pct >= 40 ? 'bg-orange' : 'bg-status-warning')} style={{ width: `${pct}%` }} />
                   </div>
-                  {dim.note != null && <p className="mt-1 text-[10px] text-stone">{String(dim.note)}</p>}
+                  {dim.note && <p className="mt-1 text-[10px] text-stone">{dim.note}</p>}
                 </div>
               )
             })}
