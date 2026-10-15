@@ -342,3 +342,156 @@ ${input.postText.slice(0, 500)}
 
 Create a visual concept for this post. Output JSON: { "visual_idea": "...", "image_prompt": "..." }`
 }
+
+// ============================================================================
+// Humanized Image Prompt Generator
+// Produces prompts that generate photorealistic, candid images — never vector,
+// never illustration, never "AI-looking". The goal: an image that looks like
+// a real person captured it with their camera.
+// ============================================================================
+
+export interface HumanizedImageInput {
+  postText: string
+  topic: string
+  angle: string
+  tone: string
+  /** The core detail or insight the post centers on */
+  coreDetail: string
+  platform: 'linkedin' | 'x'
+}
+
+export interface HumanizedImageResult {
+  visualIdea: string
+  imagePrompt: string
+  style: 'candid_documentary' | 'editorial_environment' | 'detail_macro' | 'atmospheric_scene' | 'workplace_moment'
+}
+
+const OVERUSED_SUBJECTS = [
+  /laptop/i, /robot/i, /ai brain/i, /code on screen/i, /person at desk/i,
+  /business handshake/i, /stock photo/i, /3d render/i, /illustration/i,
+  /vector/i, /cartoon/i, /flat design/i, /gradient background/i,
+  /glowing (circuit|node|network)/i, /floating (screen|device|phone)/i,
+  /person staring at (screen|laptop|monitor)/i, /white (background|studio)/i,
+  /abstract (shape|pattern|blob|geometry)/i, /hologram/i,
+]
+
+function selectHumanizedStyle(input: HumanizedImageInput): HumanizedImageResult['style'] {
+  const text = `${input.postText} ${input.coreDetail} ${input.topic}`.toLowerCase()
+
+  if (/\b(error|bug|mistake|fail|broken|fix|debug|crash)\b/.test(text)) {
+    return 'detail_macro'
+  }
+  if (/\b(team|office|cowork|meeting|culture|hire|work)\b/.test(text)) {
+    return 'workplace_moment'
+  }
+  if (/\b(travel|city|street|cafe|outside|nature|walk|commute)\b/.test(text)) {
+    return 'candid_documentary'
+  }
+  if (/\b(data|chart|growth|metric|number|percent|result)\b/.test(text)) {
+    return 'atmospheric_scene'
+  }
+  return 'editorial_environment'
+}
+
+function buildHumanizedPrompt(
+  style: HumanizedImageResult['style'],
+  input: HumanizedImageInput,
+): HumanizedImageResult {
+  const aspectRatio = input.platform === 'linkedin' ? '1.91:1 landscape' : '16:9 or 1:1'
+  const mood = input.tone === 'serious' ? 'contemplative, grounded'
+    : input.tone === 'frustrated' ? 'raw, unpolished'
+    : input.tone === 'excited' ? 'energetic, alive'
+    : 'authentic, unhurried'
+
+  const baseConstraints = [
+    'Photorealistic. Shot on a real camera — shallow depth of field, natural lens compression.',
+    'NO illustrations, NO vectors, NO 3D renders, NO cartoon, NO flat design.',
+    'NO stock photo poses. NO generic business imagery.',
+    'NO text overlays, NO watermarks, NO logos.',
+    'Must look like a photograph a real person took — imperfect, candid, lived-in.',
+  ].join(' ')
+
+  const scene = extractSceneFromPost(input.postText, input.coreDetail)
+  const props = selectPropsForTopic(input.topic)
+
+  switch (style) {
+    case 'candid_documentary':
+      return {
+        visualIdea: `Candid documentary photograph: ${scene}`,
+        imagePrompt: `Candid documentary photograph. ${scene}. ${props}. Natural light — overcast or golden hour. Shot on Fujifilm X-T5 or similar, 35mm lens, f/2.0. Slight grain, natural color grading. The moment feels unposed — someone captured this while walking by. ${mood} atmosphere. ${baseConstraints} ${aspectRatio}.`,
+        style,
+      }
+
+    case 'editorial_environment':
+      return {
+        visualIdea: `Editorial environment photograph: ${scene}`,
+        imagePrompt: `Editorial environment photograph. ${scene}. ${props}. Careful composition with strong foreground interest and layered depth. Natural lighting from windows or practical sources. Muted color palette — one subtle warm tone breaking through cool neutrals. Shot on Sony A7IV, 24-70mm. Professional but not sterile. ${mood} atmosphere. ${baseConstraints} ${aspectRatio}.`,
+        style,
+      }
+
+    case 'detail_macro':
+      return {
+        visualIdea: `Detail macro photograph: ${scene}`,
+        imagePrompt: `Detail macro photograph. ${scene}. ${props}. Extreme close-up, shallow depth of field, focus on texture and material detail. Available light — desk lamp, window, or overhead fluorescents. The imperfection IS the story: coffee rings, worn edges, handwritten notes, screen glare. Shot on Canon R5, 100mm macro. ${mood} atmosphere. ${baseConstraints} ${aspectRatio}.`,
+        style,
+      }
+
+    case 'atmospheric_scene':
+      return {
+        visualIdea: `Atmospheric scene: ${scene}`,
+        imagePrompt: `Atmospheric photograph. ${scene}. ${props}. Wide shot with strong sense of place. Dawn or dusk light — long shadows, warm highlights. The environment tells the story: empty coworking space at 7am, a single lit window in a dark building, rain on glass. Shot on Leica Q2, 28mm. Cinematic color grade. ${mood} atmosphere. ${baseConstraints} ${aspectRatio}.`,
+        style,
+      }
+
+    case 'workplace_moment':
+      return {
+        visualIdea: `Workplace moment: ${scene}`,
+        imagePrompt: `Workplace moment photograph. ${scene}. ${props}. Candid — not posed. Real workspace with real mess: cables, notebooks, coffee cups, sticky notes on a monitor. Natural mixed lighting. The person (if any) is shown from behind or in profile — never facing camera. Shot on iPhone 15 Pro or similar. Slightly warm, slightly imperfect. The authenticity is the point. ${mood} atmosphere. ${baseConstraints} ${aspectRatio}.`,
+        style,
+      }
+  }
+}
+
+function extractSceneFromPost(postText: string, coreDetail: string): string {
+  const sentences = postText.split(/[.!?\n]+/).map(s => s.trim()).filter(s => s.length > 20)
+  if (sentences.length > 0) {
+    const best = sentences.find(s => !/^(i |we |my |the |a |an |it |this |that |here |there |what |how |why |when |do |does |is |are )/i.test(s)) ?? sentences[0]
+    const cleaned = best.replace(/^[^a-zA-Z]+/, '').trim()
+    if (cleaned.length > 15) return cleaned.slice(0, 120)
+  }
+  return coreDetail.slice(0, 120)
+}
+
+function selectPropsForTopic(topic: string): string {
+  const lower = topic.toLowerCase()
+  if (/ai|machine learning|llm/.test(lower)) return 'Physical artifacts of AI work: printed model outputs, handwritten architecture sketches, server room, GPU rig with visible cables'
+  if (/startup|founder|business/.test(lower)) return 'Startup artifacts: whiteboard with strategy notes, coffee-stained pitch deck pages, early prototype on a desk'
+  if (/devops|infrastructure|cloud/.test(lower)) return 'Infrastructure artifacts: server room, cable management, terminal screenshot on a worn monitor, rack lights'
+  if (/web|frontend|design/.test(lower)) return 'Design artifacts: browser with dev tools open, design sketches, component library printouts, Figma on screen'
+  if (/security/.test(lower)) return 'Security artifacts: encrypted notebook, lock icons drawn on paper, terminal with security scan running'
+  if (/data|analytics/.test(lower)) return 'Data artifacts: hand-drawn charts on paper, spreadsheet printouts, database schema on whiteboard'
+  return 'Work artifacts: notebook with handwritten notes, coffee cup, warm desk lamp light, natural workspace clutter'
+}
+
+/**
+ * Generate a humanized, photorealistic image prompt for a social post.
+ * The output is designed to produce images that look like real photographs —
+ * never vector art, never illustration, never "AI-generated looking".
+ */
+export function generateHumanizedImagePrompt(input: HumanizedImageInput): HumanizedImageResult {
+  const style = selectHumanizedStyle(input)
+  const result = buildHumanizedPrompt(style, input)
+
+  // Verify the prompt doesn't contain overused subjects
+  for (const pattern of OVERUSED_SUBJECTS) {
+    if (pattern.test(result.imagePrompt)) {
+      // Inject a stronger negative constraint
+      result.imagePrompt = result.imagePrompt.replace(
+        '. ',
+        '. AVOID: ' + pattern.source + '. ',
+      )
+    }
+  }
+
+  return result
+}

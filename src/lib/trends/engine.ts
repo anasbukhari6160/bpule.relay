@@ -7,6 +7,7 @@ import { githubTrendingAdapter } from './adapters/github'
 import { redditProgrammingAdapter, redditTechNewsAdapter } from './adapters/reddit'
 import { lobstersHotAdapter, lobstersNewestAdapter } from './adapters/lobsters'
 import { productHuntAdapter } from './adapters/producthunt'
+import { newsapiTechAdapter, newsapiBusinessAdapter } from './adapters/newsapi'
 
 const ADAPTER_REGISTRY: Record<string, () => SourceAdapter> = {
   'hackernews-top': hackernewsTopAdapter,
@@ -20,6 +21,8 @@ const ADAPTER_REGISTRY: Record<string, () => SourceAdapter> = {
   'lobsters-hot': lobstersHotAdapter,
   'lobsters-newest': lobstersNewestAdapter,
   'producthunt-today': productHuntAdapter,
+  'newsapi-technology': newsapiTechAdapter,
+  'newsapi-business': newsapiBusinessAdapter,
 }
 
 export function getSourceAdapters(sourceKeys?: string[]): SourceAdapter[] {
@@ -304,11 +307,12 @@ function evidenceQualityFor(sourceType: TrendSourceType): 'high' | 'medium' | 'l
     case 'stackoverflow': return 'medium'
     case 'rss': return 'high'
     case 'arxiv': return 'high'
+    case 'newsapi': return 'high'
     default: return 'low'
   }
 }
 
 function expiryFor(sourceType: TrendSourceType): string {
-  const days = sourceType === 'hackernews' ? 3 : sourceType === 'devto' ? 7 : 14
+  const days = sourceType === 'hackernews' ? 3 : sourceType === 'devto' ? 7 : sourceType === 'newsapi' ? 5 : 14
   return new Date(Date.now() + days * 86400000).toISOString()
 }

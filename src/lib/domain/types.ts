@@ -2209,7 +2209,7 @@ export interface DailyEditorResult {
 }
 
 
-export type TrendSourceType = 'hackernews' | 'devto' | 'github' | 'reddit' | 'lobsters' | 'producthunt' | 'stackoverflow' | 'rss' | 'arxiv'
+export type TrendSourceType = 'hackernews' | 'devto' | 'github' | 'reddit' | 'lobsters' | 'producthunt' | 'stackoverflow' | 'rss' | 'arxiv' | 'newsapi'
 export type EvidenceQuality = 'high' | 'medium' | 'low'
 
 export interface TrendSource {
