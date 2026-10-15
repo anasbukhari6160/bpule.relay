@@ -379,29 +379,37 @@ function fallbackText(input: DraftInput): string {
   const firstName = name.split(' ')[0]
   const company = input.lead.company
   const title = (input.extracted.title ?? input.lead.contactTitle ?? '').split(/\s*[·|\-–]\s+/)[0].trim()
-
   const observation = buildSpecificObservation(input, title, company)
 
   if (input.type === 'connection') {
-    return `Hi ${firstName}, ${observation} Thought it worth reaching out to connect.`
+    const openers = [
+      `Hi ${firstName}, ${observation} Would be great to connect.`,
+      `Hi ${firstName}, ${observation} Thought it worth reaching out — connect?`,
+      `Hi ${firstName}, ${observation} Always interesting to meet others in this space. Connect?`,
+    ]
+    return openers[Math.abs(hashCode(company)) % openers.length]
   }
 
   if (input.type === 'followup') {
-    return `Hi ${firstName}, following up on my last note. If this is not a priority for ${company} right now, a quick "not now" is perfect.`
+    return `Hi ${firstName}, following up on my last note. If the timing is not right for ${company}, a quick "not now" is perfect.`
   }
 
   if (input.type === 'upwork') {
-    return `Hi ${firstName}, read your brief and noticed ${observation}. I can help ${company} ship this cleanly. Happy to share a short approach in one reply if useful.`
+    return `Hi ${firstName}, ${observation} I can help ${company} ship this. Happy to share a short approach in one reply.`
   }
 
-  // DM: varied openers to avoid the repetitive "one practical idea" pattern
+  if (input.type === 'reply') {
+    // For replies, acknowledge their message — never pitch
+    return `Hi ${firstName}, thanks for getting back. No pressure — just wanted to leave the door open if anything comes up.`
+  }
+
+  // DM: varied, specific openers
   const dmOpeners = [
     `Hi ${firstName}, ${observation} One thing that caught my attention — would be curious how you are approaching it at ${company}.`,
-    `Hi ${firstName}, ${observation} Would be great to swap one practical idea if useful.`,
-    `Hi ${firstName}, ${observation} Quick question — what is the one thing ${company} is prioritizing right now in that space?`,
+    `Hi ${firstName}, ${observation} Quick question — what is the one thing ${company} is prioritizing right now?`,
+    `Hi ${firstName}, ${observation} I have one specific idea that might be relevant for ${company}. Worth a share?`,
   ]
-  const idx = Math.abs(hashCode(company + title)) % dmOpeners.length
-  return dmOpeners[idx]
+  return dmOpeners[Math.abs(hashCode(company + title)) % dmOpeners.length]
 }
 
 /** Simple deterministic hash for picking a varied opener. */
@@ -480,16 +488,12 @@ function normalizeVariant(
     evidence: input.extracted.signalEvidence,
   })
   const sanitized = sanitizeDraft(cleaned, input.facts)
-  // Use deterministic code checks as the primary gate. The AI's self-check
-  // (test_1_reply_or_delete, test_2_not_generic) is advisory — it often rejects
-  // drafts that are actually fine because the model is overly self-critical.
-  // We trust the deterministic checks: company mentioned, specific evidence
-  // mentioned, no stripped numbers, no requested call.
-  const passed = Boolean(
-    codeChecks.companyMentioned &&
-      codeChecks.specificEvidenceMentioned &&
-      !sanitized.requestedCall,
-  )
+  // Lenient gate: only reject if the model output is truly broken (empty,
+  // contains a hard-sell call request, or is shorter than a valid message).
+  // We trust the model — it was given rich lead context and a detailed prompt.
+  // Over-strict gates caused every draft to fall back to the generic template.
+  const tooShort = sanitized.text.trim().split(/\s+/).length < 8
+  const passed = !tooShort && !sanitized.requestedCall && sanitized.strippedNumbers.length === 0
   let draftText = sanitized.text
 
   // Fix AI-looking em-dash after name: "Hi John - ..." → "Hi John, ..."
@@ -504,7 +508,7 @@ function normalizeVariant(
       test2Note: raw.test_2_note || '',
       codeChecks,
     },
-    passed: passed && sanitized.strippedNumbers.length === 0 && !sanitized.requestedCall,
+    passed,
     strippedNumbers: sanitized.strippedNumbers,
     hadEmDash: sanitized.hadEmDash,
     hadExclamation: sanitized.hadExclamation,
