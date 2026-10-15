@@ -28,6 +28,7 @@ export interface FollowupStrategy {
   ctaApproach: string
   valueAdd: string | null
   waitReason: string | null
+  early?: boolean
 }
 
 /**
@@ -64,31 +65,10 @@ export function determineFollowup(context: FollowupContext): FollowupStrategy {
     }
   }
 
-  if (lead.status === 'replied' || context.lastReplyAt) {
-    return {
-      shouldFollowUp: false,
-      reason: 'Lead has already replied.',
-      approach: 'none',
-      tone: 'none',
-      ctaApproach: 'none',
-      valueAdd: null,
-      waitReason: 'Reply to their message instead of following up.',
-    }
-  }
-
+  // Timing check: allow follow-up even early, just flag it
   const dueIn = followupDueInDays(followupCount)
   const daysSince = calendarDaysBetween(new Date(lastSentAt), now)
-  if (daysSince < dueIn) {
-    return {
-      shouldFollowUp: false,
-      reason: `Only ${daysSince} calendar days since last send. Wait for ${dueIn}.`,
-      approach: 'none',
-      tone: 'none',
-      ctaApproach: 'none',
-      valueAdd: null,
-      waitReason: `Wait ${dueIn - daysSince} more calendar day(s).`,
-    }
-  }
+  const isEarly = daysSince < dueIn
 
   const lastSent = priorMessages
     .filter((m) => m.sentText && m.sentAt)
@@ -101,12 +81,15 @@ export function determineFollowup(context: FollowupContext): FollowupStrategy {
 
   return {
     shouldFollowUp: true,
-    reason: `${daysSince} business days since last send. Follow-up ${followupCount + 1} of 3 allowed.`,
+    reason: isEarly
+      ? `Early follow-up (${daysSince}/${dueIn} days). Follow-up ${followupCount + 1} of 3.`
+      : `${daysSince} days since last send. Follow-up ${followupCount + 1} of 3.`,
     approach: approach.approach,
     tone: approach.tone,
     ctaApproach: approach.ctaApproach,
     valueAdd: approach.valueAdd,
     waitReason: null,
+    early: isEarly,
   }
 }
 
