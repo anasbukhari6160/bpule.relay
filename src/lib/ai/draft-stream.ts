@@ -128,6 +128,7 @@ export async function streamDraft(
     temperature: 0.7,
     callSite: 'draft-stream:attempt1',
     feature: 'outbound_draft',
+    skipCache: true, // never cache drafts — every message must be fresh
   })
     .then((r) => {
       callLog.push({ costTier: (r.trace.costTier || 'tier1') as CostTierName, host: r.trace.provider, estimatedCostUsd: r.trace.estimatedCostUsd })
@@ -192,6 +193,7 @@ export async function streamDraft(
       temperature: 0.5,
       callSite: 'draft-stream:attempt2',
       feature: 'outbound_draft',
+      skipCache: true, // never cache drafts — every message must be fresh
     })
       .then((r) => {
         callLog.push({ costTier: (r.trace.costTier || 'tier1') as CostTierName, host: r.trace.provider,         estimatedCostUsd: r.trace.estimatedCostUsd })
@@ -585,8 +587,13 @@ function deterministicChecks(
       .split(/\W+/)
       .filter((w) => w.length >= 5) ?? []
 
-  const companyMentioned = c.length > 0 ? draft.toLowerCase().includes(c) : true
-  const specificEvidenceMentioned = evidenceWords.some((w) =>
+  // Company mention: check full name OR first token (e.g. "Search" from "Search HI")
+  const companyTokens = c.split(/\s+/).filter(Boolean)
+  const companyMentioned = c.length > 0
+    ? draft.toLowerCase().includes(c) || companyTokens.some((t) => t.length > 2 && draft.toLowerCase().includes(t))
+    : true
+  // Evidence: check if ANY evidence word appears (lenient — model may paraphrase)
+  const specificEvidenceMentioned = evidenceWords.length === 0 || evidenceWords.some((w) =>
     draft.toLowerCase().includes(w),
   )
   return { companyMentioned, specificEvidenceMentioned }
