@@ -214,6 +214,29 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
         </div>
       </div>
 
+      {/* Lead Status Control */}
+      {!isTerminal && (
+        <div className="rounded-2xl border border-line bg-bone-raised/20 px-5 py-3 flex items-center justify-between">
+          <span className="text-[12px] text-stone">Mark lead as:</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                await fetch(`/api/leads/${lead.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status_type: 'meeting_booked' }) })
+                router.refresh()
+              }}
+              className="rounded-lg bg-status-success/10 px-2.5 py-1 text-[11px] font-medium text-status-success hover:bg-status-success/20 transition-colors"
+            >Won</button>
+            <button
+              onClick={async () => {
+                await fetch(`/api/leads/${lead.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status_type: 'not_interested' }) })
+                router.refresh()
+              }}
+              className="rounded-lg bg-status-danger/10 px-2.5 py-1 text-[11px] font-medium text-status-danger hover:bg-status-danger/20 transition-colors"
+            >Lost</button>
+          </div>
+        </div>
+      )}
+
       {/* Score Breakdown */}
       {dimensions.length > 0 && (
         <details className="group rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">

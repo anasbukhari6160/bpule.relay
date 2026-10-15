@@ -35,6 +35,8 @@ import type { RepRole } from '@/lib/domain/types'
 const PRIMARY_NAV = [
   { href: '/dashboard', label: 'Today', icon: CalendarDays, exact: true },
   { href: '/leads', label: 'Leads', icon: Target, exact: false },
+  { href: '/prospect', label: 'Prospect', icon: Search, exact: false },
+  { href: '/accountability', label: 'My Numbers', icon: TrendingUp, exact: true },
 ]
 
 const TEAM_NAV = [
@@ -56,15 +58,18 @@ const MORE_NAV: Array<{
 }> = [
   { href: '/upwork', label: 'Jobs', icon: Briefcase, exact: false, group: 'Work' },
   { href: '/relay', label: 'Conversations', icon: MessageSquare, exact: false, group: 'Work' },
+  { href: '/inbound', label: 'Inbox', icon: Search, exact: false, group: 'Work' },
+  { href: '/archive', label: 'Archive', icon: Target, exact: false, group: 'Work' },
   { href: '/content-v2/growth', label: 'Relay Growth', icon: TrendingUp, exact: true, adminOnly: true, group: 'Create' },
   { href: '/profile-intelligence', label: 'Profiles', icon: UserCircle2, exact: false, group: 'Intelligence' },
   { href: '/facts', label: 'Proof', icon: Shield, exact: false, group: 'Intelligence' },
+  { href: '/admin/accountability', label: 'Accountability', icon: TrendingUp, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/command-center', label: 'Command', icon: Shield, exact: true, adminOnly: true, group: 'Admin' },
-  { href: '/admin/activity', label: 'Activity', icon: Activity, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/people', label: 'People', icon: Users, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/revenue-intelligence', label: 'Revenue', icon: BarChart3, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/revenue-identities', label: 'Identities', icon: UserCircle2, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/targets', label: 'Targets', icon: Target, exact: true, adminOnly: true, group: 'Admin' },
+  { href: '/admin/ai-usage', label: 'AI Usage', icon: Activity, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/usage', label: 'Usage', icon: Layers, exact: false, group: 'Account' },
   { href: '/account', label: 'Settings', icon: Settings, exact: false, group: 'Account' },
 ]
