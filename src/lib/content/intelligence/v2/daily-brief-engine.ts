@@ -192,10 +192,21 @@ export async function generateDailyBrief(
        scoredIdeas = []
      }
 
-     // Fallback: if AI returned 0 ideas or failed, generate from profile + trends
-     if (scoredIdeas.length === 0) {
-       scoredIdeas = generateDeterministicIdeas(input)
-     }
+      // Fallback: if AI returned fewer than 5 ideas, supplement with deterministic
+      if (scoredIdeas.length < 5) {
+        const deterministic = generateDeterministicIdeas(input)
+        // Add deterministic ideas that aren't duplicates of AI ideas
+        const existingTitles = new Set(scoredIdeas.map(i => i.title.toLowerCase().slice(0, 40)))
+        for (const idea of deterministic) {
+          if (existingTitles.has(idea.title.toLowerCase().slice(0, 40))) continue
+          scoredIdeas.push(idea)
+          if (scoredIdeas.length >= 5) break
+        }
+      }
+      // If still 0 (complete failure), use deterministic only
+      if (scoredIdeas.length === 0) {
+        scoredIdeas = generateDeterministicIdeas(input)
+      }
 
      if (hasEmbeddingProvider() && scoredIdeas.length > 1) {
        try {
@@ -243,142 +254,148 @@ export async function generateDailyBrief(
     let recommendedIdea: DailyContentIdea | null = null
 
     for (const idea of selectedIdeas) {
-      // Phase 3: Source grounding for trend-led posts
-      const sourceProvenance = idea.trendGrounded
-        ? buildSourceProvenance(
-            candidatesWithVelocity.find(tc => tc.item.title.toLowerCase().includes(idea.title.toLowerCase().slice(0, 20)))?.item ?? input.trendCandidates[0]?.item,
-            input.profile.territories ?? [],
-          )
-        : null
-
-      const sourcePromptBlock = sourceProvenance ? buildSourcePromptBlock([sourceProvenance]) : ''
-
-      // Phase 3: Diversified angle for this persona
-      const diversifiedAngle = idea.trendGrounded
-        ? generateDiversifiedAngle(personaAngle, idea.title, [idea.territory ?? ''])
-        : null
-      const diversificationBlock = diversifiedAngle ? buildDiversificationPromptBlock(diversifiedAngle) : ''
-
-      let postCaption: string
       try {
-        const gateResult = await generatePostWithQualityGate({
-          idea,
-          personaContext,
-          trendSignals: sourcePromptBlock + '\n\n' + trendSignals,
-          costTracking,
-          platform: input.platform,
-          diversificationBlock,
-        })
-        postCaption = gateResult.caption
-      } catch {
-        // All AI providers failed — use angle as fallback caption
-        postCaption = idea.angle || idea.title
-      }
+        // Phase 3: Source grounding for trend-led posts
+        const sourceProvenance = idea.trendGrounded
+          ? buildSourceProvenance(
+              candidatesWithVelocity.find(tc => tc.item.title.toLowerCase().includes(idea.title.toLowerCase().slice(0, 20)))?.item ?? input.trendCandidates[0]?.item,
+              input.profile.territories ?? [],
+            )
+          : null
+
+        const sourcePromptBlock = sourceProvenance ? buildSourcePromptBlock([sourceProvenance]) : ''
+
+        // Phase 3: Diversified angle for this persona
+        const diversifiedAngle = idea.trendGrounded
+          ? generateDiversifiedAngle(personaAngle, idea.title, [idea.territory ?? ''])
+          : null
+        const diversificationBlock = diversifiedAngle ? buildDiversificationPromptBlock(diversifiedAngle) : ''
+
+        let postCaption: string
+        try {
+          const gateResult = await generatePostWithQualityGate({
+            idea,
+            personaContext,
+            trendSignals: sourcePromptBlock + '\n\n' + trendSignals,
+            costTracking,
+            platform: input.platform,
+            diversificationBlock,
+          })
+          postCaption = gateResult.caption
+        } catch {
+          // All AI providers failed — use angle as fallback caption
+          postCaption = idea.angle || idea.title
+        }
 
 
-       // Premium quality scoring
-       const qualityResult = scorePostQuality({
-         caption: postCaption,
-         title: idea.title,
-         angle: idea.angle,
-         personaRole: input.persona.personaRole ?? input.profile?.role ?? '',
-         expertise: (input.profile?.expertise ?? []).map(e => e.area),
-         territories: input.profile?.territories ?? [],
-         platform: input.platform,
-         trendGrounded: idea.trendGrounded,
-       })
+         // Premium quality scoring
+         const qualityResult = scorePostQuality({
+           caption: postCaption,
+           title: idea.title,
+           angle: idea.angle,
+           personaRole: input.persona.personaRole ?? input.profile?.role ?? '',
+           expertise: (input.profile?.expertise ?? []).map(e => e.area),
+           territories: input.profile?.territories ?? [],
+           platform: input.platform,
+           trendGrounded: idea.trendGrounded,
+         })
 
-       // Regenerate once if quality is too low
-       if (!qualityResult.passed && qualityResult.overall < 5) {
-         try {
-           const retry = await generateFinishedPost({
-             idea,
-             personaContext,
-             trendSignals,
-             costTracking,
-             diversificationBlock,
-             repairHint: `Quality issues: ${qualityResult.failures.join(', ')}. Suggestions: ${qualityResult.suggestions.join(', ')}. Rewrite to fix these.`,
-           })
-           const retryQuality = scorePostQuality({
-             caption: retry,
-             title: idea.title,
-             angle: idea.angle,
-             personaRole: input.persona.personaRole ?? input.profile?.role ?? '',
-             expertise: (input.profile?.expertise ?? []).map(e => e.area),
-             territories: input.profile?.territories ?? [],
-             platform: input.platform,
-             trendGrounded: idea.trendGrounded,
-           })
-           if (retryQuality.overall > qualityResult.overall) {
-             postCaption = retry
+         // Regenerate once if quality is too low
+         if (!qualityResult.passed && qualityResult.overall < 5) {
+           try {
+             const retry = await generateFinishedPost({
+               idea,
+               personaContext,
+               trendSignals,
+               costTracking,
+               diversificationBlock,
+               repairHint: `Quality issues: ${qualityResult.failures.join(', ')}. Suggestions: ${qualityResult.suggestions.join(', ')}. Rewrite to fix these.`,
+             })
+             const retryQuality = scorePostQuality({
+               caption: retry,
+               title: idea.title,
+               angle: idea.angle,
+               personaRole: input.persona.personaRole ?? input.profile?.role ?? '',
+               expertise: (input.profile?.expertise ?? []).map(e => e.area),
+               territories: input.profile?.territories ?? [],
+               platform: input.platform,
+               trendGrounded: idea.trendGrounded,
+             })
+             if (retryQuality.overall > qualityResult.overall) {
+               postCaption = retry
+             }
+           } catch {
+             // Keep original caption if retry fails
            }
-         } catch {
-           // Keep original caption if retry fails
          }
-       }
 
-       // Platform-aware hashtags: append a small relevant set beneath the
-       // post body for LinkedIn; for X, keep them inline within char budget.
-       if (postCaption && input.platform === 'linkedin') {
-          const tags = generateHashtags(postCaption, idea, input.persona.personaRole ?? '')
-         if (tags.length > 0) {
-           postCaption = postCaption.trimEnd() + '\n\n' + tags.map(t => `#${t}`).join(' ')
+         // Platform-aware hashtags: append a small relevant set beneath the
+         // post body for LinkedIn; for X, keep them inline within char budget.
+         if (postCaption && input.platform === 'linkedin') {
+            const tags = generateHashtags(postCaption, idea, input.persona.personaRole ?? '')
+           if (tags.length > 0) {
+             postCaption = postCaption.trimEnd() + '\n\n' + tags.map(t => `#${t}`).join(' ')
+           }
          }
-       }
 
-       let visualDirection: VisualDirection | null = null
-       try {
-         visualDirection = await generateVisualDirection(idea, input.persona, costTracking)
-       } catch (visErr) {
-         console.warn('[daily-brief] Visual direction failed:', visErr instanceof Error ? visErr.message : String(visErr))
-       }
+         let visualDirection: VisualDirection | null = null
+         try {
+           visualDirection = await generateVisualDirection(idea, input.persona, costTracking)
+         } catch (visErr) {
+           console.warn('[daily-brief] Visual direction failed:', visErr instanceof Error ? visErr.message : String(visErr))
+         }
 
-       const ideaRecord = await store.createDailyContentIdea({
-         briefId: brief.id,
-         organizationId: input.persona.organizationId,
-         personaId: input.persona.id,
-         ideaType: idea === recommended ? 'recommended' : 'alternate',
-         title: idea.title,
-         angle: idea.angle,
-         whyNow: idea.whyNow,
-         sourceIds: idea.sourceIds,
-         sourceFreshness: idea.sourceFreshness,
-         formatSuggestion: idea.formatSuggestion,
-         territory: idea.territory,
-         noveltyScore: idea.novelty,
-         relevanceScore: idea.relevance,
-         credibilityScore: idea.credibility,
-         insightScore: idea.insight,
-         trendGrounded: idea.trendGrounded,
-         postCaption: postCaption ?? undefined,
-         qualityResult: qualityResult.overall > 0 ? {
-           overall: qualityResult.overall,
-           passed: qualityResult.passed,
-           dimensions: qualityResult.dimensions,
-           failures: qualityResult.failures,
-         } : undefined,
-         visualType: visualDirection?.type ?? undefined,
-         visualConcept: visualDirection?.concept ?? undefined,
-         visualPrompt: visualDirection?.prompt ?? undefined,
-         visualCommunicationGoal: visualDirection?.communicationGoal ?? undefined,
-         visualSubject: visualDirection?.subject ?? undefined,
-         visualScene: visualDirection?.scene ?? undefined,
-         visualComposition: visualDirection?.composition ?? undefined,
-         visualLighting: visualDirection?.lighting ?? undefined,
-         visualPalette: visualDirection?.palette ?? undefined,
-         visualMood: visualDirection?.mood ?? undefined,
-         visualStyle: visualDirection?.style ?? undefined,
-         visualAspectRatio: visualDirection?.aspectRatio ?? undefined,
-         visualFocalPoint: visualDirection?.focalPoint ?? undefined,
-         visualAllowedText: visualDirection?.allowedText ?? undefined,
-         visualScreenshotTarget: visualDirection?.screenshotTarget ?? undefined,
-          visualAvoid: visualDirection?.avoid?.join(', ') ?? undefined,
-          visualRealism: visualDirection?.realism ?? undefined,
-          visualReason: visualDirection?.reason ?? undefined,
-       })
+         const ideaRecord = await store.createDailyContentIdea({
+           briefId: brief.id,
+           organizationId: input.persona.organizationId,
+           personaId: input.persona.id,
+           ideaType: idea === recommended ? 'recommended' : 'alternate',
+           title: idea.title,
+           angle: idea.angle,
+           whyNow: idea.whyNow,
+           sourceIds: idea.sourceIds,
+           sourceFreshness: idea.sourceFreshness,
+           formatSuggestion: idea.formatSuggestion,
+           territory: idea.territory,
+           noveltyScore: idea.novelty,
+           relevanceScore: idea.relevance,
+           credibilityScore: idea.credibility,
+           insightScore: idea.insight,
+           trendGrounded: idea.trendGrounded,
+           postCaption: postCaption ?? undefined,
+           qualityResult: qualityResult.overall > 0 ? {
+             overall: qualityResult.overall,
+             passed: qualityResult.passed,
+             dimensions: qualityResult.dimensions,
+             failures: qualityResult.failures,
+           } : undefined,
+           visualType: visualDirection?.type ?? undefined,
+           visualConcept: visualDirection?.concept ?? undefined,
+           visualPrompt: visualDirection?.prompt ?? undefined,
+           visualCommunicationGoal: visualDirection?.communicationGoal ?? undefined,
+           visualSubject: visualDirection?.subject ?? undefined,
+           visualScene: visualDirection?.scene ?? undefined,
+           visualComposition: visualDirection?.composition ?? undefined,
+           visualLighting: visualDirection?.lighting ?? undefined,
+           visualPalette: visualDirection?.palette ?? undefined,
+           visualMood: visualDirection?.mood ?? undefined,
+           visualStyle: visualDirection?.style ?? undefined,
+           visualAspectRatio: visualDirection?.aspectRatio ?? undefined,
+           visualFocalPoint: visualDirection?.focalPoint ?? undefined,
+           visualAllowedText: visualDirection?.allowedText ?? undefined,
+           visualScreenshotTarget: visualDirection?.screenshotTarget ?? undefined,
+            visualAvoid: visualDirection?.avoid?.join(', ') ?? undefined,
+            visualRealism: visualDirection?.realism ?? undefined,
+            visualReason: visualDirection?.reason ?? undefined,
+         })
 
-      if (idea === recommended) recommendedIdea = ideaRecord
-    }
+         if (idea === recommended) recommendedIdea = ideaRecord
+      } catch (ideaErr) {
+        console.error('[daily-brief] Failed to process idea:', idea.title, ideaErr instanceof Error ? ideaErr.message : String(ideaErr))
+        // Skip this idea — don't let one failure crash the entire batch
+        continue
+      }
+     }
 
     if (recommendedIdea) {
       await store.updateDailyContentBriefRecommended(brief.id, recommendedIdea.id)
@@ -452,7 +469,7 @@ async function generateIdeaCandidates(input: {
 
   const system = `You are an editorial strategist who creates high-reach LinkedIn/X content ideas. Your ideas must be sharp, specific, and credible — never generic content advice.
 
-Generate ${platformCount} post ideas that this person could actually publish and that would get engagement.
+Generate EXACTLY ${platformCount} post ideas. Do not return fewer. Each must be distinct — no variations of the same idea. This person could actually publish these and they would get engagement.
 
 CRITICAL: This person is NOT just their job title. They follow topics they care about. Create ideas at the INTERSECTION of:
 1. What's trending on the internet right now (HN, GitHub, tech Twitter)

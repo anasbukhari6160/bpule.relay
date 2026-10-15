@@ -138,27 +138,28 @@ async function generateAndRespond(
            trendSnapshot: { source: 'fallback', count: fallbackIdeas.length },
          })
 
-        const ideaRecords: DailyContentIdea[] = []
-        for (let i = 0; i < fallbackIdeas.length; i++) {
-          const idea = fallbackIdeas[i]
-          try {
-            const record = await store.createDailyContentIdea({
-              briefId: brief.id,
-              organizationId: persona.organizationId,
-              personaId: persona.id,
-              ideaType: i === 0 ? 'recommended' : 'alternate',
-              title: idea.title,
-              angle: idea.angle,
-              whyNow: idea.whyNow,
-              territory: idea.territory,
-              trendGrounded: idea.trendGrounded,
-              formatSuggestion: idea.formatSuggestion,
-            })
-            ideaRecords.push(record)
-          } catch (ideaErr) {
-            console.error('[daily-brief] Failed to create fallback idea:', ideaErr instanceof Error ? ideaErr.message : String(ideaErr))
-          }
-        }
+         const ideaRecords: DailyContentIdea[] = []
+         for (let i = 0; i < fallbackIdeas.length; i++) {
+           const idea = fallbackIdeas[i]
+           try {
+             const record = await store.createDailyContentIdea({
+               briefId: brief.id,
+               organizationId: persona.organizationId,
+               personaId: persona.id,
+               ideaType: i === 0 ? 'recommended' : 'alternate',
+               title: idea.title,
+               angle: idea.angle,
+               whyNow: idea.whyNow,
+               territory: idea.territory,
+               trendGrounded: idea.trendGrounded,
+               formatSuggestion: idea.formatSuggestion,
+               postCaption: generateEmergencyCaption(idea, persona),
+             })
+             ideaRecords.push(record)
+           } catch (ideaErr) {
+             console.error('[daily-brief] Failed to create fallback idea:', ideaErr instanceof Error ? ideaErr.message : String(ideaErr))
+           }
+         }
 
         if (ideaRecords.length === 0) {
           throw new Error('All fallback ideas failed to save')
