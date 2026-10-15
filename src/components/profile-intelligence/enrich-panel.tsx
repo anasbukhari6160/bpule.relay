@@ -211,7 +211,7 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
         </p>
       )}
 
-      {error && <p role="alert" className="mt-3 text-[12px] text-red-500">{error}</p>}
+      {error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
 
       {(phase === 'review' || phase === 'applying') && proposal && (
         <div className="mt-4 space-y-4">
@@ -261,7 +261,7 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
             ...(run?.audit?.upload?.already_imported ?? []).map((f) => `${f.filename}: already imported into this profile — skipped (no duplicate source).`),
             ...(run?.audit?.upload?.rejected ?? []).map((f) => `${f.filename}: ${f.reason}`),
             ...(proposal.failedSources ?? []).map((f) => `${f.filename}: extraction failed — ${f.error ?? 'unknown error'}`),
-          ].map((w) => <p key={w} className="rounded bg-yellow-500/10 px-2 py-1 text-[11px] text-yellow-700">{w}</p>)}
+          ].map((w) => <p key={w} className="rounded bg-warning/10 px-2 py-1 text-[11px] text-warning">{w}</p>)}
 
           {SECTION_ORDER.map((sec) => {
             const items = grouped.get(sec.key) ?? []
@@ -324,7 +324,7 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
 
       {phase === 'done' && result && (
         <div data-testid="enrich-done" className="mt-4 space-y-1 text-[12px] text-[color:var(--console-text)]">
-          <p className="font-medium text-green-600">Imported into this profile.</p>
+          <p className="font-medium text-success">Imported into this profile.</p>
           <p className="text-[11px] text-[color:var(--console-mute)]">
             {Object.entries(result.result?.counts ?? {}).filter(([, n]) => (n as number) > 0).map(([k, n]) => `${String(k).replace(/_/g, ' ')}: ${n}`).join(' · ') || 'No new facts — provenance recorded.'}
           </p>

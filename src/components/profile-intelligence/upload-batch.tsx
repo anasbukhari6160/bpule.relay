@@ -108,7 +108,7 @@ export function UploadBatchUploader({ onBatchCreated }: {
       )}
 
       {error && (
-        <p className="mt-2 text-[12px] text-red-500">{error}</p>
+        <p className="mt-2 text-[12px] text-danger">{error}</p>
       )}
     </div>
     </>

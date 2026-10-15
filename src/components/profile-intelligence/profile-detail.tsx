@@ -80,7 +80,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
   useEffect(() => { load() }, [load])
 
   if (loading) return <div className="p-6 text-[12px] text-[color:var(--console-mute)]">Loading...</div>
-  if (error) return <div className="p-6 text-[12px] text-red-500">{error}</div>
+  if (error) return <div className="p-6 text-[12px] text-danger">{error}</div>
   if (!profile) return null
 
   return (
@@ -111,7 +111,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
           </p>
         )}
         {profile.archivedAt && (
-          <p className="mt-2 rounded bg-yellow-500/10 px-2 py-1 text-[11px] text-yellow-700">
+          <p className="mt-2 rounded bg-warning/10 px-2 py-1 text-[11px] text-warning">
             Archived{profile.mergedIntoProfileId ? <> — merged into <Link className="underline" href={`/profile-intelligence/${profile.mergedIntoProfileId}`}>another profile</Link></> : ''}.
           </p>
         )}
@@ -125,7 +125,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
         )}
         <div className="mt-3 flex gap-2">
           {profile.readiness === 'ready' && (
-            <span className="rounded bg-green-500/10 px-2 py-0.5 text-[10px] text-green-600">Ready</span>
+            <span className="rounded bg-success/10 px-2 py-0.5 text-[10px] text-success">Ready</span>
           )}
           {profile.seniority && (
             <span className="rounded bg-orange/5 px-2 py-0.5 text-[10px] text-orange/80">{profile.seniority}</span>
@@ -184,9 +184,9 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
                 <span className="ml-2 text-[11px] text-[color:var(--console-mute)]">
                   {[e.startDate, e.endDate ?? (e.isCurrent ? 'present' : null)].filter(Boolean).join(' – ')}
                 </span>
-                {e.isCurrent && <span className="ml-2 rounded bg-green-500/10 px-1 text-[9px] text-green-600">current</span>}
+                {e.isCurrent && <span className="ml-2 rounded bg-success/10 px-1 text-[9px] text-success">current</span>}
                 {e.isCurrent && e.endDate && (
-                  <span className="ml-2 text-[10px] text-yellow-700">a source lists this role as ended {e.endDate} — current per profile; review conflicts to change</span>
+                  <span className="ml-2 text-[10px] text-warning">a source lists this role as ended {e.endDate} — current per profile; review conflicts to change</span>
                 )}
               </li>
             ))}
@@ -222,15 +222,15 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
             {profile.proofCards.map((pc) => (
               <div key={pc.id} className="flex items-start gap-2">
                 <span className={`mt-0.5 flex-shrink-0 rounded px-1 text-[9px] font-medium ${
-                  pc.strength === 'strong' ? 'bg-green-500/10 text-green-600' :
-                  pc.strength === 'moderate' ? 'bg-yellow-500/10 text-yellow-600' :
-                  'bg-gray-500/10 text-gray-500'
+                  pc.strength === 'strong' ? 'bg-success text-success' :
+                  pc.strength === 'moderate' ? 'bg-warning/10 text-yellow-600' :
+                  'bg-stone-light/10 text-stone'
                 }`}>
                   {pc.strength}
                 </span>
                 <p className="text-[12px] text-[color:var(--console-text)]">{pc.safeClaim}</p>
                 {pc.verified && (
-                  <span className="flex-shrink-0 text-[9px] text-green-600">verified</span>
+                  <span className="flex-shrink-0 text-[9px] text-success">verified</span>
                 )}
               </div>
             ))}
@@ -264,7 +264,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
               <div key={s.id} className="flex items-center gap-2 text-[11px]">
                 <span className="text-[color:var(--console-text)]">{s.originalFilename}</span>
                 <span className={`rounded px-1 text-[9px] ${
-                  s.parsingStatus === 'parsed' ? 'bg-green-500/10 text-green-600' : 'bg-gray-500/10 text-gray-500'
+                  s.parsingStatus === 'parsed' ? 'bg-success text-success' : 'bg-stone-light/10 text-stone'
                 }`}>{s.parsingStatus}</span>
               </div>
             ))}
@@ -290,7 +290,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
             {runs.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-2 text-[11px] text-[color:var(--console-text)]">
                 <span>{new Date(r.created_at).toLocaleString()}</span>
-                <span className={`rounded px-1 text-[9px] ${r.status === 'applied' ? 'bg-green-500/10 text-green-600' : 'bg-gray-500/10 text-gray-500'}`}>{r.status}</span>
+                <span className={`rounded px-1 text-[9px] ${r.status === 'applied' ? 'bg-success text-success' : 'bg-stone-light/10 text-stone'}`}>{r.status}</span>
                 <span className="text-[color:var(--console-mute)]">
                   {r.source_ids.length} source{r.source_ids.length === 1 ? '' : 's'}
                   {r.summary ? ` · +${r.summary.fieldsToAdd} added · ${r.summary.fieldsToEnrich} enriched · ${r.summary.conflictsRequiringReview} conflicts · ${r.summary.duplicatesIgnored} duplicates` : ''}

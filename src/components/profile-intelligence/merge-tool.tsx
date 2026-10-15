@@ -85,11 +85,11 @@ export function MergeTool({ targetProfileId, targetName, onMerged }: { targetPro
         <button onClick={() => setOpen(false)} className="text-[11px] text-[color:var(--console-mute)]">Cancel</button>
       </div>
 
-      {error && <p role="alert" className="mt-2 text-[12px] text-red-500">{error}</p>}
+      {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
 
       {preview && (
         <div className="mt-4 space-y-3 text-[11px]" data-testid="merge-preview">
-          <p className={preview.identity.likelySamePerson ? 'text-green-600' : 'text-yellow-700'}>
+          <p className={preview.identity.likelySamePerson ? 'text-success' : 'text-warning'}>
             Identity match {preview.identity.score}% — {preview.identity.signals.join('; ') || 'no shared signals'}
             {preview.identity.warning && <> · {preview.identity.warning}</>}
           </p>
@@ -107,7 +107,7 @@ export function MergeTool({ targetProfileId, targetName, onMerged }: { targetPro
             Duplicates removed: {preview.report.removed_duplicates.length} ({preview.report.removed_duplicates.map((d: any) => d.table).join(', ') || 'none'}) · Empty fields filled: {Object.keys(preview.report.merged_fields).join(', ') || 'none'}
           </p>
           {!preview.identity.likelySamePerson && (
-            <label className="flex items-center gap-2 text-yellow-700">
+            <label className="flex items-center gap-2 text-warning">
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> I confirm these are the same person.
             </label>
           )}
@@ -124,7 +124,7 @@ export function MergeTool({ targetProfileId, targetName, onMerged }: { targetPro
       )}
 
       {done && (
-        <p className="mt-3 text-[12px] text-green-600" data-testid="merge-done">
+        <p className="mt-3 text-[12px] text-success" data-testid="merge-done">
           Merged. Duplicate archived; audit record {String(done.merge_log_id).slice(0, 8)} saved.
         </p>
       )}
