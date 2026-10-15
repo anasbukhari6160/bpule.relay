@@ -181,7 +181,10 @@ export async function POST(
     })
   } catch (err) {
     if (err instanceof Error && /locked|owner|unavailable|not yours/i.test(err.message)) {
-      if (/locked|no or dead/i.test(err.message)) {
+      if (/connection-locked/i.test(err.message)) {
+        return NextResponse.json({ error: err.message }, { status: 429 })
+      }
+      if (/no or dead/i.test(err.message)) {
         return NextResponse.json({ error: 'This lead is locked (status: no/dead).' }, { status: 409 })
       }
       return NextResponse.json({ error: lead ? 'This lead is not assigned to you.' : 'Lead not found.' }, { status: 409 })

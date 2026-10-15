@@ -1434,7 +1434,15 @@ export class SupabaseStore implements ScoutStore {
     }
     const { data: updatedRows, error } = await this.client
       .from('leads')
-      .update({ connection_accepted_at: new Date().toISOString() })
+      .update({
+        connection_accepted_at: new Date().toISOString(),
+        // BUG-08: clear the connection pacing lock so the rep can send the
+        // first DM immediately after acceptance — the 6h lock was designed to
+        // prevent rapid re-sending of connection notes, not to block the DM
+        // that the UI is explicitly asking for after acceptance.
+        locked_until: null,
+        locked_reason: null,
+      })
       .eq('id', leadId)
       .eq('owner_rep_id', this.rep.id)
       .neq('status', 'no')

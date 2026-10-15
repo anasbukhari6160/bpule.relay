@@ -55,7 +55,18 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   const refreshLead = useCallback(async () => {
     try {
       const res = await fetch(`/api/leads/${lead.id}`)
-      if (res.ok) setLead(await res.json())
+      if (res.ok) {
+        const json = await res.json()
+        // API returns { lead: {...} }, extract the lead object
+        const fresh = json.lead ?? json
+        // Merge: keep existing arrays if the fresh response omits them
+        setLead((prev) => ({
+          ...fresh,
+          messages: fresh.messages ?? prev.messages ?? [],
+          outcomes: fresh.outcomes ?? prev.outcomes ?? [],
+          tags: fresh.tags ?? prev.tags ?? [],
+        }))
+      }
     } catch { /* ignore */ }
   }, [lead.id])
 

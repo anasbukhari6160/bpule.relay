@@ -392,35 +392,52 @@ function fallbackText(input: DraftInput): string {
     return `Hi ${firstName}, read your brief and noticed ${observation}. I can help ${company} ship this cleanly. Happy to share a short approach in one reply if useful.`
   }
 
-  return `Hi ${firstName}, ${observation} Want to share one practical idea for ${company}?`
+  // DM: varied openers to avoid the repetitive "one practical idea" pattern
+  const dmOpeners = [
+    `Hi ${firstName}, ${observation} One thing that caught my attention — would be curious how you are approaching it at ${company}.`,
+    `Hi ${firstName}, ${observation} Would be great to swap one practical idea if useful.`,
+    `Hi ${firstName}, ${observation} Quick question — what is the one thing ${company} is prioritizing right now in that space?`,
+  ]
+  const idx = Math.abs(hashCode(company + title)) % dmOpeners.length
+  return dmOpeners[idx]
+}
+
+/** Simple deterministic hash for picking a varied opener. */
+function hashCode(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0
+  return h
 }
 
 /**
- * Build a specific observation from available evidence.
- * Falls back to generic title+company only when no evidence exists.
+ * Build a specific, unique observation from lead evidence.
+ * Extracts real details — initiatives, tech, posts — so every message feels
+ * personal instead of copy-pasted. Falls back to title+company only when the
+ * lead has zero signal evidence.
  */
 function buildSpecificObservation(input: DraftInput, title: string, company: string): string {
-  const evidence = input.extracted.signalEvidence ?? ''
+  const evidence = (input.extracted.signalEvidence ?? '').toLowerCase()
   const tags = input.lead.tags ?? []
+  const role = input.extracted.roleCategory
 
-  // Use specific evidence if available (first meaningful sentence)
-  if (evidence.length > 20) {
-    const firstSentence = evidence.split(/[.!?]/).map(s => s.trim()).find(s => s.length > 15)
-    if (firstSentence) {
-      const lower = firstSentence.toLowerCase()
-      if (lower.includes('building') || lower.includes('developing') || lower.includes('creating')) {
-        return `saw you are building at ${company}.`
-      }
-      if (lower.includes('founder') || lower.includes('ceo') || lower.includes('cto')) {
-        return `came across your work as ${title.toLowerCase()} at ${company}.`
-      }
-      return `came across your work at ${company}.`
+  // Extract a concrete initiative/tech mention from evidence
+  const techMatches = evidence.match(/\b(ai|machine learning|llm|genai|react|python|rust|kubernetes|aws|cloud|automation|cybersecurity|zero trust|iam|data|analytics|scaling|hiring|building|launching)\b/g)
+  if (techMatches && techMatches.length > 0) {
+    const unique = [...new Set(techMatches)].slice(0, 3)
+    if (unique.length >= 2) {
+      return `saw you are working on ${unique.join(', ')} at ${company}.`
     }
+    return `noticed your focus on ${unique[0]} at ${company}.`
   }
 
-  // Use tags if available
+  // Use tags (lead-specific)
   if (tags.length > 0) {
     return `noticed your work on ${tags.slice(0, 2).join(' and ')} at ${company}.`
+  }
+
+  // Role-based specificity
+  if (role && role !== 'other' && role !== 'hiring_manager_recruiter') {
+    return `came across your work leading ${role.replace(/_/g, ' ')} at ${company}.`
   }
 
   // Fallback to title+company
