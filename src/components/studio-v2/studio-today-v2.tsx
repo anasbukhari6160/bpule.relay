@@ -526,7 +526,9 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
 
               {imageUrl ? (
                 <div className="space-y-3">
-                  <img src={imageUrl} alt="Post visual" className="w-full rounded-lg border border-line" />
+                  <div className="overflow-hidden rounded-lg border border-line bg-bone">
+                    <img src={imageUrl} alt="Post visual" className="w-full object-contain" />
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={downloadImage}
@@ -541,7 +543,7 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
                 <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-line/50 py-12 text-center">
                   <Image className="mb-3 h-8 w-8 text-ink/20" />
                   <p className="text-sm text-ink/40">Generate an image for this post</p>
-                  <p className="mt-1 text-[11px] text-ink/30">1200×630 branded visual via FAL.AI</p>
+                  <p className="mt-1 text-[11px] text-ink/30">AI-generated visual via DALL-E</p>
                 </div>
               )}
 
