@@ -30,6 +30,7 @@ export function SimplePostEditor({ post }: { post: PostData }) {
   const [showVisual, setShowVisual] = useState(false)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [imageLoading, setImageLoading] = useState(false)
+  const [imageError, setImageError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
   // Persist edits to sessionStorage so the Studio view picks them up on return.
@@ -52,6 +53,7 @@ export function SimplePostEditor({ post }: { post: PostData }) {
   const handleGenerateImage = async () => {
     if (!post.visualPrompt) return
     setImageLoading(true)
+    setImageError(null)
     try {
       const res = await fetch('/api/content/intelligence/v2/daily-brief/image', {
         method: 'POST',
@@ -60,9 +62,18 @@ export function SimplePostEditor({ post }: { post: PostData }) {
       })
       if (res.ok) {
         const json = await res.json()
-        setImageUrl(json.url)
+        if (json.url) {
+          setImageUrl(json.url)
+        } else {
+          setImageError(json.error || 'No image returned')
+        }
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setImageError(err.error || `Image generation failed (${res.status})`)
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      setImageError(err instanceof Error ? err.message : 'Network error')
+    }
     setImageLoading(false)
   }
 
@@ -188,14 +199,22 @@ export function SimplePostEditor({ post }: { post: PostData }) {
             {imageUrl ? (
               <img src={imageUrl} alt="Post visual" className="w-full rounded-lg border border-line" />
             ) : (
-              <button
-                onClick={handleGenerateImage}
-                disabled={imageLoading || !post.visualPrompt}
-                className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm text-ink/70 hover:border-cobalt/40 hover:text-cobalt disabled:opacity-50"
-              >
-                <RefreshCw className={`h-3 w-3 ${imageLoading ? 'animate-spin' : ''}`} />
-                {imageLoading ? 'Generating...' : 'Generate image'}
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={handleGenerateImage}
+                  disabled={imageLoading || !post.visualPrompt}
+                  className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm text-ink/70 hover:border-cobalt/40 hover:text-cobalt disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3 w-3 ${imageLoading ? 'animate-spin' : ''}`} />
+                  {imageLoading ? 'Generating...' : 'Generate image'}
+                </button>
+                {imageError && (
+                  <p className="text-[11px] text-status-danger">{imageError}</p>
+                )}
+                {!post.visualPrompt && (
+                  <p className="text-[11px] text-stone">No visual prompt set. Edit the idea to add one.</p>
+                )}
+              </div>
             )}
           </div>
         )}

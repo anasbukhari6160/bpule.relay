@@ -95,11 +95,16 @@ export async function POST(
     '',
     'Busy clients skim 50+ proposals. Yours must stand out in the first 2 lines.',
     '',
+    '### CRITICAL: REFERENCE THEIR SPECIFIC JOB',
+    '- You MUST reference at least 2 specific details from the job description (project type, tech, problem, client need)',
+    '- Use their EXACT terminology — if they say "Replit", say "Replit"',
+    '- Mention their specific project name or core need in the hook',
+    '',
     '### STRUCTURE (follow exactly):',
-    '1. **HOOK (1-2 sentences):** Show you read THEIR specific job. Reference a technical detail from their description. Never generic.',
-    '2. **PROOF (2-3 sentences):** One specific project/experience that matches their need. Include a metric or outcome if available.',
-    '3. **PLAN (2-3 sentences):** What you would do in the first week. Be specific to their stack and problem.',
-    '4. **QUESTION (1 sentence):** End with a thoughtful question about their project. Shows engagement.',
+    '1. **HOOK (1 sentence, max 15 words):** Show you read THEIR specific job. Reference their project/need. NEVER start with "I came across..." or "Hi, I\'m..."',
+    '2. **PROOF (2-3 sentences):** One specific past project matching their EXACT need. Use real metrics from proof/facts. No placeholders.',
+    '3. **PLAN (2 sentences):** What you would do in the first 3 days. Specific to their stack.',
+    '4. **QUESTION (1 sentence):** Ask something showing you understand their business.',
     '',
     '### SCREENING QUESTIONS:',
     '- Answer each question directly and specifically',
@@ -115,7 +120,9 @@ export async function POST(
     '- Is the question at the end specific and useful?',
     '- Would a busy client stop scrolling and read this?',
     '',
-    '### WORD LIMIT: 200-300 words for the proposal body. Screening answers: 2-4 sentences each.',
+    '### WORD LIMIT: 120-180 words for the proposal body MAX. Short wins on Upwork.',
+    '- Write like a human consultant, not a cover letter. Conversational, direct.',
+    '- Reference your actual past projects/products by name if in your facts/proof.',
     '',
     '### METRICS RULE:',
     '- ONLY include specific numbers/metrics that come from the profile facts or proof items',
@@ -132,6 +139,8 @@ export async function POST(
     '- Generic technology lists without context',
     '- Emojis, em dashes (!!!), exclamation marks',
     '- Any phrase that could apply to any job',
+    '- "Building AI...", "Building [product]...", "Creating AI..." — these are generic first-contact openers that ignore the specific prospect',
+    '- Placeholder metrics like "%", "[X]%", "by %" — if you dont have a real number, describe qualitatively',
     '',
     proofBlock,
     '',
@@ -223,9 +232,34 @@ export async function POST(
     return NextResponse.json({ error: 'Generation failed. Please try again.' }, { status: 500 })
   }
 
-  const proposal = best.proposal.trim()
+  let proposal = best.proposal.trim()
 
-  // Sanitize
+  // Fix placeholder metrics: "by %", "[X]%", etc.
+  proposal = proposal.replace(/\bby\s*%/g, 'significantly')
+  proposal = proposal.replace(/\b%\s*(increase|reduction|improvement|faster|better|decrease)/g, 'substantially')
+  proposal = proposal.replace(/\bby\s*\[?\w*\]?\s*%/g, 'substantially')
+  proposal = proposal.replace(/\[\s*%\s*]/g, '')
+  proposal = proposal.replace(/\(\s*%\s*\)/g, '')
+  proposal = proposal.replace(/%\s*during/g, 'during')
+  proposal = proposal.replace(/(\w)\s+%\s/g, '$1 — ')
+  proposal = proposal.replace(/\s*%\s*$/gm, '')
+
+  // Remove lines that are just placeholders
+  proposal = proposal.split('\n').filter(line => {
+    const t = line.trim()
+    return t.length > 0 && !/^[\s%[\]()]*$/.test(t) && t !== '%'
+  }).join('\n')
+
+  // Remove banned phrases
+  for (const phrase of BANNED_PHRASES.slice(0, 15)) {
+    const re = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    proposal = proposal.replace(re, '')
+  }
+
+  // Fix double spaces
+  proposal = proposal.replace(/\s{2,}/g, ' ').trim()
+
+  // Sanitize against facts table
   const sanitized = sanitizeDraft(proposal, facts)
 
   return NextResponse.json({
@@ -237,6 +271,7 @@ export async function POST(
       qualityScore: best.quality_score ?? 5,
       matchedProof: matchedProof ? { id: matchedProof.id, projectSummary: matchedProof.projectSummary } : null,
     },
+    generationMode,
     profileSuggestion: bestProfileSuggestion ? {
       bestProfileId: bestProfileSuggestion.profileId,
       bestProfileName: bestProfileSuggestion.identityName,

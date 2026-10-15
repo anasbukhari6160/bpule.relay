@@ -101,6 +101,11 @@ const TECH_KEYWORDS = [
   'terraform', 'ansible', 'jenkins',
   'prometheus', 'grafana', 'datadog',
   'ios', 'android', 'web', 'frontend', 'backend', 'full-stack', 'fullstack',
+  'replit', 'figma', 'shopify', 'wordpress', 'webflow', 'bubble',
+  'ai', 'machine learning', 'llm', 'openai', 'gemini', 'claude',
+  'blockchain', 'solidity', 'web3',
+  'unity', 'unreal', 'game dev',
+  'devops', 'terraform', 'ansible',
 ]
 
 interface BackfillInput {
