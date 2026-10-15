@@ -163,6 +163,10 @@ export function cleanPersonName(raw: string | null | undefined): string | null {
   name = name.replace(/\s*(profile|image|photo|banner|logo|connection)s?$/i, '').trim()
   if (!name) return null
 
+  // Strip trailing possessive: "John Gummadi's" → "John Gummadi"
+  name = name.replace(/['\u2019]s$/i, '').trim()
+  if (!name) return null
+
   // Reject single-word UI fragments that survived stripping
   const words = name.split(/\s+/).filter(Boolean)
   if (words.length === 1 && words[0].length <= 4 && !/^[A-Z][a-z]+$/.test(words[0])) {

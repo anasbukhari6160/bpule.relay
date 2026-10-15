@@ -140,7 +140,14 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   const watchOut: string[] = []
   const dimensions: V3ScoreDimension[] = []
 
-  const buyerRaw = decision.buyerRequestProbability
+  // BUG-03: A recruiter's hiring post is not an external-service buying
+  // request. Cap buyer probability for hiring episodes unless the prospect
+  // explicitly asked for outside help — otherwise internal headhunting gets
+  // misqualified as a warm buyer lead.
+  const isHiringOnly = episode.anchorEvent?.eventType === 'HIRING' && !episode.explicitRequest
+  const buyerRaw = isHiringOnly
+    ? Math.min(decision.buyerRequestProbability, 0.2)
+    : decision.buyerRequestProbability
   const buyerContribution = buyerRaw * V3_SCORING_WEIGHTS.buyerRequestProbability * 100
   dimensions.push({
     key: 'buyerRequest',

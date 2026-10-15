@@ -110,6 +110,11 @@ export function analyzeReply(replyText: string, _context: ReplyContext): ReplyAn
     analysis.buyingSignal = true
     analysis.sentiment = 'positive'
     analysis.nextBestAction = 'provide_more_detail'
+  } else if (/\b(interested|let'?s do it|move forward|sounds good|works for me)\b/i.test(lower)) {
+    analysis.intent = 'interested'
+    analysis.buyingSignal = true
+    analysis.sentiment = 'positive'
+    analysis.nextBestAction = 'provide_more_detail'
   } else if (/\b(concern|worried|not sure|skeptical|how do I know)\b/i.test(lower)) {
     analysis.intent = 'objection'
     analysis.nextBestAction = 'address_objection'

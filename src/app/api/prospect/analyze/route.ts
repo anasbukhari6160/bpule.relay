@@ -98,8 +98,8 @@ export const maxDuration = 120
 const analyzeCache = new Map<string, { data: Record<string, unknown>; ts: number }>()
 const CACHE_TTL_MS = 5 * 60 * 1000
 
-function cacheKey(rawText: string, profileId: string | null): string {
-  return `${rawText.slice(0, 200).toLowerCase().replace(/\s+/g, ' ').trim()}:${rawText.length}:${profileId ?? ''}`
+function cacheKey(rawText: string, profileId: string | null, generateNote: boolean = false): string {
+  return `${rawText.slice(0, 200).toLowerCase().replace(/\s+/g, ' ').trim()}:${rawText.length}:${profileId ?? ''}:${generateNote ? 'note' : 'analyze'}`
 }
 
 // Periodic cache cleanup to prevent memory leaks
@@ -180,15 +180,19 @@ export async function POST(request: Request) {
   }
   const precheck = evaluateProspectQualification({ rawText, extracted: minimumExtracted })
 
-  // Cache check: same content already analyzed recently
+  // Cache check: same content already analyzed recently.
+  // BUG-17: generateNote requests always bypass cache — the cached analyze
+  // result has no connection note, so returning it would show an empty note.
   cleanupCache()
-  const ck = cacheKey(rawText, typeof body.profileId === 'string' ? body.profileId : null)
-  const cached = analyzeCache.get(ck)
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    return sseStream(async (emit) => {
-      emit({ type: 'status', message: 'Using cached analysis' })
-      emit({ type: 'done', ...cached.data })
-    })
+  const ck = cacheKey(rawText, typeof body.profileId === 'string' ? body.profileId : null, false)
+  if (!generateNote) {
+    const cached = analyzeCache.get(ck)
+    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+      return sseStream(async (emit) => {
+        emit({ type: 'status', message: 'Using cached analysis' })
+        emit({ type: 'done', ...cached.data })
+      })
+    }
   }
 
   return sseStream(async (emit) => {
