@@ -77,12 +77,8 @@ export async function POST(
       headers: { 'Content-Type': 'application/json' },
     })
   }
-  if (detail.status === 'no' || detail.status === 'dead') {
-    return new Response(
-      JSON.stringify({ error: 'This lead is no or dead. It is locked.' }),
-      { status: 409, headers: { 'Content-Type': 'application/json' } },
-    )
-  }
+  // BUG-15: Allow draft generation on locked leads. Drafts don't modify data;
+  // the actual send action goes through /contact which handles locking.
 
   const rulebook = await store.getRulebook()
 

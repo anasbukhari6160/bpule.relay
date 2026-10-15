@@ -51,12 +51,9 @@ export async function POST(
   if (!lead) {
     return NextResponse.json({ error: 'Lead not found.' }, { status: 404 })
   }
-  if (lead.status === 'no' || lead.status === 'dead') {
-    return NextResponse.json(
-      { error: 'This lead is no or dead. It is locked.' },
-      { status: 409 },
-    )
-  }
+  // BUG-15 fix: Do NOT block sends on locked status here. markContacted()
+  // handles locked leads gracefully — message insert succeeds, status update
+  // is skipped. This allows reps to log outreach even on no/dead leads.
 
   try {
     const originalDraft = body.originalDraft?.trim() || sentText
