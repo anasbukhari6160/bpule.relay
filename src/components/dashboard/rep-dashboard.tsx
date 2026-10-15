@@ -51,9 +51,9 @@ export function RepDashboard({ data }: { data: RepWorkspaceData }) {
     'Other': sortedTasks.filter((t) => !['reply_needed', 'followup_due', 'connection_dm_due'].includes(t.kind)),
   }
 
-  const completionPct = day.totalRemaining + (day.repliesWaiting || 0) + (day.followUpsDue || 0) > 0
-    ? Math.round(((day.totalRemaining || 0) / ((day.totalRemaining || 0) + (day.repliesWaiting || 0) + (day.followUpsDue || 0) + (day.outreachRemaining || 0))) * 100)
-    : 100
+  const totalWork = (day.totalRemaining || 0) + (day.repliesWaiting || 0) + (day.followUpsDue || 0) + (day.outreachRemaining || 0)
+  const completed = totalWork - (day.totalRemaining || 0)
+  const completionPct = totalWork > 0 ? Math.round((completed / totalWork) * 100) : 0
 
   return (
     <div className="space-y-8">
