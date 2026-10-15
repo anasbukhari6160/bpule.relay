@@ -148,7 +148,12 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
 
   const visibleMessages = messages.filter((m) => m.sentText || m.direction === 'inbound').sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
 
-  const scoreBreakdown = (lead.canonicalIntelligence as Record<string, unknown>)?.scoreBreakdown as Record<string, unknown> | null
+  // canonicalIntelligence may arrive as a JSON string from the DB — parse it
+  let canonicalObj: Record<string, unknown> | null = null
+  const ci = lead.canonicalIntelligence
+  if (ci && typeof ci === 'object') canonicalObj = ci as Record<string, unknown>
+  else if (typeof ci === 'string') { try { canonicalObj = JSON.parse(ci) } catch { /* ignore */ } }
+  const scoreBreakdown = canonicalObj?.scoreBreakdown as Record<string, unknown> | null
   const rawDimensions = Array.isArray(scoreBreakdown?.dimensions) ? scoreBreakdown.dimensions as Array<Record<string, unknown>> : []
   // Normalize V2 (points/max) and V3 (contribution/weight) into a single shape
   const dimensions = rawDimensions.map((d) => {
