@@ -69,13 +69,11 @@ export function GrowthTodayV2() {
     if (!data) return
     setRejectionCount(c => c + 1)
     const title = data.postCaption?.split('\n')[0]?.slice(0, 100) ?? ''
-    await generateBrief(title, data.visualConcept ?? undefined)
+    await generateBrief(title, undefined)
   }
 
-  const handleSelectAlternate = async (title: string, angle: string) => {
+  const handleSelectAlternate = (_title: string, angle: string) => {
     setRejectionCount(0)
-    const currentTitle = data?.postCaption?.split('\n')[0]?.slice(0, 100) ?? ''
-    await generateBrief(currentTitle, angle)
     setData(prev => prev ? { ...prev, postCaption: angle } : prev)
   }
 

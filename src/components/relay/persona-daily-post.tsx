@@ -54,7 +54,12 @@ export function PersonaDailyPostView({ personaId, personaName, initialPlatform =
       })
       if (!res.ok) throw new Error('Failed')
       const json = await res.json()
-      if (json.post) setData(json.post)
+      if (json.post) {
+        setData(json.post)
+      } else if (json.fallback) {
+        setData(json.fallback.post)
+        setError('AI generation limited — showing best effort ideas. Click "New post" to retry.')
+      }
     } catch { setError('Generation failed. Try again.') }
     finally { setGenerating(false) }
   }, [personaId, platform])
@@ -235,9 +240,9 @@ export function PersonaDailyPostView({ personaId, personaName, initialPlatform =
               </div>
             </div>
 
-            {data.alternateIdeas && data.alternateIdeas.length > 0 && (
+            {data.alternateIdeas != null && data.alternateIdeas.length > 0 && (
               <div className="rounded-xl border border-line bg-bone-raised p-4">
-                <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-ink/30">Other angles for today</p>
+                <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-ink/30">Other angles for today ({data.alternateIdeas.length})</p>
                 <div className="space-y-2">
                   {data.alternateIdeas.map((idea, i) => (
                     <div

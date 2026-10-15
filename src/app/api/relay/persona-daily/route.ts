@@ -58,35 +58,44 @@ export async function GET(request: Request) {
     explorationRatio: 0.25,
   })
 
-  const result = await generatePersonaDailyPost({
-    persona,
-    profile,
-    memories,
-    trendCandidates,
-    rejectedTitles: [],
-    rejectedAngles: [],
-    recentIdeas,
-    platform,
-    localDate,
-    timezone: user.rep.timezone ?? 'UTC',
-  })
+  try {
+    const result = await generatePersonaDailyPost({
+      persona,
+      profile,
+      memories,
+      trendCandidates,
+      rejectedTitles: [],
+      rejectedAngles: [],
+      recentIdeas,
+      platform,
+      localDate,
+      timezone: user.rep.timezone ?? 'UTC',
+    })
 
-  return NextResponse.json({
-    post: {
-      title: result.title,
-      angle: result.angle,
-      postCaption: result.postCaption,
-      territory: result.territory,
-      whyNow: result.whyNow,
-      trendGrounded: result.trendGrounded,
-      visualPrompt: result.visualPrompt,
-      alternateIdeas: result.alternateIdeas,
-    },
-    personaId: persona.id,
-    personaName: persona.displayName,
-    localDate,
-    platform,
-  })
+    return NextResponse.json({
+      post: {
+        title: result.title,
+        angle: result.angle,
+        postCaption: result.postCaption,
+        territory: result.territory,
+        whyNow: result.whyNow,
+        trendGrounded: result.trendGrounded,
+        visualPrompt: result.visualPrompt,
+        alternateIdeas: result.alternateIdeas,
+      },
+      personaId: persona.id,
+      personaName: persona.displayName,
+      localDate,
+      platform,
+    })
+  } catch (err) {
+    console.error('[persona-daily] Generation failed:', err instanceof Error ? err.message : String(err))
+    return NextResponse.json({
+      error: 'Generation failed',
+      message: err instanceof Error ? err.message : 'Unknown error',
+      fallback: generateFallbackPost(persona, profile, trendCandidates, platform),
+    }, { status: 200 })
+  }
 }
 
 export async function POST(request: Request) {
@@ -139,34 +148,88 @@ export async function POST(request: Request) {
     explorationRatio: 0.30,
   })
 
-  const result = await generatePersonaDailyPost({
-    persona,
-    profile,
-    memories,
-    trendCandidates,
-    rejectedTitles: rejectTitle ? [rejectTitle] : [],
-    rejectedAngles: rejectAngle ? [rejectAngle] : [],
-    recentIdeas,
-    platform,
-    localDate,
-    timezone: user.rep.timezone ?? 'UTC',
-  })
+  try {
+    const result = await generatePersonaDailyPost({
+      persona,
+      profile,
+      memories,
+      trendCandidates,
+      rejectedTitles: rejectTitle ? [rejectTitle] : [],
+      rejectedAngles: rejectAngle ? [rejectAngle] : [],
+      recentIdeas,
+      platform,
+      localDate,
+      timezone: user.rep.timezone ?? 'UTC',
+    })
 
-  return NextResponse.json({
+    return NextResponse.json({
+      post: {
+        title: result.title,
+        angle: result.angle,
+        postCaption: result.postCaption,
+        territory: result.territory,
+        whyNow: result.whyNow,
+        trendGrounded: result.trendGrounded,
+        visualPrompt: result.visualPrompt,
+        alternateIdeas: result.alternateIdeas,
+      },
+      personaId: persona.id,
+      personaName: persona.displayName,
+      localDate,
+      platform,
+      rejected: rejectTitle ? true : false,
+    })
+  } catch (err) {
+    console.error('[persona-daily] Regeneration failed:', err instanceof Error ? err.message : String(err))
+    return NextResponse.json({
+      error: 'Generation failed',
+      message: err instanceof Error ? err.message : 'Unknown error',
+      fallback: generateFallbackPost(persona, profile, trendCandidates, platform),
+    }, { status: 200 })
+  }
+}
+
+function generateFallbackPost(
+  persona: { displayName?: string; personaRole?: string | null; repId?: string } | null,
+  profile: { territories?: string[]; expertise?: Array<{ area: string }> } | null,
+  trendCandidates: import('@/lib/trends/types').TrendCandidate[],
+  platform: 'linkedin' | 'x',
+) {
+  const role = persona?.personaRole ?? 'professional'
+  const territory = profile?.territories?.[0] ?? 'your field'
+  const expertise = profile?.expertise?.[0]?.area ?? territory
+  const trendTitle = trendCandidates[0]?.item?.title
+
+  const alternates = [
+    { title: `The ${territory} lesson most ${role}s learn too late`, angle: `A hard-won insight from real work in ${territory}. Specific, not abstract.`, territory },
+    { title: `What "${trendTitle ?? 'current trends'}" means for ${role}s`, angle: `A trend-grounded take on why this matters to ${territory} professionals right now.`, territory },
+    { title: `I changed my mind about ${expertise}`, angle: `A genuine perspective shift. What changed and what it means going forward.`, territory },
+    { title: `The ${expertise} mistake I see every team make`, angle: `A specific, recurring pattern with a concrete fix.`, territory },
+    { title: `Why most teams underestimate ${territory}`, angle: `A contrarian take that challenges common assumptions.`, territory },
+    { title: `Two years of ${expertise} in one lesson`, angle: `A single actionable takeaway distilled from real experience.`, territory },
+    { title: `What nobody tells you about ${territory}`, angle: `An insider perspective that contradicts surface-level advice.`, territory },
+  ]
+
+  const mainTitle = alternates[0].title
+  const mainAngle = alternates[0].angle
+
+  const postCaption = platform === 'linkedin'
+    ? `${mainAngle}\n\nAfter years of working in ${territory}, I have seen this pattern repeat. The conventional advice does not hold up when you look at the actual data.\n\nHere is what actually works.\n\nWhat has your experience been?`
+    : `${mainAngle.slice(0, 200)}`
+
+  return {
     post: {
-      title: result.title,
-      angle: result.angle,
-      postCaption: result.postCaption,
-      territory: result.territory,
-      whyNow: result.whyNow,
-      trendGrounded: result.trendGrounded,
-      visualPrompt: result.visualPrompt,
-      alternateIdeas: result.alternateIdeas,
+      title: mainTitle,
+      angle: mainAngle,
+      postCaption,
+      territory,
+      whyNow: 'Evergreen expertise',
+      trendGrounded: !!trendTitle,
+      visualPrompt: null,
+      alternateIdeas: alternates.slice(1),
     },
-    personaId: persona.id,
-    personaName: persona.displayName,
-    localDate,
-    platform,
-    rejected: rejectTitle ? true : false,
-  })
+    personaId: persona?.displayName ?? 'persona',
+    personaName: persona?.displayName ?? 'Your Persona',
+    fallback: true,
+  }
 }

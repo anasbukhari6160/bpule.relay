@@ -124,6 +124,8 @@ RULES:
 
 ${rejectedBlock}${rejectedAngleBlock}
 
+CRITICAL: Generate at least 5 alternate ideas. Each must be a DISTINCT angle — not variations of the same idea.
+
 Output ONLY JSON:
 {
   "title": "specific, non-generic title",
@@ -133,6 +135,8 @@ Output ONLY JSON:
   "trendGrounded": true/false,
   "postCaption": "the full post text, perfectly formatted with paragraph breaks",
   "alternates": [
+    {"title": "...", "angle": "...", "territory": "..."},
+    {"title": "...", "angle": "...", "territory": "..."},
     {"title": "...", "angle": "...", "territory": "..."},
     {"title": "...", "angle": "...", "territory": "..."},
     {"title": "...", "angle": "...", "territory": "..."}
@@ -148,10 +152,9 @@ Output ONLY JSON:
   }
 
   const result = await generate<Record<string, unknown>>({
-    task: 'DEEP_WRITING',
+    task: 'FAST_STRUCTURED',
     system: systemPrompt,
     user: JSON.stringify(userObj),
-    maxTokens: 800,
     promptVersion: 'relay-persona-daily-v1',
     callSite: 'relay:personaDailyPost',
     feature: 'relay_persona_daily',
@@ -159,13 +162,16 @@ Output ONLY JSON:
 
   costTracking.total += Number(result.trace?.estimatedCostUsd ?? 0)
 
-  const data = result.data as Record<string, unknown>
-  const title = (data?.title as string) ?? ''
-  const angle = (data?.angle as string) ?? ''
-  const whyNow = (data?.whyNow as string) ?? ''
-  const territory = (data?.territory as string) ?? ''
-  const trendGrounded = (data?.trendGrounded as boolean) ?? false
-  let postCaption = (data?.postCaption as string) ?? ''
+  let data = result.data as Record<string, unknown>
+  if (!data || typeof data !== 'object') {
+    throw new Error('AI returned invalid data structure')
+  }
+  const title = (data.title as string) ?? ''
+  const angle = (data.angle as string) ?? ''
+  const whyNow = (data.whyNow as string) ?? ''
+  const territory = (data.territory as string) ?? ''
+  const trendGrounded = (data.trendGrounded as boolean) ?? false
+  let postCaption = (data.postCaption as string) ?? ''
 
   if (input.platform === 'x') {
     postCaption = cleanXPostCaption(postCaption)
@@ -173,12 +179,12 @@ Output ONLY JSON:
     postCaption = cleanLinkedInCaption(postCaption)
   }
 
-  const alternatesRaw = (data?.alternates as Array<Record<string, string>>) ?? []
-  const alternateIdeas = alternatesRaw.slice(0, 3).map(a => ({
+  const alternatesRaw = (data.alternates as Array<Record<string, string>>) ?? []
+  const alternateIdeas = alternatesRaw.slice(0, 5).map(a => ({
     title: a.title ?? '',
     angle: a.angle ?? '',
     territory: a.territory ?? '',
-  }))
+  })).filter(a => a.title.length > 0)
 
   let visualPrompt: HumanizedImageResult | null = null
   try {
