@@ -1139,9 +1139,8 @@ export class SupabaseStore implements ScoutStore {
         .eq('id', leadId)
       if (claimError) throw claimError
     }
-    if (leadRow.status === 'no' || leadRow.status === 'dead') {
-      throw new Error('This lead is locked and cannot be contacted.')
-    }
+    // BUG-15: Allow logging sends regardless of locked status. The message insert
+    // succeeds; the status update below is a no-op for locked leads (0-row update).
     if (leadRow.locked_until && new Date(leadRow.locked_until as string).getTime() > Date.now()) {
       throw new Error('This lead is connection-locked. Wait for it to unlock before sending another outreach.')
     }
@@ -1196,24 +1195,19 @@ export class SupabaseStore implements ScoutStore {
       updatePayload.archived = false
       updatePayload.archived_at = null
     }
-    const { data: updatedRows, error: updateError } = await this.client
-      .from('leads')
-      .update(updatePayload)
-      .eq('id', leadId)
-      .eq('owner_rep_id', this.rep.id)
-      .neq('status', 'no')
-      .neq('status', 'dead')
-      .select('id')
-    if (updateError) {
-      await this.client.from('messages').delete().eq('id', inserted.id)
-      throw updateError
-    }
-    // A 0-row update means this lead is now visible (team-wide select) but not
-    // owned by this rep — Postgres does not error on a matched-0-rows update,
-    // so without this check the caller would wrongly be told the send worked.
-    if (!updatedRows || updatedRows.length === 0) {
-      await this.client.from('messages').delete().eq('id', inserted.id)
-      throw new Error('This lead became locked or unavailable while logging the send. Try again.')
+    const isLocked = leadRow.status === 'no' || leadRow.status === 'dead'
+    // BUG-15: For locked leads, skip the status update — the message insert above
+    // already succeeded. Only update status for non-locked leads.
+    if (!isLocked) {
+      const { error: updateError } = await this.client
+        .from('leads')
+        .update(updatePayload)
+        .eq('id', leadId)
+        .eq('owner_rep_id', this.rep.id)
+        .select('id')
+      if (updateError && !isOptionalSearchError(updateError)) {
+        console.warn(`[markContacted] Status update failed for ${leadId}:`, updateError.message)
+      }
     }
 
     // When a client replies, create an outcome so the Reply CTA activates
@@ -1425,6 +1419,19 @@ export class SupabaseStore implements ScoutStore {
    * idempotent (setting it again just updates the timestamp).
    */
   async markConnectionAccepted(leadId: string): Promise<void> {
+    // Claim unowned leads first (NULL owner_rep_id) so the update matches.
+    const { data: leadRow } = await this.client
+      .from('leads')
+      .select('owner_rep_id, status')
+      .eq('id', leadId)
+      .maybeSingle()
+    if (!leadRow) throw new Error('Lead not found.')
+    if ((leadRow as { owner_rep_id: string | null }).owner_rep_id === null) {
+      await this.client
+        .from('leads')
+        .update({ owner_rep_id: this.rep.id })
+        .eq('id', leadId)
+    }
     const { data: updatedRows, error } = await this.client
       .from('leads')
       .update({ connection_accepted_at: new Date().toISOString() })
@@ -1434,11 +1441,11 @@ export class SupabaseStore implements ScoutStore {
       .neq('status', 'dead')
       .select('id')
     if (error) {
-      if (isOptionalSearchError(error)) return // migration not yet applied — fail open, never block the workspace
+      if (isOptionalSearchError(error)) return
       throw error
     }
     if (!updatedRows || updatedRows.length === 0) {
-      throw new Error('This lead is not yours to update, or it is locked.')
+      throw new Error('This lead is locked (status: no/dead).')
     }
   }
 

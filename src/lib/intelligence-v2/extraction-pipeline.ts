@@ -1056,10 +1056,20 @@ function normalizeLinkedInUrl(url: string | null): string | null {
   return normalized
 }
 
+// Name prefixes/titles that should never be used as a first name.
+const NAME_PREFIXES = new Set([
+  'dr', 'dr.', 'mr', 'mr.', 'mrs', 'mrs.', 'ms', 'ms.', 'miss',
+  'prof', 'prof.', 'sir', 'madam', 'lord', 'lady',
+  'capt', 'capt.', 'maj', 'maj.', 'col', 'col.', 'sgt', 'sgt.',
+  'rev', 'rev.', 'hon', 'hon.',
+])
+
 function extractFirstName(fullName: string | null): string | null {
   if (!fullName) return null
-  const parts = fullName.trim().split(/\s+/)
-  return parts[0] || null
+  const parts = fullName.trim().split(/\s+/).filter(Boolean)
+  // Skip titles/prefixes like "Dr.", "Mr.", etc.
+  const firstReal = parts.find((p) => !NAME_PREFIXES.has(p.toLowerCase().replace(/\.$/, '')))
+  return firstReal || parts[0] || null
 }
 
 function normalizeSeniority(seniority: string | null, title: string | null): string | null {
