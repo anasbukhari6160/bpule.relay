@@ -3,10 +3,10 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  Send, Reply, MessageSquare, Copy, Check, Trophy, Clock,
-  Building2, User, ExternalLink, AlertTriangle, Sparkles,
-  CheckCircle2, XCircle, Target, Shield, Users, Calendar,
-  RefreshCw, ChevronDown, ChevronUp, Flame, Archive,
+  Send, Reply, MessageSquare, X, Copy, Check, Trophy, Clock,
+  Building2, ExternalLink, AlertTriangle, Sparkles,
+  XCircle, Target, CalendarDays, Flame,
+  ChevronDown, ChevronUp, Mail,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -36,13 +36,15 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   const [generating, setGenerating] = useState(false)
   const [sending, setSending] = useState(false)
   const [generationStatus, setGenerationStatus] = useState<string | null>(null)
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['timeline']))
+  const [markingAccepted, setMarkingAccepted] = useState(false)
 
   const relationshipState = computeRelationshipState(lead)
-  const action = deriveNextLeadAction(lead)
-
+  const nextAction = deriveNextLeadAction(lead)
   const messages = lead.messages ?? []
   const lastInbound = messages.filter((m) => m.direction === 'inbound').at(0) ?? null
+  const phase = relationshipState.phase
+  const isTheirMove = relationshipState.kind === 'their_move' && phase !== 'replied'
+  const isTerminal = relationshipState.kind === 'won' || relationshipState.kind === 'lost'
 
   const refreshLead = useCallback(async () => {
     try {
@@ -51,11 +53,9 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     } catch { /* ignore */ }
   }, [lead.id])
 
-  useEffect(() => {
-    if (leadVersion > 0) refreshLead()
-  }, [leadVersion, refreshLead])
+  useEffect(() => { if (leadVersion > 0) refreshLead() }, [leadVersion, refreshLead])
 
-  // Deep linking: ?next=generate-connection, generate-dm, generate-reply, generate-followup
+  // Deep linking
   useEffect(() => {
     const next = searchParams.get('next')
     if (!next || mode || generating) return
@@ -63,31 +63,23 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     if (match) {
       setMode(match[1] as Mode)
       generateDraft(match[1] as Mode)
-      // Clean URL without reload
       const url = new URL(window.location.href)
       url.searchParams.delete('next')
       window.history.replaceState({}, '', url.toString())
     }
-  }, [searchParams, mode, generating])
+  }, [searchParams])
 
   const generateDraft = useCallback(async (type: Mode) => {
     if (!type) return
-    setMode(type)
-    setGenerating(true)
-    setDraftText('')
-    setGenerationStatus(null)
+    setMode(type); setGenerating(true); setDraftText(''); setGenerationStatus(null)
     try {
       const replyText = type === 'reply' ? (lastInbound?.sentText || '') : undefined
       const replyToMessageId = type === 'reply' ? (lastInbound?.id || undefined) : undefined
       const res = await fetch(`/api/leads/${lead.id}/draft`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, replyText, replyToMessageId }),
       })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.error || `Generation failed (${res.status})`)
-      }
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Generation failed (${res.status})`) }
       let buffer = ''
       const reader = res.body?.getReader()
       if (!reader) throw new Error('No response stream')
@@ -95,22 +87,19 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const text = decoder.decode(value)
-        for (const line of text.split('\n\n')) {
+        for (const line of decoder.decode(value).split('\n\n')) {
           if (!line.startsWith('data: ')) continue
           try {
             const json = JSON.parse(line.slice(6))
             if (json.type === 'draft') { buffer += json.chunk ?? ''; setDraftText(buffer) }
             else if (json.type === 'done' && json.draft) setDraftText(json.draft.draftText)
             else if (json.type === 'error') { setGenerationStatus(json.message || 'Generation failed'); return }
-          } catch { /* skip malformed */ }
+          } catch { /* skip */ }
         }
       }
     } catch (err) {
       setGenerationStatus(err instanceof Error ? err.message : 'Generation failed. Retry.')
-    } finally {
-      setGenerating(false)
-    }
+    } finally { setGenerating(false) }
   }, [lead.id, lastInbound])
 
   const logSend = useCallback(async (text: string, type: Mode) => {
@@ -118,63 +107,36 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     setSending(true)
     try {
       const res = await fetch(`/api/leads/${lead.id}/contact`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sentText: text.trim(), type }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Failed to log send.')
-      setDraftText('')
-      setSentText('')
-      setMode(null)
-      setLeadVersion((v) => v + 1)
-      router.refresh()
+      setDraftText(''); setSentText(''); setMode(null); setLeadVersion((v) => v + 1); router.refresh()
     } catch (err) {
       setGenerationStatus(err instanceof Error ? err.message : 'Failed to log send.')
-    } finally {
-      setSending(false)
-    }
+    } finally { setSending(false) }
   }, [lead.id, router])
 
   const markAccepted = useCallback(async () => {
-    await fetch(`/api/leads/${lead.id}/connection-accepted`, { method: 'POST' })
-    setLeadVersion((v) => v + 1)
-    router.refresh()
+    setMarkingAccepted(true)
+    try { await fetch(`/api/leads/${lead.id}/connection-accepted`, { method: 'POST' }); setLeadVersion((v) => v + 1); router.refresh() }
+    finally { setMarkingAccepted(false) }
   }, [lead.id, router])
 
   const logInboundReply = useCallback(async (text: string) => {
-    await fetch(`/api/leads/${lead.id}/reply`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text.trim() }),
-    })
-    setLeadVersion((v) => v + 1)
-    router.refresh()
+    await fetch(`/api/leads/${lead.id}/reply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text.trim() }) })
+    setLeadVersion((v) => v + 1); router.refresh()
   }, [lead.id, router])
 
-  const toggleSection = (key: string) => {
-    setExpandedSections((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
-
-  const visibleMessages = messages
-    .filter((m) => m.sentText || m.direction === 'inbound')
-    .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+  const visibleMessages = messages.filter((m) => m.sentText || m.direction === 'inbound').sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
 
   const scoreBreakdown = (lead.canonicalIntelligence as Record<string, unknown>)?.scoreBreakdown as Record<string, unknown> | null
   const dimensions = Array.isArray(scoreBreakdown?.dimensions) ? scoreBreakdown.dimensions as Array<Record<string, unknown>> : []
 
-  const phase = relationshipState.phase
-  const isTheirMove = relationshipState.kind === 'their_move' && phase !== 'replied'
-  const isTerminal = relationshipState.kind === 'won' || relationshipState.kind === 'lost'
-
   return (
-    <div className="space-y-6 max-w-5xl">
-      {/* Contact header */}
+    <div className="space-y-6">
+      {/* Contact Header */}
       <div className="rounded-2xl border border-line bg-bone-raised/20 p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
@@ -184,32 +146,26 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               </div>
               <div className="min-w-0">
                 <h1 className="text-[18px] font-medium text-ink truncate">{lead.contactName ?? 'Unnamed prospect'}</h1>
-                <p className="text-[13px] text-graphite truncate">
-                  {lead.company && <span className="flex items-center gap-1"><Building2 className="size-3" />{lead.company}</span>}
-                  {lead.contactTitle && <span className="ml-2 text-stone">{lead.contactTitle}</span>}
+                <p className="text-[13px] text-graphite truncate flex items-center gap-1">
+                  {lead.company && <><Building2 className="size-3 shrink-0" /><span className="truncate">{lead.company}</span></>}
+                  {lead.contactTitle && <span className="ml-1 text-stone truncate">· {lead.contactTitle}</span>}
                 </p>
               </div>
             </div>
-            {/* Score + verdict */}
             <div className="mt-3 flex items-center gap-4">
               <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} size={44} />
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-medium text-ink">
-                    {lead.score != null ? `${lead.score}/12` : lead.canonicalScore != null ? `${Math.round(lead.canonicalScore / 10)}/10` : '—'}
-                  </span>
+                  <span className="text-[13px] font-medium text-ink">{lead.score != null ? `${lead.score}/12` : lead.canonicalScore != null ? `${Math.round(lead.canonicalScore / 10)}/10` : '—'}</span>
                   {(() => {
                     const q = (lead.canonicalIntelligence as Record<string, unknown>)?.qualification
                     if (!q) return null
                     const qs = String(q)
                     return (
-                      <span className={cn(
-                        'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                      <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium',
                         qs === 'strong' || qs === 'worth_pursuing' ? 'bg-status-success/10 text-status-success' :
                         qs === 'maybe' ? 'bg-orange/10 text-orange' : 'bg-stone-100 text-stone-500'
-                      )}>
-                        {qs}
-                      </span>
+                      )}>{qs}</span>
                     )
                   })()}
                 </div>
@@ -219,29 +175,30 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           </div>
           <div className="shrink-0 text-right">
             <StatusPill phase={phase} />
+            {lead.url && <a href={lead.url} target="_blank" rel="noopener" className="mt-1 inline-block text-[10px] text-cobalt hover:underline">LinkedIn ↗</a>}
           </div>
         </div>
       </div>
 
-      {/* Score breakdown (if canonical) */}
+      {/* Score Breakdown */}
       {dimensions.length > 0 && (
-        <CollapsibleSection
-          title="Score breakdown"
-          icon={<Target className="size-4" />}
-          expanded={expandedSections.has('score')}
-          onToggle={() => toggleSection('score')}
-          count={dimensions.length}
-        >
-          <div className="grid gap-2 sm:grid-cols-2">
+        <details className="group rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">
+          <summary className="px-5 py-3 cursor-pointer flex items-center gap-2 select-none hover:bg-bone-raised/40 transition-colors">
+            <Target className="size-4 text-cobalt" />
+            <span className="text-sm font-medium text-ink">Score Breakdown</span>
+            <span className="ml-auto text-stone group-open:hidden"><ChevronDown className="size-4" /></span>
+            <span className="ml-auto text-stone hidden group-open:inline"><ChevronUp className="size-4" /></span>
+          </summary>
+          <div className="grid gap-3 p-5 sm:grid-cols-2 border-t border-line/40">
             {dimensions.map((dim) => {
-              const contribution = Number(dim.contribution ?? 0)
-              const weight = Number(dim.weight ?? 0)
-              const pct = weight > 0 ? Math.min(100, Math.round((contribution / (weight * 100)) * 100)) : 0
+              const points = Number(dim.points ?? 0)
+              const max = Number(dim.max ?? 0)
+              const pct = max > 0 ? Math.min(100, Math.round((points / max) * 100)) : 0
               return (
                 <div key={String(dim.key)} className="rounded-lg border border-line/50 bg-bone p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[12px] font-medium text-ink">{String(dim.label ?? dim.key)}</span>
-                    <span className="text-[11px] text-stone">{contribution.toFixed(1)} pts</span>
+                    <span className="text-[11px] font-mono text-stone">{points.toFixed(1)} / {max}</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-line/40 overflow-hidden">
                     <div className={cn('h-full rounded-full', pct >= 70 ? 'bg-status-success' : pct >= 40 ? 'bg-orange' : 'bg-status-warning')} style={{ width: `${pct}%` }} />
@@ -251,28 +208,21 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               )
             })}
           </div>
-        </CollapsibleSection>
+        </details>
       )}
 
-      {/* Action area */}
+      {/* Relationship State + Actions */}
       {!isTerminal && (
-        <div className="rounded-2xl border border-line bg-bone overflow-hidden">
-          {/* State indicator */}
-          <div className={cn(
-            'px-5 py-3 border-b flex items-center justify-between',
-            isTheirMove ? 'border-line/60 bg-bone-raised/40' : 'border-orange/20 bg-orange/[0.03]'
-          )}>
+        <div className={cn('rounded-2xl border overflow-hidden', isTheirMove ? 'border-line/60 bg-bone-raised/30' : 'border-orange/20 bg-orange/[0.03]')}>
+          <div className="px-5 py-3 border-b border-line flex items-center justify-between">
             <div className="flex items-center gap-2">
-              {!isTheirMove && !isTerminal && <span className="size-2 rounded-full bg-orange animate-pulse" />}
+              {!isTheirMove && <span className="size-2 rounded-full bg-orange animate-pulse" />}
               {isTheirMove && <Clock className="size-3.5 text-stone" />}
               <span className="text-[13px] font-medium text-ink">{relationshipState.detail}</span>
             </div>
-            {relationshipState.lastActionAt && (
-              <span className="text-[11px] text-stone">{timeAgo(relationshipState.lastActionAt)}</span>
-            )}
+            {relationshipState.lastActionAt && <span className="text-[11px] text-stone">{timeAgo(relationshipState.lastActionAt)}</span>}
           </div>
 
-          {/* Generating spinner */}
           {generating && !draftText && (
             <div className="px-5 py-4 flex items-center gap-3">
               <div className="size-5 animate-spin rounded-full border-2 border-orange/30 border-t-orange" />
@@ -280,46 +230,33 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
             </div>
           )}
 
-          {/* Draft editor */}
           {!generating && mode && draftText && (
             <div className="px-5 py-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-stone">
                   {mode === 'connection' ? 'Connection note' : mode === 'dm' ? 'Your message' : mode === 'reply' ? 'Reply' : 'Follow-up'}
                 </span>
-                <button type="button" onClick={() => { setMode(null); setDraftText('') }} className="text-stone hover:text-ink">
-                  <XCircle className="size-4" />
-                </button>
+                <button onClick={() => { setMode(null); setDraftText('') }} className="text-stone hover:text-ink"><XCircle className="size-4" /></button>
               </div>
-              <Textarea
-                value={sentText || draftText}
-                onChange={(e) => setSentText(e.target.value)}
-                rows={5}
-                className="text-[13px]"
-                placeholder="Edit before sending..."
-              />
+              <Textarea value={sentText || draftText} onChange={(e) => setSentText(e.target.value)} rows={5} className="text-[13px]" placeholder="Edit before sending..." />
               <div className="flex gap-2">
                 <Button size="sm" onClick={() => logSend(sentText || draftText, mode)} disabled={sending || !(sentText || draftText).trim()}>
                   <Send className="size-3" /> {sending ? 'Sending...' : 'Log as sent'}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText((sentText || draftText).trim()) }}>
+                <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText((sentText || draftText).trim())}>
                   <Copy className="size-3" /> Copy
                 </Button>
               </div>
-              {generationStatus && generationStatus.includes('fail') && (
+              {generationStatus && generationStatus.toLowerCase().includes('fail') && (
                 <div className="flex items-center gap-2 rounded-lg bg-status-danger/5 px-3 py-2 text-[11px] text-status-danger">
-                  <AlertTriangle className="size-3" />
-                  {generationStatus}
+                  <AlertTriangle className="size-3" /> {generationStatus}
                   <button onClick={() => generateDraft(mode)} className="ml-auto font-medium underline">Retry</button>
                 </div>
               )}
-              {dailyLimit > 0 && (
-                <p className="text-[10px] text-stone">{todaySends}/{dailyLimit} sends used today</p>
-              )}
+              {dailyLimit > 0 && <p className="text-[10px] text-stone">{todaySends}/{dailyLimit} sends used today</p>}
             </div>
           )}
 
-          {/* Primary actions (no draft open) */}
           {!generating && !(mode && draftText) && (
             <div className="px-5 py-4 space-y-3">
               {phase === 'connection_due' && !lead.connectionAcceptedAt && (
@@ -330,9 +267,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                   <Button size="sm" variant="outline" className="w-full justify-center sm:w-auto" onClick={async () => {
                     await fetch(`/api/leads/${lead.id}/contact`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'connection', sentText: '', sendWithoutNote: true }) })
                     setLeadVersion((v) => v + 1); router.refresh()
-                  }}>
-                    Send without note
-                  </Button>
+                  }}>Send without note</Button>
                 </div>
               )}
               {(phase === 'replied' || (relationshipState.kind === 'your_move' && lastInbound)) && (
@@ -340,7 +275,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                   <MessageSquare className="size-3.5" /> {lastInbound ? `Reply to "${lastInbound.sentText?.slice(0, 40)}..."` : 'Generate reply'}
                 </Button>
               )}
-              {(phase === 'connection_accepted' || phase === 'dm_due') && !lead.messages.some((m) => m.type === 'dm' && m.sentText) && (
+              {(phase === 'connection_accepted' || phase === 'dm_due') && !messages.some((m) => m.type === 'dm' && m.sentText) && (
                 <Button size="sm" onClick={() => generateDraft('dm')} className="w-full justify-center">
                   <MessageSquare className="size-3.5" /> Send first message
                 </Button>
@@ -350,16 +285,14 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                   <Send className="size-3.5" /> Send follow-up
                 </Button>
               )}
-              {phase === 'dm_sent' && action.action === 'SEND_FOLLOWUP' && (
+              {phase === 'dm_sent' && nextAction.action === 'SEND_FOLLOWUP' && (
                 <Button size="sm" variant="outline" onClick={() => generateDraft('followup')} className="w-full justify-center">
                   <Clock className="size-3.5" /> Send follow-up now
                 </Button>
               )}
-
-              {/* Quick actions */}
               <div className="flex flex-wrap gap-2 pt-2 border-t border-line/30">
                 {phase === 'connection_sent' && !lead.connectionAcceptedAt && (
-                  <Button size="sm" variant="outline" onClick={markAccepted}>
+                  <Button size="sm" variant="outline" onClick={markAccepted} loading={markingAccepted}>
                     <Trophy className="size-3" /> Mark accepted
                   </Button>
                 )}
@@ -377,44 +310,48 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
       )}
 
       {/* Timeline */}
-      <CollapsibleSection
-        title="Conversation history"
-        icon={<MessageSquare className="size-4" />}
-        expanded={expandedSections.has('timeline')}
-        onToggle={() => toggleSection('timeline')}
-        count={visibleMessages.length}
-        defaultExpanded
-      >
-        {visibleMessages.length === 0 ? (
-          <p className="py-6 text-center text-[13px] text-stone">No messages yet. Generate one above.</p>
-        ) : (
-          <div className="space-y-3">
-            {visibleMessages.map((msg) => (
-              <div key={msg.id} className={cn('rounded-lg border p-3', msg.direction === 'inbound' ? 'border-orange/20 bg-orange/[0.02]' : 'border-line bg-bone-raised/20')}>
-                <div className="flex items-center gap-2 text-[10px] text-stone mb-1">
-                  <span className={cn('rounded px-1 py-0.5 text-[9px] font-medium uppercase', msg.direction === 'inbound' ? 'bg-orange/10 text-orange' : 'bg-cobalt/10 text-cobalt')}>
-                    {msg.direction === 'inbound' ? '← Received' : '→ Sent'}
-                  </span>
-                  <span className="capitalize">{msg.type}</span>
-                  {msg.sentAt && <span>· {timeAgo(msg.sentAt)}</span>}
-                  {msg.draftText && !msg.sentText && <span className="text-orange">· Draft</span>}
+      <details open className="group rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">
+        <summary className="px-5 py-3 cursor-pointer flex items-center gap-2 select-none hover:bg-bone-raised/40 transition-colors">
+          <MessageSquare className="size-4 text-cobalt" />
+          <span className="text-sm font-medium text-ink">History</span>
+          <span className="rounded-full bg-line/60 px-1.5 py-0.5 text-[10px] font-medium text-stone">{visibleMessages.length}</span>
+          <span className="ml-auto text-stone group-open:hidden"><ChevronDown className="size-4" /></span>
+          <span className="ml-auto text-stone hidden group-open:inline"><ChevronUp className="size-4" /></span>
+        </summary>
+        <div className="border-t border-line/40">
+          {visibleMessages.length === 0 ? (
+            <p className="py-8 text-center text-[13px] text-stone">No messages yet. Generate one above.</p>
+          ) : (
+            <div className="divide-y divide-line/30">
+              {visibleMessages.map((msg) => (
+                <div key={msg.id} className="px-5 py-3">
+                  <div className="flex items-center gap-2 text-[10px] text-stone mb-1">
+                    <span className={cn('rounded px-1 py-0.5 text-[9px] font-medium uppercase',
+                      msg.direction === 'inbound' ? 'bg-orange/10 text-orange' : 'bg-cobalt/10 text-cobalt'
+                    )}>
+                      {msg.direction === 'inbound' ? '← Received' : '→ Sent'}
+                    </span>
+                    <span className="capitalize">{msg.type}</span>
+                    {msg.sentAt && <span>· {timeAgo(msg.sentAt)}</span>}
+                  </div>
+                  <p className="text-[13px] text-ink whitespace-pre-wrap">{msg.sentText || '(empty)'}</p>
                 </div>
-                <p className="text-[13px] text-ink whitespace-pre-wrap">{msg.sentText || msg.draftText || '(empty)'}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </CollapsibleSection>
+              ))}
+            </div>
+          )}
+        </div>
+      </details>
 
-      {/* Context panel — signals & company info */}
-      {(lead.signalEvidence || lead.company || lead.contactTitle) && (
-        <CollapsibleSection
-          title="Context"
-          icon={<Sparkles className="size-4" />}
-          expanded={expandedSections.has('context')}
-          onToggle={() => toggleSection('context')}
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
+      {/* Context */}
+      {(lead.company || lead.contactTitle || lead.signalEvidence || (lead.tags?.length ?? 0) > 0) && (
+        <details className="group rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">
+          <summary className="px-5 py-3 cursor-pointer flex items-center gap-2 select-none hover:bg-bone-raised/40 transition-colors">
+            <Sparkles className="size-4 text-cobalt" />
+            <span className="text-sm font-medium text-ink">Context</span>
+            <span className="ml-auto text-stone group-open:hidden"><ChevronDown className="size-4" /></span>
+            <span className="ml-auto text-stone hidden group-open:inline"><ChevronUp className="size-4" /></span>
+          </summary>
+          <div className="grid gap-3 p-5 border-t border-line/40 sm:grid-cols-2">
             {lead.company && (
               <div className="rounded-lg border border-line/50 bg-bone p-3">
                 <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Company</p>
@@ -437,75 +374,39 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               <div className="rounded-lg border border-line/50 bg-bone p-3 sm:col-span-2">
                 <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Tags</p>
                 <div className="flex flex-wrap gap-1">
-                  {lead.tags!.map((tag) => (
+                  {(lead.tags ?? []).map((tag) => (
                     <span key={tag} className="rounded-full bg-line/40 px-2 py-0.5 text-[10px] text-ink/70">{tag}</span>
                   ))}
                 </div>
               </div>
             )}
           </div>
-        </CollapsibleSection>
+        </details>
       )}
     </div>
   )
 }
 
-/* — shared components — */
-
-function CollapsibleSection({ title, icon, expanded, onToggle, count, children, defaultExpanded }: {
-  title: string
-  icon: React.ReactNode
-  expanded: boolean
-  onToggle: () => void
-  count?: number
-  children: React.ReactNode
-  defaultExpanded?: boolean
-}) {
-  // First render: use defaultExpanded to decide initial visibility
-  const [hasRendered, setHasRendered] = useState(false)
-  if (!hasRendered) {
-    // This runs on first render only — if defaultExpanded is true, show content
-    if (defaultExpanded) {
-      return (
-        <div className="rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">
-          <button onClick={onToggle} className="flex w-full items-center justify-between px-5 py-3 hover:bg-bone-raised/40 transition-colors">
-            <div className="flex items-center gap-3">
-              <span className="text-stone">{icon}</span>
-              <span className="text-sm font-medium text-ink">{title}</span>
-              {count !== undefined && <span className="rounded-full bg-line/60 px-1.5 py-0.5 text-[10px] font-medium text-stone">{count}</span>}
-            </div>
-            <ChevronUp className={cn('size-4 text-stone transition-transform', expanded ? '' : 'rotate-180')} />
-          </button>
-          <div className="px-5 pb-4">{children}</div>
-        </div>
-      )
-    }
-    // defaultExpanded false → collapsed
+function QuickReplyInput({ onSave }: { onSave: (text: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [saving, setSaving] = useState(false)
+  if (!open) {
     return (
-      <div className="rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">
-        <button onClick={onToggle} className="flex w-full items-center justify-between px-5 py-3 hover:bg-bone-raised/40 transition-colors">
-          <div className="flex items-center gap-3">
-            <span className="text-stone">{icon}</span>
-            <span className="text-sm font-medium text-ink">{title}</span>
-            {count !== undefined && <span className="rounded-full bg-line/60 px-1.5 py-0.5 text-[10px] font-medium text-stone">{count}</span>}
-          </div>
-          <ChevronDown className="size-4 text-stone" />
-        </button>
-      </div>
+      <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-graphite hover:border-orange/30 hover:text-ink transition-colors">
+        <Reply className="size-3" /> They replied
+      </button>
     )
   }
-  // After first render: controlled by `expanded` state
   return (
-    <div className="rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">
-      <button onClick={onToggle} className="flex w-full items-center justify-between px-5 py-3 hover:bg-bone-raised/40 transition-colors">
-        <div className="flex items-center gap-3">
-          <span className="text-stone">{icon}</span>
-          <span className="text-sm font-medium text-ink">{title}</span>
-          {count !== undefined && <span className="rounded-full bg-line/60 px-1.5 py-0.5 text-[10px] font-medium text-stone">{count}</span>}
-        </div>
-        {expanded ? <ChevronUp className="size-4 text-stone" /> : <ChevronDown className="size-4 text-stone" />}
-      </button>
-      {expanded && <div className="px-5 pb-4">{children}</div>}
+    <div className="flex-1 min-w-[200px] space-y-2">
+      <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} className="text-[12px]" placeholder="Paste their reply..." />
+      <div className="flex gap-2">
+        <Button size="sm" disabled={!text.trim() || saving} onClick={() => { setSaving(true); onSave(text).finally(() => { setSaving(false); setText(''); setOpen(false); }) }}>
+          <Check className="size-3" /> Log reply
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => { setOpen(false); setText('') }}>Cancel</Button>
+      </div>
     </div>
   )
 }
@@ -523,32 +424,6 @@ function StatusPill({ phase }: { phase: string }) {
   }
   const { label, cls } = map[phase] ?? { label: phase, cls: 'bg-stone-100 text-stone-500' }
   return <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-medium', cls)}>{label}</span>
-}
-
-function QuickReplyInput({ onSave }: { onSave: (text: string) => Promise<void> }) {
-  const [open, setOpen] = useState(false)
-  const [text, setText] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-graphite hover:border-orange/30 hover:text-ink transition-colors">
-        <Reply className="size-3" /> They replied
-      </button>
-    )
-  }
-
-  return (
-    <div className="flex-1 min-w-[200px] space-y-2">
-      <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} className="text-[12px]" placeholder="Paste their reply..." />
-      <div className="flex gap-2">
-        <Button size="sm" disabled={!text.trim() || saving} onClick={() => { setSaving(true); onSave(text).finally(() => { setSaving(false); setText(''); setOpen(false); }); }}>
-          <Check className="size-3" /> Log reply
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => { setOpen(false); setText('') }}>Cancel</Button>
-      </div>
-    </div>
-  )
 }
 
 function timeAgo(iso: string | null): string {
