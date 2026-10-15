@@ -331,6 +331,14 @@ function LeadCard({ lead, index }: { lead: LeadRow; index: number }) {
             )}
           </div>
 
+          {/* Rep assignment (admin view) */}
+          {lead.ownerName && (
+            <div className="mt-1 flex items-center gap-1.5 text-[11px] font-medium text-cobalt/80">
+              <Users className="size-3" />
+              <span>{lead.ownerName}</span>
+            </div>
+          )}
+
           {/* Archival warning */}
           {countdown !== null && (
             <div className="mt-1 flex items-center gap-1 text-[11px] text-status-warning">
