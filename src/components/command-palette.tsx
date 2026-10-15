@@ -222,14 +222,6 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       action: () => { router.push('/facts'); onOpenChange(false) },
     },
     {
-      id: 'benchmark',
-      label: 'Benchmark',
-      description: 'Eval harness',
-      icon: Command,
-      group: 'Studio',
-      action: () => { router.push('/relay/benchmark'); onOpenChange(false) },
-    },
-    {
       id: 'growth',
       label: 'Relay Growth',
       description: 'Growth engine',

@@ -269,12 +269,7 @@ export default function RelayPage() {
           >
             Prospect new opportunities
           </Link>
-          <Link
-            href="/relay/benchmark"
-            className="inline-flex items-center gap-2 rounded border border-line/30 px-3 py-1.5 text-[12px] font-medium text-[color:var(--console-mute)] hover:text-[color:var(--console-text)]"
-          >
-            Intelligence benchmark
-          </Link>
+
         </div>
       </header>
 

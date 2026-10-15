@@ -59,7 +59,6 @@ const MORE_NAV: Array<{
   { href: '/content-v2/growth', label: 'Relay Growth', icon: TrendingUp, exact: true, adminOnly: true, group: 'Create' },
   { href: '/profile-intelligence', label: 'Profiles', icon: UserCircle2, exact: false, group: 'Intelligence' },
   { href: '/facts', label: 'Proof', icon: Shield, exact: false, group: 'Intelligence' },
-  { href: '/relay/benchmark', label: 'Benchmark', icon: Shield, exact: true, group: 'Intelligence' },
   { href: '/admin/command-center', label: 'Command', icon: Shield, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/activity', label: 'Activity', icon: Activity, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/people', label: 'People', icon: Users, exact: true, adminOnly: true, group: 'Admin' },

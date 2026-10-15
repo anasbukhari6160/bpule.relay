@@ -1,5 +1,4 @@
 import { Suspense } from 'react'
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { AlertTriangle } from 'lucide-react'
 import { getCurrentUser } from '@/lib/auth/current'
@@ -28,7 +27,7 @@ export default async function TodayPage() {
   if (authCtx.isOwner || authCtx.isAdmin) {
     return (
       <Suspense fallback={<DashboardShellSkeleton />}>
-        <AdminTodayViewWithAccountability acData={acData} />
+        <AdminDashboard data={acData} />
       </Suspense>
     )
   }
@@ -50,39 +49,14 @@ export default async function TodayPage() {
   }
 
   // Rep view
-  const [repData, teamData] = await Promise.all([
+  const [repData] = await Promise.all([
     loadRepWorkspaceData(user.rep.id),
-    loadManagerTeamTab(),
   ])
 
   return (
     <Suspense fallback={<DashboardShellSkeleton />}>
-      <RepTodayViewWithAccountability
-        repData={repData}
-        teamData={teamData}
-      />
+      <RepDashboard data={repData} />
     </Suspense>
-  )
-}
-
-
-function RepTodayViewWithAccountability({
-  repData,
-  teamData,
-}: {
-  repData: RepWorkspaceData
-  teamData: { teams: any[]; isOwner: boolean }
-}) {
-  return (
-    <div className="space-y-6 pb-8">
-      <header className="space-y-1.5">
-        <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Your Relay</p>
-        <h1 className="text-display text-[28px] font-light tracking-[-0.02em] text-ink">YOUR DAY</h1>
-        <p className="text-[13px] text-graphite">Do This Next · {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-      </header>
-
-      <RepWorkspace data={repData} teamData={teamData} />
-    </div>
   )
 }
 
@@ -114,65 +88,6 @@ function ManagerTodayView({
   )
 }
 
-
-function AdminTodayViewWithAccountability({
-  acData,
-}: {
-  acData: Awaited<ReturnType<typeof loadAccountabilityDashboard>>
-}) {
-  const attentionCount = acData?.commandCenter?.attentionItems?.length ?? 0
-
-  return (
-    <div className="space-y-6 pb-8">
-      <header className="space-y-1.5">
-        <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Today</p>
-        <h1 className="text-display text-[28px] font-light tracking-[-0.02em] text-ink">
-          {attentionCount > 0
-            ? `${attentionCount} item${attentionCount === 1 ? '' : 's'} need attention`
-            : 'Team overview'}
-        </h1>
-        <p className="text-[13px] text-graphite">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-      </header>
-
-      <div className="flex items-center justify-between rounded-lg border border-line bg-bone-raised px-5 py-4">
-        <div>
-          <p className="text-[14px] font-medium text-ink">Command Center</p>
-          <p className="mt-0.5 text-[12px] text-graphite">Full team activity, exceptions, and opportunities.</p>
-        </div>
-        <Link
-          href="/admin/command-center"
-          className="shrink-0 rounded-md border border-orange/30 bg-orange/10 px-4 py-2 text-[12px] font-medium text-orange hover:bg-orange/20"
-        >
-          Open →
-        </Link>
-      </div>
-
-      {acData?.commandCenter?.team && acData.commandCenter.team.length > 0 && (
-        <section className="overflow-hidden rounded-lg border border-line bg-bone-raised">
-          <div className="px-4 py-3">
-            <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-stone">Who covered their day</p>
-          </div>
-          <ul className="divide-y divide-line/70 border-t border-line">
-            {[...acData.commandCenter.team].sort((a, b) => b.remaining - a.remaining).map((person) => {
-              const won = person.remaining === 0 && person.status === 'completed'
-              return (
-                <li key={person.personId} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <span className="min-w-0">
-                    <span className="block text-[14px] font-medium text-ink">{person.personName}</span>
-                    <span className="text-[12px] text-graphite">{person.workingAs.join(', ') || 'No profile'}</span>
-                  </span>
-                  <span className={won ? 'text-[13px] font-medium text-status-success' : 'text-[13px] text-ink'}>
-                    {won ? 'Day won' : `${person.remaining} left`}
-                  </span>
-                </li>
-              )
-            })}
-          </ul>
-        </section>
-      )}
-    </div>
-  )
-}
 
 async function loadManagerTeamTab() {
   try {
