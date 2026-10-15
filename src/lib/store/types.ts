@@ -517,6 +517,7 @@ export interface ScoutStore {
   getUpworkJob(id: string): Promise<(UpworkJob & { messages: UpworkMessage[] }) | null>
   listUpworkJobs(): Promise<UpworkJob[]>
   updateUpworkJobScore(id: string, score: { total: number; verdict: UpworkJob['verdict'] }): Promise<void>
+  updateUpworkJob(id: string, updates: { status?: UpworkJob['status']; notes?: string | null; proposedRate?: number | null }): Promise<void>
   saveUpworkDraft(input: { jobId: string; type: UpworkMessage['type']; draftText: string; modelUsed: string }): Promise<UpworkMessage>
   markUpworkApplied(jobId: string, sentText: string, type?: UpworkMessage['type']): Promise<void>
   // csv imports

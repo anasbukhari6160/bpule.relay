@@ -76,7 +76,7 @@ export function UpworkJobActions({ jobId, jobTitle, jobScore, profiles, matchedP
     } finally {
       setGenerating(false)
     }
-  }, [jobId, selectedProfileId])
+  }, [jobId, selectedProfileId, generationMode])
 
   const copyProposal = useCallback(async () => {
     if (!proposal) return

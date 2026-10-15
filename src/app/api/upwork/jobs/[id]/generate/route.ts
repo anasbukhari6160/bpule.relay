@@ -152,7 +152,7 @@ export async function POST(
   ].filter(Boolean).join('\n\n')
 
   const screeningBlock = screeningQuestions.length > 0
-    ? `\nSCREENING QUESTION(S) — you MUST answer each one. Include answers naturally in the proposal or at the end:\n${screeningQuestions.map((q: string, i: number) => `  ${i + 1}. ${q}`).join('\n')}\n`
+    ? `\nSCREENING QUESTION(S) — you MUST answer each one. Include answers at the end of the proposal, clearly labeled:\n${screeningQuestions.map((q: string, i: number) => `  ${i + 1}. ${q}`).join('\n')}\n`
     : ''
 
   const skillMatchBlock = currentProfileMatch

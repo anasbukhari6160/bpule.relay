@@ -2593,6 +2593,22 @@ export class SupabaseStore implements ScoutStore {
     if (error) throw error
   }
 
+  async updateUpworkJob(
+    id: string,
+    updates: {
+      status?: UpworkJob['status']
+      notes?: string | null
+      proposedRate?: number | null
+    },
+  ): Promise<void> {
+    const { error } = await this.client
+      .from('upwork_jobs')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('owner_rep_id', this.rep.id)
+    if (error) throw error
+  }
+
   async saveUpworkDraft(input: {
     jobId: string
     type: UpworkMessage['type']

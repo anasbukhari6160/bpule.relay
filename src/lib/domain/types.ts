@@ -182,6 +182,11 @@ export type UpworkJobStatus =
   | 'new'
   | 'drafted'
   | 'applied'
+  | 'shortlisted'
+  | 'interviewing'
+  | 'offer_sent'
+  | 'awarded'
+  | 'rejected'
   | 'replied'
   | 'no'
   | 'dead'
@@ -217,6 +222,9 @@ export interface UpworkJob {
   remoteStatus?: string | null
   clientName?: string | null
   clientEmail?: string | null
+  messages?: UpworkMessage[]
+  followupCount?: number
+  notes?: string | null
 }
 
 export interface UpworkMessage {

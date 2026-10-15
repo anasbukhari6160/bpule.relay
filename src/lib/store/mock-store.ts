@@ -1574,6 +1574,13 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         job.verdict = score.verdict
       }
     },
+    async updateUpworkJob(id, updates) {
+      const job = upworkJobs.find((j) => j.id === id)
+      if (job) {
+        if (updates.status) job.status = updates.status
+        if (updates.notes !== undefined) job.notes = updates.notes as any
+      }
+    },
     async saveUpworkDraft(input) {
       const msg: UpworkMessage = {
         id: nextId('umsg'),

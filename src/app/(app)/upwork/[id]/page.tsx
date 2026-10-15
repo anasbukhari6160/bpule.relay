@@ -5,6 +5,8 @@ import { computeUpworkScore } from '@/lib/score/upwork-rubric'
 import { MessageCircle, DollarSign, Users, Tag, FileText } from 'lucide-react'
 import { cn } from 'cn'
 import { UpworkJobActions } from '@/components/upwork-job-actions'
+import { UpworkJobTimeline } from '@/components/upwork-job-timeline'
+import { UpworkCommunication } from '@/components/upwork-communication'
 
 export const dynamic = 'force-dynamic'
 
@@ -184,35 +186,31 @@ export default async function UpworkJobPage({
         ) : null}
       </div>
 
-      {/* Messages */}
-      {job.messages.length > 0 ? (
+      {/* Status + Timeline */}
+      <UpworkJobTimeline job={job} />
+
+      {/* Client Communication */}
+      <UpworkCommunication jobId={id} job={job} />
+
+      {/* Screening Questions */}
+      {job.screeningQuestions.length > 0 && (
         <section className="reveal-up stagger-4 rounded border border-line bg-bone-raised p-6">
-          <h2 className="text-sm font-medium text-ink">Messages</h2>
-          <ul className="mt-4 divide-y divide-line">
-            {job.messages.map((m) => (
-              <li key={m.id} className="py-3 first:pt-0 last:pb-0">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm text-ink">{m.type}</span>
-                  <span className="font-mono text-xs text-slate">
-                    {m.sentAt
-                      ? `sent ${new Date(m.sentAt).toLocaleDateString()}`
-                      : `drafted ${new Date(m.createdAt).toLocaleDateString()}`}
-                  </span>
-                </div>
-                {m.sentText ? (
-                  <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-slate">
-                    {m.sentText}
-                  </p>
-                ) : m.draftText ? (
-                  <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-slate">
-                    {m.draftText}
-                  </p>
-                ) : null}
+          <h2 className="flex items-center gap-2 text-sm font-medium text-ink">
+            <MessageCircle className="size-3.5 text-cobalt" />
+            Screening Questions
+          </h2>
+          <ul className="mt-3 space-y-2">
+            {job.screeningQuestions.map((q, i) => (
+              <li key={i} className="rounded-lg bg-bone px-3 py-2 text-[13px] text-graphite">
+                <span className="font-medium text-ink">Q{i + 1}:</span> {q}
               </li>
             ))}
           </ul>
+          <p className="mt-2 text-[11px] text-stone">
+            These MUST be answered in your proposal. The AI generator includes them automatically.
+          </p>
         </section>
-      ) : null}
+      )}
 
       {/* Proposal actions */}
       <section className="reveal-up stagger-5 space-y-4 rounded border border-line bg-bone-raised p-5">
