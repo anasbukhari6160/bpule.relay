@@ -167,7 +167,7 @@ function messageKind(input: DraftInput): string {
     case 'upwork':
       return `Upwork cover letter. Specific to the job. No biography dump. ${ceiling ?? '50-150 words'}. One relevant project shape, one specific need from the job, one easy next step.`
     case 'followup':
-      return `Follow-up message. ${ceiling ?? '15–45 words'}. Add ONE new reason to reply or close the loop. Never "just following up".`
+      return `Follow-up message. ${ceiling ?? '15–45 words'}. Continue the existing conversation — reference what was already said. Add ONE new reason to reply or close the loop. Never "just following up". NEVER open with "Building AI..." or "Building [product]..." or any first-contact opener. The prospect already knows you — re-engage them with something specific to your prior exchange.`
     case 'reply': {
       return `Reply to their message. Their words are first-party evidence — address them directly. ${ceiling ?? '20–70 words'}. If they declined or said no: acknowledge it gracefully, leave the door open, do NOT restart the pitch or repeat your offer. If they asked a question: answer it first. If they showed interest: continue the conversation naturally. NEVER open with "Hi [Name], came across your work as [title] at [company]." when replying — this is a first-contact opener, not a reply.`
     }
@@ -203,9 +203,11 @@ Write the draft first, then honestly run the tests on it, then the marker and th
     SPECIFICITY_RULES,
     ANTI_AI_RULES,
     'CRITICAL: Do NOT echo back the prospect\'s profile data as the message. The message must be ORIGINAL — a short, specific observation about them + why connecting. Never copy their title, company, location, or bio text into the draft.',
+    'NEVER start any message with "Building AI...", "Building [product]...", "Building anything...", "Creating AI...", "Developing AI..." or any construction-progress opener. These are generic first-contact tells that ignore the specific prospect. Start with something specific about THEM — their work, their challenge, their situation.',
     'REPLY MODE: When generating a REPLY (not first contact), NEVER open with "Hi [Name], came across your work as [title] at [company]." or any first-contact opener. The prospect already knows you — acknowledge their specific message directly. If they sent a brief/polite/unclear reply: respond in 1-2 sentences, warm and brief, no pitch, no probing question. If they showed interest: continue the conversation naturally. If they declined: acknowledge gracefully and leave the door open.',
     'REJECTION HANDLING: If the prospect said "no", "no thanks", "not interested", "stop", or similar: acknowledge it briefly and gracefully. Do NOT repeat your pitch. Do NOT ask another question. Do NOT try to change their mind. Do NOT use the "came across your work" opener. A simple acknowledgment is enough.',
     'STYLE RULE: Never open with "Hi [Name], came across your work as [title] at [company]." This is the #1 AI tell. Vary your openers. Start with something specific about THEM — a project, a post, a technical challenge — not your observation of their profile.',
+    'FOLLOW-UP RULE: When sending a follow-up, NEVER open with "Building AI..." or "Building [product]..." or "Building anything..." — this is a first-contact opener pattern that ignores the conversation history. Reference what was already discussed. Acknowledge their position. Ask a specific follow-up question that moves the conversation forward.',
     'Sound like a real person who read their profile, not a template. Vary sentence length. Start with something specific about THEM — not "I" or "we". Make it easy to say yes to. Zero corporate speak.',
     SURVEILLANCE_RULES,
     'Relay knows more than it says. Use only ALLOWED_NOW evidence. One message, one job. If no job is specified, return an empty draft.',
@@ -315,19 +317,20 @@ export function buildUserPrompt(
     ? strategyToPromptBlock(input.strategy)
     : ''
 
-  // BUG-19/20: For replies, the conversation context MUST come first — before
-  // strategy, lead data, or anything that could trigger a fresh pitch. The LLM
-  // was ignoring a bottom-placed context and falling back to a connection-note
-  // opener. Placing it at the top forces the model to respond to the prospect's
-  // actual words instead of restarting the pitch.
+  // BUG-19/20: For replies AND follow-ups, the conversation context MUST come
+  // first — before strategy, lead data, or anything that could trigger a fresh
+  // pitch. The LLM was ignoring a bottom-placed context and falling back to a
+  // connection-note opener ("Building AI can be complex..."). Placing it at the
+  // top forces the model to continue the conversation, not restart it.
   const isReply = input.type === 'reply'
+  const isFollowup = input.type === 'followup'
   const ctxBlock = input.conversationContext ?? ''
 
   return [
     `Message kind: ${messageKind(input)}`,
     '',
-    isReply && ctxBlock ? ctxBlock : null,
-    isReply && ctxBlock ? '' : null,
+    (isReply || isFollowup) && ctxBlock ? ctxBlock : null,
+    (isReply || isFollowup) && ctxBlock ? '' : null,
     strategyBlock,
     strategyBlock ? '' : null,
     factsBlock,
