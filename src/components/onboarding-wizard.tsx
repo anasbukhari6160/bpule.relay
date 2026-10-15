@@ -109,7 +109,7 @@ export function OnboardingWizard() {
         setStep(parsed.step)
       }
       if (parsed.state) {
-        setState(parsed.state)
+        setState((prev) => ({ ...prev, ...parsed.state }))
       }
     } catch {
       // Ignore malformed local data and continue with defaults.
@@ -575,7 +575,7 @@ function defaultAudiences(role: string): string[] {
 
 function StepAudience({ state, update }: { state: OnboardingState; update: (p: Partial<OnboardingState>) => void }) {
   const suggested = state.identity?.audiences ?? defaultAudiences(state.personaRole)
-    const [custom, setCustom] = useState('')
+  const [custom, setCustom] = useState('')
 
   const toggleAudience = (aud: string) => {
     const selected = state.selectedAudiences.includes(aud)
