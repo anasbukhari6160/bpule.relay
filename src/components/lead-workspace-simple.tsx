@@ -220,19 +220,27 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           <span className="text-[12px] text-stone">Mark lead as:</span>
           <div className="flex items-center gap-2">
             <button
+              disabled={markingAccepted}
               onClick={async () => {
-                await fetch(`/api/leads/${lead.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status_type: 'meeting_booked' }) })
-                router.refresh()
+                setMarkingAccepted(true)
+                try {
+                  await fetch(`/api/leads/${lead.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status_type: 'meeting_booked' }) })
+                  await refreshLead()
+                } finally { setMarkingAccepted(false) }
               }}
-              className="rounded-lg bg-status-success/10 px-2.5 py-1 text-[11px] font-medium text-status-success hover:bg-status-success/20 transition-colors"
-            >Won</button>
+              className="rounded-lg bg-status-success/10 px-2.5 py-1 text-[11px] font-medium text-status-success hover:bg-status-success/20 transition-colors disabled:opacity-50"
+            >{markingAccepted ? "..." : "Won"}</button>
             <button
+              disabled={markingAccepted}
               onClick={async () => {
-                await fetch(`/api/leads/${lead.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status_type: 'not_interested' }) })
-                router.refresh()
+                setMarkingAccepted(true)
+                try {
+                  await fetch(`/api/leads/${lead.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status_type: 'not_interested' }) })
+                  await refreshLead()
+                } finally { setMarkingAccepted(false) }
               }}
-              className="rounded-lg bg-status-danger/10 px-2.5 py-1 text-[11px] font-medium text-status-danger hover:bg-status-danger/20 transition-colors"
-            >Lost</button>
+              className="rounded-lg bg-status-danger/10 px-2.5 py-1 text-[11px] font-medium text-status-danger hover:bg-status-danger/20 transition-colors disabled:opacity-50"
+            >{markingAccepted ? "..." : "Lost"}</button>
           </div>
         </div>
       )}
@@ -338,20 +346,23 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                   <MessageSquare className="size-3.5" /> Send first message
                 </Button>
               )}
-              {phase === 'follow_up_due' && (
+              {/* Follow-up: always available when client hasn't replied after
+                  any outbound message (DM sent, connection sent with no reply) */}
+              {(phase === 'dm_sent' || phase === 'follow_up_due' || (phase === 'connection_sent' && !lead.connectionAcceptedAt)) && !hasUnansweredInbound && (
                 <Button size="sm" onClick={() => generateDraft('followup')} className="w-full justify-center">
                   <Send className="size-3.5" /> Send follow-up
-                </Button>
-              )}
-              {phase === 'dm_sent' && nextAction.action === 'SEND_FOLLOWUP' && (
-                <Button size="sm" variant="outline" onClick={() => generateDraft('followup')} className="w-full justify-center">
-                  <Clock className="size-3.5" /> Send follow-up now
                 </Button>
               )}
               <div className="flex flex-wrap gap-2 pt-2 border-t border-line/30">
                 {phase === 'connection_sent' && !lead.connectionAcceptedAt && (
                   <Button size="sm" variant="outline" onClick={markAccepted} loading={markingAccepted}>
                     <Trophy className="size-3" /> Mark accepted
+                  </Button>
+                )}
+                {/* Follow-up always available when waiting on client */}
+                {(phase === 'dm_sent' || phase === 'follow_up_due' || (phase === 'connection_sent' && !lead.connectionAcceptedAt)) && !hasUnansweredInbound && (
+                  <Button size="sm" variant="outline" onClick={() => generateDraft('followup')}>
+                    <Clock className="size-3" /> Follow up
                   </Button>
                 )}
                 <QuickReplyInput onSave={logInboundReply} />
