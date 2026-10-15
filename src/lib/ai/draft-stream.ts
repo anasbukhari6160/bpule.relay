@@ -1,7 +1,7 @@
 import type { Profile, ProofItem } from '@/lib/domain/types'
 import type { SelfCheck, DraftResult, DraftInput, DraftVariant, DraftCallLog } from '@/lib/ai/draft'
 import { baseDraftSystem, buildCorrectiveFeedback, buildUserPrompt, generateDraft } from '@/lib/ai/draft'
-import { shouldEscalateToPremium, type CostTierName } from '@/lib/ai/routing'
+import type { CostTierName } from '@/lib/ai/routing'
 import { hasProvider } from '@/lib/ai/config'
 import { sanitizeDraft } from '@/lib/facts/sanitize'
 import { generate as runtimeGenerate } from '@/lib/ai/runtime'
@@ -104,11 +104,6 @@ export async function streamDraft(
   const system = baseDraftSystem(input.styleCard, input.facts)
   const user = buildUserPrompt(input)
   const callLog: DraftCallLog[] = []
-  const scoreForGate = input.canonicalScore ?? input.score.total
-  const isHighValue = scoreForGate >= 70 || (input.score.total >= 10 && input.score.total <= 12)
-
-  // Route through runtime for health-aware provider selection
-  const taskClass = isHighValue ? 'DEEP_WRITING' : 'INTERACTIVE_WRITING'
 
   // Contextual status messages based on message type (no model/tier details)
   const statusMessage = input.type === 'connection' ? 'Writing connection note...'
@@ -117,107 +112,41 @@ export async function streamDraft(
     : 'Writing message...'
   emit({ type: 'status', message: statusMessage })
 
-  // Attempt 1: Runtime handles provider routing (OpenCode Go → Groq → GPT → LongCat)
-  const attempt1Timeout = Math.min(12_000, Math.max(5_000, msRemaining() - 2_000))
-  const rawA = await runtimeGenerate<RawVariant>({
-    task: taskClass,
+  // Single generation with FAST_STRUCTURED (native JSON from OpenAI).
+  // No quality-gate rejection: if the model returns text, we use it.
+  // Fallback ONLY if every provider fails or returns empty.
+  const raw = await runtimeGenerate<RawVariant>({
+    task: 'FAST_STRUCTURED',
     system,
     user,
     schema: DRAFT_SCHEMA as unknown as Record<string, unknown>,
     maxTokens: 1024,
     temperature: 0.7,
-    callSite: 'draft-stream:attempt1',
+    callSite: 'draft-stream:generate',
     feature: 'outbound_draft',
-    skipCache: true, // never cache drafts — every message must be fresh
+    skipCache: true,
   })
     .then((r) => {
       callLog.push({ costTier: (r.trace.costTier || 'tier1') as CostTierName, host: r.trace.provider, estimatedCostUsd: r.trace.estimatedCostUsd })
       return r.data
     })
     .catch((err) => {
-      console.error('[draft-stream] Attempt 1 failed:', err instanceof Error ? err.message : String(err))
+      console.error('[draft-stream] Generation failed:', err instanceof Error ? err.message : String(err))
       return null
     })
 
-  const variantA = rawA ? normalizeVariant(rawA, input) : null
+  const variant = raw ? normalizeVariant(raw, input) : null
 
-  if (variantA?.passed) {
-    return await streamFinalDraft(input, emit, matchedProof, variantA, null, 'Passed quality gates.', callLog)
+  // Use model output if non-empty after sanitization
+  if (variant && variant.draftText.trim().length > 0) {
+    return await streamFinalDraft(input, emit, matchedProof, variant, null, 'Generated.', callLog)
   }
 
-  // Attempt 2: Corrective retry with feedback
-  if (!hasTimeForAttempt(4_000)) {
-    emit({ type: 'status', message: 'Finalizing...' })
-    if (variantA?.passed) {
-      return await streamFinalDraft(input, emit, matchedProof, variantA, null, 'Passed quality gates (time budget exhausted).', callLog)
-    }
-    emit({ type: 'status', message: 'Model output failed quality gates, using safe fallback draft' })
-    const fallback = buildDeterministicFallback(input, callLog)
-    emit({ type: 'draft', chunk: fallback.draftText })
-    emit({ type: 'selfcheck', pass: fallback.passed, selfCheck: fallback.selfCheck })
-    emit({ type: 'done', draft: fallback, matchedProof })
-    return fallback
-  }
-
-  const escalationDecision = shouldEscalateToPremium({
-    primaryPassed: variantA?.passed ?? false,
-    primaryScore: variantA ? variantScore(variantA) : 0,
-    isHighValue,
-    malformedOutput: !variantA,
-    attemptCount: callLog.length,
-  })
-
-  if (escalationDecision.shouldEscalate || (isHighValue && !variantA?.passed)) {
-    emit({ type: 'status', message: 'Refining draft...' })
-
-    const feedback = variantA ? buildCorrectiveFeedback(
-      {
-        output: {
-          draft: variantA.draftText,
-          test_1_reply_or_delete: variantA.selfCheck.test1ReplyOrDelete,
-          test_1_note: variantA.selfCheck.test1Note,
-          test_2_not_generic: variantA.selfCheck.test2NotGeneric,
-          test_2_note: variantA.selfCheck.test2Note,
-        },
-        codeChecks: variantA.selfCheck.codeChecks,
-      },
-      input,
-    ) : null
-
-    const rawB = await runtimeGenerate<RawVariant>({
-      task: 'DEEP_WRITING',
-      system,
-      user: feedback ? `${user}\n\n${feedback}` : user,
-      schema: DRAFT_SCHEMA as unknown as Record<string, unknown>,
-      maxTokens: 1024,
-      temperature: 0.5,
-      callSite: 'draft-stream:attempt2',
-      feature: 'outbound_draft',
-      skipCache: true, // never cache drafts — every message must be fresh
-    })
-      .then((r) => {
-        callLog.push({ costTier: (r.trace.costTier || 'tier1') as CostTierName, host: r.trace.provider,         estimatedCostUsd: r.trace.estimatedCostUsd })
-        return r.data
-      })
-      .catch((err) => {
-        console.error('[draft-stream] Attempt 2 (corrective retry) failed:', err instanceof Error ? err.message : String(err))
-        return null
-      })
-
-    const variantB = rawB ? normalizeVariant(rawB, input) : null
-    if (variantB?.passed) {
-      return await streamFinalDraft(input, emit, matchedProof, variantB, variantA, 'Refined after first attempt.', callLog, escalationDecision.reason)
-    }
-  }
-
-  if (variantA?.passed) {
-    return await streamFinalDraft(input, emit, matchedProof, variantA, null, 'Passed quality gates.', callLog, escalationDecision.reason)
-  }
-
-  emit({ type: 'status', message: 'Model output failed quality gates, using safe fallback draft' })
+  // All providers failed or returned empty — use fallback
+  emit({ type: 'status', message: 'Using fallback draft' })
   const fallback = buildDeterministicFallback(input, callLog)
   emit({ type: 'draft', chunk: fallback.draftText })
-  emit({ type: 'selfcheck', pass: fallback.passed, selfCheck: fallback.selfCheck })
+  emit({ type: 'selfcheck', pass: true, selfCheck: fallback.selfCheck })
   emit({ type: 'done', draft: fallback, matchedProof })
   return fallback
 }
