@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 import { ToastProvider } from "@/components/ui/toast"
 import { CommandPaletteProvider } from "@/components/command-palette-provider"
+import { ThemeProvider } from "@/components/theme-provider"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
@@ -40,10 +41,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <ToastProvider>
-      <CommandPaletteProvider>
-        {children}
-      </CommandPaletteProvider>
-    </ToastProvider>
+    <ThemeProvider>
+      <ToastProvider>
+        <CommandPaletteProvider>
+          {children}
+        </CommandPaletteProvider>
+      </ToastProvider>
+    </ThemeProvider>
   )
 }

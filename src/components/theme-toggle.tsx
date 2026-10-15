@@ -1,63 +1,22 @@
-'use client'
+"use client"
 
-import { useSyncExternalStore } from 'react'
-import { Moon, Sun } from 'lucide-react'
-
-type Theme = 'light' | 'dark'
-
-const listeners = new Set<() => void>()
-
-function readTheme(): Theme {
-  return typeof document !== 'undefined' &&
-    document.documentElement.classList.contains('dark')
-    ? 'dark'
-    : 'light'
-}
-
-function subscribe(cb: () => void) {
-  listeners.add(cb)
-  return () => {
-    listeners.delete(cb)
-  }
-}
-
-function getSnapshot(): Theme {
-  return readTheme()
-}
-
-function getServerSnapshot(): Theme {
-  return 'light'
-}
-
-function setTheme(theme: Theme) {
-  document.documentElement.classList.toggle('dark', theme === 'dark')
-  try {
-    localStorage.setItem('theme', theme)
-  } catch {
-    // Storage unavailable; theme still applies for this session.
-  }
-  listeners.forEach((l) => l())
-}
+import { Moon, Sun } from "lucide-react"
+import { useTheme } from "./theme-provider"
 
 export function ThemeToggle({ className }: { className?: string }) {
-  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
-
-  function toggle() {
-    setTheme(theme === 'dark' ? 'light' : 'dark')
-  }
+  const { theme, toggle } = useTheme()
 
   return (
     <button
-      type="button"
       onClick={toggle}
-      aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-      title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
-      className={
-        className ??
-        'rounded-md p-1.5 text-graphite transition-colors hover:bg-bone-raised hover:text-ink'
-      }
+      aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      className={className ?? "relative flex h-8 w-8 items-center justify-center rounded-lg border border-line transition-colors hover:bg-bone-raised"}
     >
-      {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+      {theme === "dark" ? (
+        <Sun className="h-3.5 w-3.5 text-ink/60" />
+      ) : (
+        <Moon className="h-3.5 w-3.5 text-ink/60" />
+      )}
     </button>
   )
 }

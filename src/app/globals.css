@@ -105,15 +105,110 @@
 }
 
 :root {
-  /* ── App canvas: #1C1917 across all Relay surfaces ── */
-  --bg-base: #1C1917;
-  --surface-card: #252220;
-  --surface-mid: #2E2B28;
-  --text-bone: #F5F0E8;
-  --text-muted: #9E9790;
-  --text-dim: #6B6560;
+  /* ── Light mode (default) — warm editorial palette ── */
+  --bone: #f7f6f3;
+  --bone-raised: #ffffff;
+  --solid: #1c1c1a;
+  --on-solid: #f7f6f3;
+  --on-accent: #ffffff;
+  --ink: #1c1c1a;
+  --ink-soft: #3d3c39;
+  --graphite: #5c5b57;
+  --stone: #8a8984;
+  --stone-light: #b0afa9;
+  --line: #e0ddd6;
+  --line-organic: #d4d1c9;
+
+  --orange: #d4652f;
+  --orange-light: #e8844e;
+  --orange-dark: #b8531f;
+  --orange-faint: #fdf3ed;
+
+  --cobalt: #3b5bdb;
+  --cobalt-light: #5c7afa;
+  --cobalt-dark: #2f48b8;
+  --cobalt-faint: #eef2ff;
+
+  --status-success: #2e7d52;
+  --status-warning: #b8852a;
+  --status-danger: #c74a3a;
+  --status-info: #3b5bdb;
+
+  --bone-000: #fdfbf6;
+  --bone-050: #f6f1e6;
+  --bone-100: #ece3d0;
+  --bone-200: #d9cdb4;
+  --bone-300: #c2b494;
+
+  --ink-950: #100f0d;
+  --ink-900: #1a1916;
+  --ink-800: #262420;
+  --ink-700: #3c3a35;
+
+  --console: #131210;
+  --console-raised: #1c1a17;
+  --console-line: rgba(237, 233, 225, 0.1);
+  --console-text: #f1ede4;
+  --console-mute: #9a9488;
+
+  --orange-strong: #b8531f;
   --orange-signal: #d4652f;
-  --orange-muted: #8B3D18;
+  --orange-muted: #c47a4f;
+  --orange-subtle: color-mix(in srgb, var(--orange-signal) 40%, transparent);
+  --orange-wash: #f4e4d6;
+  --orange-surface: #fbf1e9;
+  --orange-line: color-mix(in srgb, var(--orange-signal) 45%, var(--bone-200));
+
+  --cobalt-strong: #2a3f96;
+  --cobalt-signal: #3b5bdb;
+  --cobalt-muted: #5a6fc4;
+  --cobalt-wash: #e2e7f7;
+  --cobalt-surface: #f1f3fc;
+  --cobalt-line: color-mix(in srgb, var(--cobalt-signal) 45%, var(--bone-200));
+
+  --r-chip: 2px;
+  --r-object: 3px;
+  --r-module: 4px;
+  --r-canvas: 6px;
+
+  --background: var(--bone);
+  --foreground: var(--ink);
+  --card: var(--bone-raised);
+  --card-foreground: var(--ink);
+  --popover: var(--bone-raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--bone);
+  --secondary: var(--bone-raised);
+  --secondary-foreground: var(--ink);
+  --muted: var(--bone-raised);
+  --muted-foreground: var(--stone);
+  --accent: var(--orange-faint);
+  --accent-foreground: var(--ink);
+  --destructive: var(--status-danger);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: color-mix(in srgb, var(--orange) 35%, transparent);
+  --radius: 8px;
+
+  --sidebar: var(--bone);
+  --sidebar-foreground: var(--graphite);
+  --sidebar-primary: var(--ink);
+  --sidebar-primary-foreground: var(--bone);
+  --sidebar-accent: var(--bone-raised);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--ring);
+
+  --shadow-sm: 0 1px 2px rgba(60, 50, 40, 0.06);
+  --shadow-md: 0 2px 8px rgba(60, 50, 40, 0.08), 0 1px 2px rgba(60, 50, 40, 0.04);
+  --shadow-lg: 0 8px 24px rgba(60, 50, 40, 0.12), 0 2px 6px rgba(60, 50, 40, 0.06);
+  --shadow-orange: 0 4px 16px -4px color-mix(in srgb, var(--orange) 25%, transparent);
+  --shadow-cobalt: 0 4px 16px -4px color-mix(in srgb, var(--cobalt) 25%, transparent);
+}
+
+.dark {
+  /* ── Dark mode — warm mineral operational palette ── */
   --bone: #1C1917;
   --bone-raised: #2a2725;
   --solid: #ece9e3;
@@ -125,7 +220,7 @@
   --stone: #6b6964;
   --stone-light: #4a4945;
   --line: #282624;
-  --line-organic: #343027;
+  --line-soft: #1f1d1c;
 
   --orange: #d4652f;
   --orange-light: #e8844e;
@@ -142,7 +237,6 @@
   --status-danger: #ef7d63;
   --status-info: #6b9ae8;
 
-  /* Shared material system tokens (Relay + Studio surfaces) */
   --bone-000: #252220;
   --bone-050: #201d1b;
   --bone-100: #343027;
@@ -209,116 +303,11 @@
   --sidebar-border: var(--line);
   --sidebar-ring: var(--ring);
 
-  /* Elevation */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
   --shadow-orange: 0 4px 16px -4px color-mix(in srgb, var(--orange) 25%, transparent);
   --shadow-cobalt: 0 4px 16px -4px color-mix(in srgb, var(--cobalt) 25%, transparent);
-}
-
-.dark {
-  /* ── Dark mode ── */
-  --bone: #1C1917;
-  --bone-raised: #2a2725;
-  --solid: #ece9e3;
-  --on-solid: #141312;
-  --on-accent: #f7f6f3;
-  --ink: #ece9e3;
-  --ink-soft: #b8b5ad;
-  --graphite: #8c8982;
-  --stone: #6b6964;
-  --stone-light: #4a4945;
-  --line: #282624;
-  --line-soft: #1f1d1c;
-
-  --orange: #d4652f;
-  --orange-light: #e8844e;
-  --orange-dark: #b8531f;
-  --orange-faint: #1f1a14;
-
-  --cobalt: #7c9aff;
-  --cobalt-light: #a4b8ff;
-  --cobalt-dark: #5c7afa;
-  --cobalt-faint: #1a1f30;
-
-  --status-success: #4caf7e;
-  --status-warning: #d6a13c;
-  --status-danger: #ef7d63;
-  --status-info: #6b9ae8;
-
-  /* Shared material system tokens (dark mode) */
-  --bone-000: #252220;
-  --bone-050: #201d1b;
-  --bone-100: #343027;
-  --bone-200: #4a4538;
-  --bone-300: #5c5648;
-
-  --ink-950: #f5f1e8;
-  --ink-900: #ece9e3;
-  --ink-800: #d3cdc2;
-  --ink-700: #b2ab9f;
-
-  --console: #0f0d0b;
-  --console-raised: #171411;
-  --console-line: rgba(248, 241, 228, 0.09);
-  --console-text: #ece6da;
-  --console-mute: #a39d90;
-
-  --orange-strong: #f0a06e;
-  --orange-signal: #d4652f;
-  --orange-muted: #8B3D18;
-  --orange-subtle: color-mix(in srgb, var(--orange-signal) 40%, transparent);
-  --orange-wash: #2a1d14;
-  --orange-surface: #201711;
-  --orange-line: color-mix(in srgb, var(--orange-signal) 45%, var(--bone-200));
-
-  --cobalt-strong: #a4b8ff;
-  --cobalt-signal: #7c9aff;
-  --cobalt-muted: #93a8e9;
-  --cobalt-wash: #1a2238;
-  --cobalt-surface: #171d2c;
-  --cobalt-line: color-mix(in srgb, var(--cobalt-signal) 45%, var(--bone-200));
-
-  --r-chip: 2px;
-  --r-object: 3px;
-  --r-module: 4px;
-  --r-canvas: 6px;
-
-  --background: var(--bone);
-  --foreground: var(--ink);
-  --card: var(--bone-raised);
-  --card-foreground: var(--ink);
-  --popover: var(--bone-raised);
-  --popover-foreground: var(--ink);
-  --primary: var(--ink);
-  --primary-foreground: var(--bone);
-  --secondary: var(--bone-raised);
-  --secondary-foreground: var(--ink);
-  --muted: var(--bone-raised);
-  --muted-foreground: var(--stone);
-  --accent: var(--orange-faint);
-  --accent-foreground: var(--ink);
-  --destructive: var(--status-danger);
-  --border: var(--line);
-  --input: var(--line);
-  --ring: color-mix(in srgb, var(--orange) 35%, transparent);
-  --radius: 8px;
-
-  --sidebar: var(--bone);
-  --sidebar-foreground: var(--graphite);
-  --sidebar-primary: var(--ink);
-  --sidebar-primary-foreground: var(--bone);
-  --sidebar-accent: var(--bone-raised);
-  --sidebar-accent-foreground: var(--ink);
-  --sidebar-border: var(--line);
-  --sidebar-ring: var(--ring);
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
-  --shadow-orange: 0 4px 16px -4px color-mix(in srgb, var(--orange) 20%, transparent);
-  --shadow-cobalt: 0 4px 16px -4px color-mix(in srgb, var(--cobalt) 20%, transparent);
 }
 
 /*
