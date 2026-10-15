@@ -44,6 +44,7 @@ export type MessageJob =
   | 'RESOLVE_OBJECTION'
   | 'PROVIDE_PROOF'
   | 'MOVE_TO_CALL'
+  | 'ACKNOWLEDGE_AND_HOLD'
   | 'CLARIFY_NEXT_STEP'
   | 'CLOSE_LOOP'
 
@@ -1334,6 +1335,8 @@ function successConditionFor(job: MessageJob | null, contact: ContactDecision): 
       return 'The specific credibility concern is answered.'
     case 'MOVE_TO_CALL':
       return 'A call is offered only because a sync is more efficient than another message.'
+    case 'ACKNOWLEDGE_AND_HOLD':
+      return 'They feel heard, not pitched. Door stays open for future contact.'
     case 'CLARIFY_NEXT_STEP':
       return 'One next step is agreed.'
     case 'CLOSE_LOOP':

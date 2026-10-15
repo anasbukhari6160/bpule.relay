@@ -767,18 +767,14 @@ export default function ProspectCheckPage() {
             <div className="rounded-md border border-dashed border-line bg-bone-raised/40 p-3">
               <p className="text-[12px] text-graphite">
                 Analysis complete — qualification and signals are shown above.
-                Generate a connection note when you're ready to reach out.
+                Create a lead to start outreach from the lead detail page.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button variant="secondary" size="sm" onClick={() => void analyze('generate')} disabled={analyzing || !result.score}>
-                  <UserPlus className="size-3" aria-hidden="true" />
-                  {analyzing ? 'Generating...' : 'Generate connection note'}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => void analyze('analyze')} disabled={analyzing}>
+                <Button variant="secondary" size="sm" onClick={() => void analyze('analyze')} disabled={analyzing}>
                   <RefreshCw className="size-3" aria-hidden="true" />
                   Try another angle
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => void saveAsLead()} disabled={saving || !canSaveLead}>
+                <Button variant="orange" size="sm" onClick={() => void saveAsLead()} disabled={saving || !canSaveLead}>
                   {saving ? 'Creating...' : (
                     <>
                       {canSaveLead ? 'Create lead' : 'Lead not eligible'}

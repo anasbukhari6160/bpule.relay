@@ -169,7 +169,7 @@ function messageKind(input: DraftInput): string {
     case 'followup':
       return `Follow-up message. ${ceiling ?? '15–45 words'}. Add ONE new reason to reply or close the loop. Never "just following up".`
     case 'reply': {
-      return `Reply to their message. Their words are first-party evidence — address them directly. ${ceiling ?? '20–70 words'}. If they declined or said no: acknowledge it gracefully, leave the door open, do NOT restart the pitch or repeat your offer. If they asked a question: answer it first. If they showed interest: continue the conversation naturally.`
+      return `Reply to their message. Their words are first-party evidence — address them directly. ${ceiling ?? '20–70 words'}. If they declined or said no: acknowledge it gracefully, leave the door open, do NOT restart the pitch or repeat your offer. If they asked a question: answer it first. If they showed interest: continue the conversation naturally. NEVER open with "Hi [Name], came across your work as [title] at [company]." when replying — this is a first-contact opener, not a reply.`
     }
   }
 }
@@ -203,6 +203,7 @@ Write the draft first, then honestly run the tests on it, then the marker and th
     SPECIFICITY_RULES,
     ANTI_AI_RULES,
     'CRITICAL: Do NOT echo back the prospect\'s profile data as the message. The message must be ORIGINAL — a short, specific observation about them + why connecting. Never copy their title, company, location, or bio text into the draft.',
+    'REPLY MODE: When generating a REPLY (not first contact), NEVER open with "Hi [Name], came across your work as [title] at [company]." or any first-contact opener. The prospect already knows you — acknowledge their specific message directly. If they sent a brief/polite/unclear reply: respond in 1-2 sentences, warm and brief, no pitch, no probing question. If they showed interest: continue the conversation naturally. If they declined: acknowledge gracefully and leave the door open.',
     'REJECTION HANDLING: If the prospect said "no", "no thanks", "not interested", "stop", or similar: acknowledge it briefly and gracefully. Do NOT repeat your pitch. Do NOT ask another question. Do NOT try to change their mind. Do NOT use the "came across your work" opener. A simple acknowledgment is enough.',
     'STYLE RULE: Never open with "Hi [Name], came across your work as [title] at [company]." This is the #1 AI tell. Vary your openers. Start with something specific about THEM — a project, a post, a technical challenge — not your observation of their profile.',
     'Sound like a real person who read their profile, not a template. Vary sentence length. Start with something specific about THEM — not "I" or "we". Make it easy to say yes to. Zero corporate speak.',

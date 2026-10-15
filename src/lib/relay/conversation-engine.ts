@@ -97,6 +97,16 @@ export function analyzeReply(replyText: string, _context: ReplyContext): ReplyAn
     analysis.intent = 'not_interested'
     analysis.sentiment = 'negative'
     analysis.nextBestAction = 'graceful_close'
+  } else if (/\b(thanks|thank you).{0,30}(reach out|reachout|contact|need|interested)\b/i.test(lower)) {
+    // Polite deflect: "thanks will reach out if we need you" — not a rejection
+    // but not interest either. Acknowledge briefly, don't pitch.
+    analysis.intent = 'unclear'
+    analysis.sentiment = 'neutral'
+    analysis.nextBestAction = 'acknowledge_and_hold'
+  } else if (/\b(no need|not needed|not looking|good for now|all set)\b/i.test(lower)) {
+    analysis.intent = 'not_interested'
+    analysis.sentiment = 'neutral'
+    analysis.nextBestAction = 'acknowledge_and_hold'
   } else if (/\b(how much|pricing|cost|rate|budget|what is your)\b/i.test(lower)) {
     analysis.intent = 'pricing'
     analysis.nextBestAction = 'share_pricing_context'
@@ -368,12 +378,15 @@ export function buildReplyStrategy(
     case 'unclear':
     default:
       return {
-        goal: 'Clarify the single most valuable unknown',
-        approach: `Ask about ${analysis.knowledge.mostValuableUncertainty ?? 'what they actually need'}. Do not interrogate.`,
-        tone: 'curious, helpful',
-        ctaStrategy: 'End with one clear question',
-        messageJob: job,
-        nextMove: move,
+        // BUG-09: unclear replies (polite deflects, brief acknowledgments) must
+        // NOT trigger a fresh pitch. Acknowledge their message briefly and leave
+        // the door open — never "came across your work" or "one practical idea".
+        goal: 'Acknowledge their message briefly and leave the door open — do NOT pitch',
+        approach: `Their message is unclear or polite deflection. Acknowledge it in 1 sentence, offer value if appropriate, do not ask a probing question, do not restart the pitch. Keep it short and warm.`,
+        tone: 'warm, brief, no pressure',
+        ctaStrategy: 'None — just acknowledge',
+        messageJob: 'ACKNOWLEDGE_AND_HOLD',
+        nextMove: 'WAIT',
       }
   }
 }
