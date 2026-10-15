@@ -1,89 +1,20 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { motion } from 'motion/react'
 
-interface FunnelData {
-  extracted: number
-  qualified: number
-  contacted: number
-  replied: number
-  qualifiedConversations: number
-  calls: number
-  proposals: number
-  won: number
-  lost: number
-}
-
-interface AIStats {
-  totalCalls: number
-  totalCost: number
-  avgExtractionTime: number
-  p50Latency: number
-  p95Latency: number
-  providers: Array<{
-    provider: string
-    total: number
-    fallback: number
-    errors: number
-    avgLatency: number
-    totalCost: number
-  }>
-}
-
-interface RepPerformance {
-  repId: string
-  extracted: number
-  qualified: number
-  contacted: number
-  replies: number
-  qualifiedConversations: number
-  calls: number
-  proposals: number
-  wins: number
-  losses: number
-  targetProgress: number
-}
-
-interface ActivityItem {
-  id: string
-  timestamp: string
-  eventType: string
-  actorId: string | null
-  entityId: string | null
-  prospectName: string | null
-  company: string | null
-  revenueIdentityName: string | null
-  payload: Record<string, unknown> | null
-}
-
+interface FunnelData { extracted: number; qualified: number; contacted: number; replied: number; qualifiedConversations: number; calls: number; proposals: number; won: number; lost: number }
+interface AIStats { totalCalls: number; totalCost: number; avgExtractionTime: number; p50Latency: number; p95Latency: number; providers: Array<{ provider: string; total: number; fallback: number; errors: number; avgLatency: number; totalCost: number }> }
+interface RepPerformance { repId: string; extracted: number; qualified: number; contacted: number; replies: number; qualifiedConversations: number; calls: number; proposals: number; wins: number; losses: number; targetProgress: number }
+interface ActivityItem { id: string; timestamp: string; eventType: string; actorId: string | null; entityId: string | null; prospectName: string | null; company: string | null; revenueIdentityName: string | null; payload: Record<string, unknown> | null }
 interface DashboardData {
   range: { start: string; end: string }
   funnel: FunnelData
   conversationStages: Record<string, number>
-  extraction: {
-    total: number
-    successful: number
-    failed: number
-    aiExtractions: number
-    fallbackExtractions: number
-    avgExtractionTime: number
-    failedExtractions: number
-  }
+  extraction: { total: number; successful: number; failed: number; aiExtractions: number; fallbackExtractions: number; avgExtractionTime: number; failedExtractions: number }
   ai: AIStats
-  messages: {
-    total: number
-    generatedOnly: number
-    reviewed: number
-    unchanged: number
-    lightEdit: number
-    heavyEdit: number
-    rejected: number
-    dispositions: Record<string, number>
-  }
-  relayVsHuman: {
-    relayActions: Record<string, number>
-    humanActions: Record<string, number>
-  }
+  messages: { total: number; generatedOnly: number; reviewed: number; unchanged: number; lightEdit: number; heavyEdit: number; rejected: number; dispositions: Record<string, number> }
+  relayVsHuman: { relayActions: Record<string, number>; humanActions: Record<string, number> }
   reps: RepPerformance[]
   identities: Array<{ id: string; name: string; slug: string; title: string; channel: string; status: string }>
   sourcePerformance: Array<{ source: string; extracted: number; qualified: number; contacted: number; replies: number }>
@@ -105,503 +36,230 @@ const RANGE_OPTIONS = [
   { label: '30 days', value: '30d' },
 ]
 
-function formatNumber(n: number): string {
-  return n.toLocaleString()
-}
-
-function formatPercent(n: number): string {
-  return `${n}%`
-}
-
-function formatCurrency(n: number): string {
-  return `$${n.toFixed(2)}`
-}
-
-function FunnelBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
-  const width = max > 0 ? (value / max) * 100 : 0
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="w-28 text-muted-foreground truncate">{label}</span>
-      <div className="flex-1 h-4 bg-muted rounded overflow-hidden">
-        <div className={`h-full ${color} transition-all`} style={{ width: `${width}%` }} />
-      </div>
-      <span className="w-10 text-right font-mono">{value}</span>
-    </div>
-  )
-}
-
-function StatCard({ label, value, subtext }: { label: string; value: string | number; subtext?: string }) {
-  return (
-    <div className="border border-border rounded-lg p-3 bg-card">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className="text-lg font-semibold mt-1">{value}</div>
-      {subtext && <div className="text-xs text-muted-foreground mt-0.5">{subtext}</div>}
-    </div>
-  )
-}
-
-function Table({ headers, rows }: { headers: string[]; rows: (string | number)[][] }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-border">
-            {headers.map((h) => (
-              <th key={h} className="text-left py-2 px-2 font-medium text-muted-foreground">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i} className="border-b border-border/50">
-              {row.map((cell, j) => (
-                <td key={j} className="py-2 px-2">{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="text-center py-8 text-sm text-muted-foreground">
-      {message}
-    </div>
-  )
-}
-
-function DataHealthPanel({ dataHealth }: { dataHealth: Record<string, { health: string; reason?: string }> }) {
-  const healthColor = (h: string) => {
-    switch (h) {
-      case 'TRUSTED': return 'text-green-600'
-      case 'PARTIAL': return 'text-yellow-600'
-      case 'SUSPICIOUS': return 'text-red-600'
-      default: return 'text-muted-foreground'
-    }
-  }
-  return (
-    <div className="border border-border rounded-lg p-4 space-y-2">
-      <h3 className="text-sm font-medium">Data Health</h3>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
-        {Object.entries(dataHealth).map(([key, val]) => (
-          <div key={key} className="space-y-0.5">
-            <div className="text-muted-foreground capitalize">{key}</div>
-            <div className={`font-medium ${healthColor(val.health)}`}>{val.health}</div>
-            {val.reason && <div className="text-muted-foreground text-[10px] leading-tight">{val.reason}</div>}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
+function fmt(n: number) { return n.toLocaleString() }
 
 export function RevenueIntelligenceDashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [range, setRange] = useState('30d')
-  const [activeTab, setActiveTab] = useState<'overview' | 'team' | 'extraction' | 'human-vs-relay' | 'funnel' | 'activity'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'funnel' | 'team' | 'quality' | 'activity'>('overview')
 
   const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+    setLoading(true); setError(null)
     try {
-      const res = await fetch(`/api/admin/revenue-intelligence?range=${range}`, {
-        credentials: 'include',
-      })
+      const res = await fetch(`/api/admin/revenue-intelligence?range=${range}`, { credentials: 'include' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = await res.json()
-      setData(json)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load')
-    } finally {
-      setLoading(false)
-    }
+      setData(await res.json())
+    } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load') }
+    finally { setLoading(false) }
   }, [range])
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  useEffect(() => { fetchData() }, [fetchData])
 
-  if (loading) return <div className="text-sm text-muted-foreground">Loading...</div>
-  if (error) return <div className="text-sm text-destructive">{error}</div>
-  if (!data) return <EmptyState message="No data for this period." />
+  if (loading) return <div className="text-[13px] text-graphite py-12 text-center">Loading intelligence…</div>
+  if (error) return <div className="text-[13px] text-status-danger py-12 text-center">{error}</div>
+  if (!data) return <div className="text-[13px] text-graphite py-12 text-center">No data for this period.</div>
 
   const maxFunnel = Math.max(data.funnel.extracted, data.funnel.qualified, data.funnel.contacted, data.funnel.replied, 1)
+  const tabs = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'funnel', label: 'Funnel' },
+    { key: 'team', label: 'Team' },
+    { key: 'quality', label: 'Quality' },
+    { key: 'activity', label: 'Activity' },
+  ] as const
 
   return (
     <div className="space-y-6">
+      {/* Range selector */}
       <div className="flex items-center gap-2">
+        <span className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone mr-2">Period</span>
         {RANGE_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => setRange(opt.value)}
-            className={`px-3 py-1 text-xs rounded border ${
-              range === opt.value
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'bg-card text-muted-foreground border-border hover:bg-muted'
-            }`}
-          >
+          <button key={opt.value} onClick={() => setRange(opt.value)}
+            className={`rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${range === opt.value ? 'bg-ink text-bone' : 'border border-line text-graphite hover:text-ink'}`}>
             {opt.label}
           </button>
         ))}
       </div>
 
-      <div className="border-b border-border">
-        <div className="flex gap-4">
-          {(['overview', 'team', 'extraction', 'human-vs-relay', 'funnel', 'activity'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`pb-2 text-xs font-medium capitalize ${
-                activeTab === tab
-                  ? 'text-primary border-b-2 border-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {tab.replace('-', ' ')}
-            </button>
-          ))}
-        </div>
+      {/* Tabs */}
+      <div className="flex gap-4 border-b border-line">
+        {tabs.map((tab) => (
+          <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+            className={`pb-2.5 text-[13px] font-medium transition-colors ${activeTab === tab.key ? 'text-ink border-b-2 border-orange' : 'text-stone hover:text-ink'}`}>
+            {tab.label}
+          </button>
+        ))}
       </div>
 
+      {/* Overview */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium mb-2">Relay Brief</h3>
-            <div className="space-y-2">
-              {(data.insights ?? []).map((insight: { id: string; title: string; explanation: string; severity: string; confidence: string; sampleSize?: number }) => (
-                <div key={insight.id} className="flex items-start gap-2 text-xs">
-                  <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                    insight.severity === 'ACTION' ? 'bg-red-100 text-red-700' :
-                    insight.severity === 'WATCH' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-blue-100 text-blue-700'
-                  }`}>{insight.severity}</span>
+          {/* Insights */}
+          {data.insights && data.insights.length > 0 && (
+            <section className="rounded-lg border border-orange/20 bg-orange/5 p-5 space-y-3">
+              <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Intelligence</p>
+              {data.insights.map((insight) => (
+                <div key={insight.id} className="flex items-start gap-3">
+                  <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${insight.severity === 'ACTION' ? 'bg-status-danger/10 text-status-danger' : insight.severity === 'WATCH' ? 'bg-status-warning/10 text-status-warning' : 'bg-cobalt/10 text-cobalt'}`}>
+                    {insight.severity}
+                  </span>
                   <div>
-                    <span className="font-medium">{insight.title}</span>
-                    <span className="text-muted-foreground ml-2">{insight.explanation}</span>
-                    {insight.sampleSize !== undefined && (
-                      <span className="text-muted-foreground ml-1">(n={insight.sampleSize})</span>
-                    )}
+                    <p className="text-[13px] font-medium text-ink">{insight.title}</p>
+                    <p className="text-[12px] text-graphite">{insight.explanation}</p>
                   </div>
                 </div>
               ))}
-              {(!data.insights || data.insights.length === 0) && (
-                <div className="text-sm text-muted-foreground">No insights generated for this period.</div>
-              )}
-            </div>
-            {data.dataHealth && <DataHealthPanel dataHealth={data.dataHealth} />}
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-            <StatCard label="Unique Prospects" value={formatNumber(data.funnel.extracted)} subtext="analyzed" />
-            <StatCard label="Qualified" value={formatNumber(data.funnel.qualified)} />
-            <StatCard label="Contacted" value={formatNumber(data.funnel.contacted)} />
-            <StatCard label="Replies" value={formatNumber(data.funnel.replied)} />
-            <StatCard label="Qual Convos" value={formatNumber(data.funnel.qualifiedConversations)} />
-            <StatCard label="Calls" value={formatNumber(data.funnel.calls)} />
-            <StatCard label="Proposals" value={formatNumber(data.funnel.proposals)} />
-            <StatCard label="Wins" value={formatNumber(data.funnel.won)} />
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Funnel</h3>
-              <FunnelBar label="Extracted" value={data.funnel.extracted} max={maxFunnel} color="bg-ink" />
-              <FunnelBar label="Qualified" value={data.funnel.qualified} max={maxFunnel} color="bg-cobalt" />
-              <FunnelBar label="Contacted" value={data.funnel.contacted} max={maxFunnel} color="bg-cobalt" />
-              <FunnelBar label="Replied" value={data.funnel.replied} max={maxFunnel} color="bg-signal-orange" />
-              <FunnelBar label="Qualified Convos" value={data.funnel.qualifiedConversations} max={maxFunnel} color="bg-signal-orange" />
-              <FunnelBar label="Calls" value={data.funnel.calls} max={maxFunnel} color="bg-signal-orange" />
-              <FunnelBar label="Proposals" value={data.funnel.proposals} max={maxFunnel} color="bg-bone" />
-              <FunnelBar label="Wins" value={data.funnel.won} max={maxFunnel} color="bg-bone" />
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">AI Health</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <StatCard label="Extraction Runs" value={formatNumber(data.extraction.total)} subtext="including retries" />
-                <StatCard label="Successful" value={formatNumber(data.extraction.successful)} />
-                <StatCard label="AI Extractions" value={formatNumber(data.extraction.aiExtractions)} />
-                <StatCard label="Fallback/Demo" value={formatNumber(data.extraction.fallbackExtractions)} subtext={data.extraction.total > 0 ? formatPercent(Math.round((data.extraction.fallbackExtractions / data.extraction.total) * 100)) + ' fallback' : undefined} />
-                <StatCard label="Avg Latency" value={`${data.extraction.avgExtractionTime}ms`} />
-                <StatCard label="P50 Latency" value={`${data.ai.p50Latency}ms`} />
-                <StatCard label="P95 Latency" value={`${data.ai.p95Latency}ms`} />
-                <StatCard label="AI Cost" value={formatCurrency(data.ai.totalCost)} />
-              </div>
-            </div>
-          </div>
-
-          {data.extraction.fallbackExtractions > 0 && data.extraction.total > 0 && (
-            <div className="border border-destructive/30 bg-destructive/5 rounded-lg p-3">
-              <div className="text-xs font-medium text-destructive">
-                {formatPercent(Math.round((data.extraction.fallbackExtractions / data.extraction.total) * 100))} of extractions used fallback/demo
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {data.fallbackBreakdown?.demoMode ?? 0} demo mode · {data.fallbackBreakdown?.productionFailures ?? 0} production fallback
-              </div>
-              {data.fallbackBreakdown?.productionFailures > 0 && (
-                <div className="text-xs text-muted-foreground mt-1">
-                  Top reason: {Object.entries(data.fallbackBreakdown.byReason).filter(([k, v]) => k !== 'DEMO_MODE' && v > 0).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'UNKNOWN'}
-                </div>
-              )}
-            </div>
+            </section>
           )}
+
+          {/* KPI Grid */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <KPICard label="Extracted" value={fmt(data.funnel.extracted)} subtext="prospects" accent="neutral" />
+            <KPICard label="Qualified" value={fmt(data.funnel.qualified)} subtext={`${data.funnel.extracted > 0 ? Math.round((data.funnel.qualified / data.funnel.extracted) * 100) : 0}% conversion`} accent="cobalt" />
+            <KPICard label="Contacted" value={fmt(data.funnel.contacted)} subtext="reached out" accent="cobalt" />
+            <KPICard label="Replies" value={fmt(data.funnel.replied)} subtext={`${data.funnel.contacted > 0 ? Math.round((data.funnel.replied / data.funnel.contacted) * 100) : 0}% reply rate`} accent="success" />
+            <KPICard label="Qual Convos" value={fmt(data.funnel.qualifiedConversations)} subtext="meaningful" accent="success" />
+            <KPICard label="Proposals" value={fmt(data.funnel.proposals)} subtext="sent" accent="orange" />
+            <KPICard label="Wins" value={fmt(data.funnel.won)} subtext="closed" accent="success" />
+            <KPICard label="AI Cost" value={`$${data.ai.totalCost.toFixed(2)}`} subtext={`P50: ${data.ai.p50Latency}ms`} accent="neutral" />
+          </div>
+
+          {/* Funnel visualization */}
+          <div className="rounded-lg border border-line p-5 space-y-3">
+            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Funnel</p>
+            <FunnelBar label="Extracted" value={data.funnel.extracted} max={maxFunnel} color="bg-ink" />
+            <FunnelBar label="Qualified" value={data.funnel.qualified} max={maxFunnel} color="bg-cobalt" />
+            <FunnelBar label="Contacted" value={data.funnel.contacted} max={maxFunnel} color="bg-cobalt-light" />
+            <FunnelBar label="Replied" value={data.funnel.replied} max={maxFunnel} color="bg-orange" />
+            <FunnelBar label="Qual Convos" value={data.funnel.qualifiedConversations} max={maxFunnel} color="bg-orange-light" />
+            <FunnelBar label="Wins" value={data.funnel.won} max={maxFunnel} color="bg-status-success" />
+            <FunnelBar label="Lost" value={data.funnel.lost} max={maxFunnel} color="bg-status-danger" />
+          </div>
         </div>
       )}
 
+      {/* Funnel tab */}
       {activeTab === 'funnel' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Funnel Stages</h3>
-              <FunnelBar label="Extracted" value={data.funnel.extracted} max={maxFunnel} color="bg-ink" />
-              <FunnelBar label="Qualified" value={data.funnel.qualified} max={maxFunnel} color="bg-cobalt" />
-              <FunnelBar label="Contacted" value={data.funnel.contacted} max={maxFunnel} color="bg-cobalt" />
-              <FunnelBar label="Replied" value={data.funnel.replied} max={maxFunnel} color="bg-signal-orange" />
-              <FunnelBar label="Qualified Convos" value={data.funnel.qualifiedConversations} max={maxFunnel} color="bg-signal-orange" />
-              <FunnelBar label="Calls" value={data.funnel.calls} max={maxFunnel} color="bg-signal-orange" />
-              <FunnelBar label="Proposals" value={data.funnel.proposals} max={maxFunnel} color="bg-bone" />
-              <FunnelBar label="Wins" value={data.funnel.won} max={maxFunnel} color="bg-bone" />
-              <FunnelBar label="Lost" value={data.funnel.lost} max={maxFunnel} color="bg-destructive" />
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Conversation Stages</h3>
-              {Object.entries(data.conversationStages).length === 0 ? (
-                <EmptyState message="No conversation stages recorded in this period." />
-              ) : (
-                <Table
-                  headers={['Stage', 'Count']}
-                  rows={Object.entries(data.conversationStages).map(([stage, count]) => [stage, count])}
-                />
-              )}
-            </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-lg border border-line p-5 space-y-3">
+            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Pipeline</p>
+            {['Extracted', 'Qualified', 'Contacted', 'Replied', 'Qual Convos', 'Calls', 'Proposals', 'Wins', 'Lost'].map((label) => {
+              const key = label.toLowerCase().replace(' ', '') as keyof FunnelData
+              const val = data.funnel[key] ?? 0
+              return <FunnelBar key={label} label={label} value={val} max={maxFunnel} color={val > 0 ? 'bg-cobalt' : 'bg-line'} />
+            })}
           </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Fit Distribution</h3>
-              <Table
-                headers={['Fit', 'Count']}
-                rows={Object.entries(data.fitDistribution).map(([fit, count]) => [fit, count])}
-              />
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Qualification Distribution</h3>
-              <Table
-                headers={['Qualification', 'Count']}
-                rows={Object.entries(data.qualificationDistribution).map(([q, count]) => [q, count])}
-              />
-            </div>
+          <div className="rounded-lg border border-line p-5 space-y-3">
+            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Conversation Stages</p>
+            {Object.keys(data.conversationStages).length === 0 ? (
+              <p className="text-[13px] text-graphite">No conversation stages recorded.</p>
+            ) : (
+              Object.entries(data.conversationStages).map(([stage, count]) => (
+                <FunnelBar key={stage} label={stage} value={count} max={Math.max(...Object.values(data.conversationStages), 1)} color="bg-cobalt" />
+              ))
+            )}
           </div>
         </div>
       )}
 
+      {/* Team tab */}
       {activeTab === 'team' && (
         <div className="space-y-4">
-          <h3 className="text-sm font-medium">Team Performance</h3>
+          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-ststone">Team Performance</p>
           {data.reps.length === 0 ? (
-            <EmptyState message="No rep activity in this period." />
-          ) : (
-            <Table
-              headers={['Rep', 'Extracted', 'Qualified', 'Contacted', 'Replies', 'Qual Convos', 'Calls', 'Proposals', 'Wins', 'Losses', 'Target %']}
-              rows={data.reps.map((rep) => [
-                rep.repId.slice(0, 8),
-                rep.extracted,
-                rep.qualified,
-                rep.contacted,
-                rep.replies,
-                rep.qualifiedConversations,
-                rep.calls,
-                rep.proposals,
-                rep.wins,
-                rep.losses,
-                `${rep.targetProgress}%`,
-              ])}
-            />
-          )}
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium">Targets</h3>
-            <div className="grid grid-cols-3 gap-3">
-              <StatCard label="Active Targets" value={formatNumber(data.targets.total)} />
-              <StatCard label="Total Target" value={formatNumber(data.targets.totalTarget)} />
-              <StatCard label="Completed" value={formatNumber(data.targets.totalCompleted)} subtext={data.targets.totalTarget > 0 ? `${formatPercent(Math.round((data.targets.totalCompleted / data.targets.totalTarget) * 100))}` : undefined} />
+            <div className="rounded-lg border border-dashed border-line py-12 text-center">
+              <p className="text-[13px] text-graphite">No rep activity in this period.</p>
             </div>
+          ) : (
+            <div className="rounded-lg border border-line overflow-hidden">
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="border-b border-line bg-bone-raised">
+                    {['Rep', 'Extracted', 'Qualified', 'Contacted', 'Replies', 'Convos', 'Proposals', 'Wins', 'Target %'].map((h) => (
+                      <th key={h} className="text-left px-3 py-2 font-medium text-stone text-mono-medium text-[9px] uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.reps.map((rep) => (
+                    <tr key={rep.repId} className="border-b border-line/50 hover:bg-bone/50">
+                      <td className="px-3 py-2 font-medium text-ink">{rep.repId.slice(0, 8)}</td>
+                      <td className="px-3 py-2 text-graphite">{rep.extracted}</td>
+                      <td className="px-3 py-2 text-graphite">{rep.qualified}</td>
+                      <td className="px-3 py-2 text-graphite">{rep.contacted}</td>
+                      <td className="px-3 py-2 text-graphite">{rep.replies}</td>
+                      <td className="px-3 py-2 text-graphite">{rep.qualifiedConversations}</td>
+                      <td className="px-3 py-2 text-graphite">{rep.proposals}</td>
+                      <td className="px-3 py-2 text-status-success font-medium">{rep.wins}</td>
+                      <td className="px-3 py-2 text-graphite">{rep.targetProgress}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <KPICard label="Active Targets" value={fmt(data.targets.total)} accent="neutral" />
+            <KPICard label="Total Target" value={fmt(data.targets.totalTarget)} accent="cobalt" />
+            <KPICard label="Completed" value={fmt(data.targets.totalCompleted)} subtext={data.targets.totalTarget > 0 ? `${Math.round((data.targets.totalCompleted / data.targets.totalTarget) * 100)}%` : undefined} accent="success" />
           </div>
         </div>
       )}
 
-      {activeTab === 'extraction' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <StatCard label="Extraction Runs" value={formatNumber(data.extraction.total)} subtext="including retries" />
-            <StatCard label="Successful" value={formatNumber(data.extraction.successful)} />
-            <StatCard label="Failed" value={formatNumber(data.extraction.failed)} />
-            <StatCard label="Avg Time" value={data.extraction.avgExtractionTime > 0 ? `${data.extraction.avgExtractionTime}ms` : 'Unavailable'} />
+      {/* Quality tab */}
+      {activeTab === 'quality' && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-lg border border-line p-5 space-y-3">
+            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-ststone">Fit Distribution</p>
+            {Object.entries(data.fitDistribution).map(([fit, count]) => (
+              <FunnelBar key={fit} label={fit} value={count} max={Math.max(...Object.values(data.fitDistribution), 1)} color="bg-cobalt" />
+            ))}
           </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Fit Distribution</h3>
-              <Table
-                headers={['Fit', 'Count']}
-                rows={Object.entries(data.fitDistribution).map(([fit, count]) => [fit, count])}
-              />
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Confidence Distribution</h3>
-              <Table
-                headers={['Level', 'Count']}
-                rows={[
-                  ['High (>=80%)', data.confidenceDistribution.high],
-                  ['Medium (50-79%)', data.confidenceDistribution.medium],
-                  ['Low (<50%)', data.confidenceDistribution.low],
-                ]}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium">Provider Telemetry</h3>
+          <div className="rounded-lg border border-line p-5 space-y-3">
+            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-ststone">AI Provider Health</p>
             {data.ai.providers.length === 0 ? (
-              <EmptyState message="No AI traces in this period." />
+              <p className="text-[13px] text-graphite">No AI traces in this period.</p>
             ) : (
-              <Table
-                headers={['Provider', 'Calls', 'Fallback', 'Errors', 'Avg Latency', 'Cost']}
-                rows={data.ai.providers.map((p) => [
-                  p.provider,
-                  p.total,
-                  p.fallback,
-                  p.errors,
-                  `${p.avgLatency}ms`,
-                  formatCurrency(p.totalCost),
-                ])}
-              />
+              <table className="w-full text-[12px]">
+                <thead><tr className="border-b border-line">{['Provider', 'Calls', 'Fallback', 'Errors', 'Cost'].map(h => (<th key={h} className="text-left px-2 py-1.5 text-stone text-mono-medium text-[9px] uppercase tracking-wider">{h}</th>))}</tr></thead>
+                <tbody>
+                  {data.ai.providers.map((p) => (
+                    <tr key={p.provider} className="border-b border-line/50">
+                      <td className="px-2 py-1.5 font-medium text-ink">{p.provider}</td>
+                      <td className="px-2 py-1.5 text-graphite">{p.total}</td>
+                      <td className="px-2 py-1.5 text-graphite">{p.fallback}</td>
+                      <td className="px-2 py-1.5 text-graphite">{p.errors}</td>
+                      <td className="px-2 py-1.5 text-graphite">${p.totalCost.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
-            <div className="grid grid-cols-3 gap-3">
-              <StatCard
-                label="AI Cost"
-                value={data.costCoverage <= 0 ? 'Unavailable' : formatCurrency(data.ai.totalCost)}
-                subtext={
-                  data.costCoverage <= 0
-                    ? 'No cost telemetry'
-                    : data.costCoverage < 0.95
-                      ? `${Math.round(data.costCoverage * 100)}% coverage`
-                      : 'Full coverage'
-                }
-              />
-              <StatCard
-                label="P50 Latency"
-                value={data.latencyHealth?.health === 'UNAVAILABLE' || data.latencyHealth?.health === 'SUSPICIOUS' ? 'Unavailable' : `${data.ai.p50Latency}ms`}
-                subtext={
-                  data.latencyHealth?.health === 'SUSPICIOUS'
-                    ? 'Average latency contradicts percentiles — telemetry unreliable'
-                    : data.latencyHealth?.health === 'UNAVAILABLE'
-                      ? 'No valid latency samples'
-                      : undefined
-                }
-              />
-              <StatCard
-                label="P95 Latency"
-                value={data.latencyHealth?.health === 'UNAVAILABLE' || data.latencyHealth?.health === 'SUSPICIOUS' ? 'Unavailable' : `${data.ai.p95Latency}ms`}
-                subtext={
-                  data.latencyHealth?.health === 'SUSPICIOUS'
-                    ? 'Average latency contradicts percentiles — telemetry unreliable'
-                    : data.latencyHealth?.health === 'UNAVAILABLE'
-                      ? 'No valid latency samples'
-                      : undefined
-                }
-              />
-            </div>
-          </div>
-
-          {data.ai.providers.some((p) => p.fallback > 0 || p.errors > 0) && (
-            <div className="border border-destructive/30 bg-destructive/5 rounded-lg p-3">
-              <div className="text-xs font-medium text-destructive">Provider Issues Detected</div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {data.ai.providers.filter((p) => p.fallback > 0 || p.errors > 0).map((p) => (
-                  <div key={p.provider}>
-                    {p.provider}: {p.fallback} fallback, {p.errors} errors
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'human-vs-relay' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Relay Recommendations</h3>
-              <Table
-                headers={['Action', 'Count']}
-                rows={Object.entries(data.relayVsHuman.relayActions).map(([action, count]) => [action, count])}
-              />
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">Human Actions</h3>
-              <Table
-                headers={['Action', 'Count']}
-                rows={Object.entries(data.relayVsHuman.humanActions).map(([action, count]) => [action, count])}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium">Message Dispositions</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard label="Total Generated" value={formatNumber(data.messages.total)} />
-              <StatCard label="Generated Only" value={formatNumber(data.messages.generatedOnly)} subtext="draft created, not yet sent" />
-              <StatCard label="Reviewed" value={formatNumber(data.messages.reviewed)} subtext="sent or dispositioned" />
-              <StatCard
-                label="Unchanged"
-                value={data.messages.reviewed > 0 ? `${Math.round((data.messages.unchanged / data.messages.reviewed) * 100)}%` : '—'}
-                subtext={`${data.messages.unchanged} of ${data.messages.reviewed} reviewed`}
-              />
-              <StatCard
-                label="Heavy Edit"
-                value={data.messages.reviewed > 0 ? `${Math.round((data.messages.heavyEdit / data.messages.reviewed) * 100)}%` : '—'}
-                subtext={`${data.messages.heavyEdit} of ${data.messages.reviewed} reviewed`}
-              />
-              <StatCard
-                label="Rejected"
-                value={data.messages.reviewed > 0 ? `${Math.round((data.messages.rejected / data.messages.reviewed) * 100)}%` : '—'}
-                subtext={`${data.messages.rejected} of ${data.messages.reviewed} reviewed`}
-              />
+            <div className="grid grid-cols-2 gap-3 mt-4">
+              <KPICard label="P50 Latency" value={`${data.ai.p50Latency}ms`} accent="neutral" />
+              <KPICard label="P95 Latency" value={`${data.ai.p95Latency}ms`} accent="neutral" />
             </div>
           </div>
         </div>
       )}
 
+      {/* Activity tab */}
       {activeTab === 'activity' && (
-        <div className="space-y-3">
-          <h3 className="text-sm font-medium">Activity Feed</h3>
+        <div className="rounded-lg border border-line overflow-hidden">
+          <div className="border-b border-line px-4 py-3">
+            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-ststone">Activity Feed</p>
+          </div>
           {data.activityFeed.length === 0 ? (
-            <EmptyState message="No activity in this period." />
+            <p className="text-[13px] text-graphite py-12 text-center">No activity in this period.</p>
           ) : (
-            <div className="space-y-1">
+            <div className="divide-y divide-line/60">
               {data.activityFeed.slice(0, 50).map((item) => (
-                <div key={item.id} className="flex items-center gap-3 text-xs py-1.5 border-b border-border/30">
-                  <span className="text-muted-foreground font-mono w-20 shrink-0">
-                    {new Date(item.timestamp).toLocaleDateString()}
-                  </span>
-                  <span className="font-medium w-32 shrink-0 truncate">{item.eventType}</span>
-                  <span className="text-muted-foreground truncate">
-                    {item.prospectName ?? item.company ?? item.entityId?.slice(0, 8) ?? '—'}
-                  </span>
-                  {item.revenueIdentityName && (
-                    <span className="text-muted-foreground truncate">via {item.revenueIdentityName}</span>
-                  )}
+                <div key={item.id} className="flex items-center gap-3 px-4 py-2.5 text-[12px]">
+                  <span className="text-stone font-mono w-20 shrink-0">{new Date(item.timestamp).toLocaleDateString()}</span>
+                  <span className="font-medium text-ink w-32 shrink-0 truncate">{item.eventType}</span>
+                  <span className="text-graphite truncate">{item.prospectName ?? item.company ?? item.entityId?.slice(0, 8) ?? '—'}</span>
                 </div>
               ))}
             </div>
@@ -610,4 +268,38 @@ export function RevenueIntelligenceDashboard() {
       )}
     </div>
   )
+}
+
+function KPICard({ label, value, subtext, accent = 'neutral' }: { label: string; value: string; subtext?: string; accent?: 'orange' | 'cobalt' | 'success' | 'danger' | 'neutral' }) {
+  const colors = {
+    orange: 'border-orange/20 bg-orange/5',
+    cobalt: 'border-cobalt/20 bg-cobalt/5',
+    success: 'border-status-success/20 bg-status-success/5',
+    danger: 'border-status-danger/20 bg-status-danger/5',
+    neutral: 'border-line',
+  }
+  return (
+    <div className={cn('rounded border px-4 py-3', colors[accent])}>
+      <p className="text-mono-medium text-[9px] uppercase tracking-[0.14em] text-stone">{label}</p>
+      <p className="mt-1 text-[20px] font-medium text-ink">{value}</p>
+      {subtext && <p className="mt-0.5 text-[11px] text-graphite">{subtext}</p>}
+    </div>
+  )
+}
+
+function FunnelBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  const width = max > 0 ? Math.round((value / max) * 100) : 0
+  return (
+    <div className="flex items-center gap-3 text-[12px]">
+      <span className="w-28 text-stone truncate">{label}</span>
+      <div className="flex-1 h-3 bg-line/40 rounded overflow-hidden">
+        <div className={`h-full rounded transition-all duration-500 ${color}`} style={{ width: `${width}%` }} />
+      </div>
+      <span className="w-10 text-right font-mono text-ink">{value}</span>
+    </div>
+  )
+}
+
+function cn(...classes: (string | false | null | undefined)[]) {
+  return classes.filter(Boolean).join(' ')
 }
