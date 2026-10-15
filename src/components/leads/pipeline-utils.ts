@@ -16,6 +16,7 @@ export type LeadRow = Lead & {
   lastInboundAt?: string | null
   followupCount?: number
   lifecycle?: LifecycleResult
+  hasDmSent?: boolean
 }
 
 export type PipelineStage =
@@ -75,6 +76,10 @@ export function derivePipelineStage(lead: LeadRow): PipelineStage {
   }
 
   if (lead.status === 'contacted') {
+    // Pipeline/detail parity: when connection is accepted but no DM has been
+    // sent, the rep's next action is "Send first message" — the lead belongs
+    // in to_contact (action required), not waiting.
+    if (lead.connectionAcceptedAt && !lead.hasDmSent) return 'to_contact'
     if (hasOutbound && !hasInbound) return 'waiting'
     if (hasRepliedSinceOutbound) return 'needs_reply'
     return 'waiting'

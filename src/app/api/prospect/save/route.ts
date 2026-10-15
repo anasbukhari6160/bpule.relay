@@ -237,18 +237,11 @@ export async function POST(request: Request) {
 
     const lead = result.lead!
 
-    if (connectionNote) {
-      try {
-        await store.saveDraft({
-          leadId: lead.id,
-          type: 'connection',
-          draftText: connectionNote,
-          modelUsed: 'prospect-check',
-        })
-      } catch {
-        // Draft persistence is best-effort; lead creation is already committed.
-      }
-    }
+    // BUG-22: Do NOT save the generated note as a draft message. The note is
+    // already persisted in extractionProfile.connectionNote. Saving it as a
+    // draft would make it appear in the timeline, and "Send Without Note"
+    // would then incorrectly show as logging the generated note. The user
+    // can always regenerate the note from the lead page.
 
     return NextResponse.json(
       {

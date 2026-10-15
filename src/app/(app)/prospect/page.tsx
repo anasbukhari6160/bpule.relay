@@ -243,34 +243,40 @@ export default function ProspectCheckPage() {
           }
           if (event.type === 'done') {
             if (!event.extracted && !event.qualification && !event.revenue) return
-            setResult({
-              extracted: event.extracted,
-              score: event.score,
-              canonical: event.canonical ?? null,
-              bestSender: event.bestSender,
-              bestSenderProof: event.bestSenderProof,
-              connectionNote: event.connectionNote,
-              charCount: event.charCount,
-              maxChars: event.maxChars,
-              quality: event.quality,
-              strategy: event.strategy,
-              alternativeSenders: event.alternativeSenders,
-              senderSuggestion: event.senderSuggestion ?? null,
-              draftFailed: event.draftFailed,
-              demoMode: event.demoMode,
-              qualification: event.qualification,
-              revenue: event.revenue ?? null,
-            })
-            if (event.bestSender) {
-              setSelectedProfileId(event.bestSender.id)
+            // BUG-17: wrap in try/catch so a malformed done event surfaces as a
+            // user-facing error instead of crashing into the route error boundary.
+            try {
+              setResult({
+                extracted: event.extracted,
+                score: event.score,
+                canonical: event.canonical ?? null,
+                bestSender: event.bestSender,
+                bestSenderProof: event.bestSenderProof,
+                connectionNote: event.connectionNote,
+                charCount: event.charCount,
+                maxChars: event.maxChars,
+                quality: event.quality ?? { passed: true, failures: [], wasRepaired: false },
+                strategy: event.strategy,
+                alternativeSenders: event.alternativeSenders,
+                senderSuggestion: event.senderSuggestion ?? null,
+                draftFailed: event.draftFailed,
+                demoMode: event.demoMode,
+                qualification: event.qualification,
+                revenue: event.revenue ?? null,
+              })
+              if (event.bestSender) {
+                setSelectedProfileId(event.bestSender.id)
+              }
+              // Track completed analysis
+              const durationMs = Math.round(performance.now() - analysisTiming)
+              trackEvent({
+                event: 'prospect_analysis_completed',
+                durationMs,
+                metadata: { qualification: event.score?.qualification ?? '', score: event.score?.total ?? 0 },
+              })
+            } catch (doneErr) {
+              setError(doneErr instanceof Error ? doneErr.message : 'Analysis result could not be rendered.')
             }
-            // Track completed analysis
-            const durationMs = Math.round(performance.now() - analysisTiming)
-            trackEvent({
-              event: 'prospect_analysis_completed',
-              durationMs,
-              metadata: { qualification: event.score?.qualification ?? '', score: event.score?.total ?? 0 },
-            })
           }
         },
         onError(message) {

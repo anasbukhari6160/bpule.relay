@@ -45,6 +45,12 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   const phase = relationshipState.phase
   const isTheirMove = relationshipState.kind === 'their_move' && phase !== 'replied'
   const isTerminal = relationshipState.kind === 'won' || relationshipState.kind === 'lost'
+  // BUG-18: an unanswered inbound exists when the newest inbound is newer than
+  // the newest outbound reply — covers follow-up messages after the first reply.
+  const lastOutboundReply = messages
+    .filter((m) => m.type === 'reply' && m.direction !== 'inbound' && m.sentAt)
+    .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0] ?? null
+  const hasUnansweredInbound = lastInbound && (!lastOutboundReply || (lastInbound.sentAt ?? '') > (lastOutboundReply.sentAt ?? ''))
 
   const refreshLead = useCallback(async () => {
     try {
@@ -168,7 +174,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} size={44} />
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-medium text-ink">{lead.score != null ? `${lead.score}/12` : lead.canonicalScore != null ? `${Math.round(lead.canonicalScore / 10)}/10` : '—'}</span>
+                   <span className="text-[13px] font-medium text-ink">{lead.canonicalScore != null ? `${Math.round(lead.canonicalScore / 10)}/10` : lead.score != null ? `${lead.score}/12` : '—'}</span>
                   {(() => {
                     const q = (lead.canonicalIntelligence as Record<string, unknown>)?.qualification
                     if (!q) return null
@@ -275,12 +281,15 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                     <Send className="size-3.5" /> Generate connection note
                   </Button>
                   <Button size="sm" variant="outline" className="w-full justify-center sm:w-auto" onClick={async () => {
+                    // BUG-22: send WITHOUT logging the generated note. Clear draftText
+                    // so the generated note is not displayed or persisted.
+                    setDraftText(''); setMode(null)
                     await fetch(`/api/leads/${lead.id}/contact`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'connection', sentText: '', sendWithoutNote: true }) })
                     setLeadVersion((v) => v + 1); router.refresh()
                   }}>Send without note</Button>
                 </div>
               )}
-              {(phase === 'replied' || (relationshipState.kind === 'your_move' && lastInbound)) && (
+              {hasUnansweredInbound && (
                 <Button size="sm" onClick={() => generateDraft('reply')} className="w-full justify-center">
                   <MessageSquare className="size-3.5" /> {lastInbound ? `Reply to "${lastInbound.sentText?.slice(0, 40)}..."` : 'Generate reply'}
                 </Button>

@@ -214,7 +214,12 @@ function extractCompanySignals(text: string, lines: string[], lower: string): Co
 
   const fundingMentioned = FUNDING_PATTERNS.some((p) => p.test(text))
   const fundingStage = extractFundingStage(text)
-  const growthSignals = GROWTH_PATTERNS.filter((p) => p.test(text)).map((p) => p.source)
+  // BUG-07: extract the actual matched words, not the regex source string
+  // (RegExp.source leaks raw regex like /\b(growing|scaling)\b/i into the UI).
+  const growthSignals = GROWTH_PATTERNS.flatMap((p) => {
+    const m = text.match(p)
+    return m ? [m[0]] : []
+  }).filter(Boolean)
 
   return {
     name: nameFromHeader || null,

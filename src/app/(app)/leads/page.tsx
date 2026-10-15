@@ -84,6 +84,7 @@ async function loadLeads(): Promise<LeadsPayload> {
   const lastActivityByLead = new Map<string, string>()
   const lastOutboundByLead = new Map<string, { text: string; at: string }>()
   const lastInboundByLead = new Map<string, { text: string; at: string }>()
+  const hasDmSentByLead = new Map<string, boolean>()
 
   for (const m of messages) {
     const leadId = m.lead_id as string
@@ -91,6 +92,7 @@ async function loadLeads(): Promise<LeadsPayload> {
     if (ts && !lastActivityByLead.has(leadId)) lastActivityByLead.set(leadId, ts)
 
     const direction = m.direction as string
+    const type = m.type as string
     const text = m.sent_text as string
     const at = (m.sent_at ?? m.created_at) as string
 
@@ -99,6 +101,11 @@ async function loadLeads(): Promise<LeadsPayload> {
     }
     if (direction === 'inbound' && text && !lastInboundByLead.has(leadId)) {
       lastInboundByLead.set(leadId, { text, at })
+    }
+    // Pipeline/detail parity: track whether a DM was sent so connection-
+    // accepted leads land in to_contact (action required), not waiting.
+    if (type === 'dm' && direction !== 'inbound' && text) {
+      hasDmSentByLead.set(leadId, true)
     }
   }
 
@@ -150,6 +157,7 @@ async function loadLeads(): Promise<LeadsPayload> {
       lastInboundText: inbound?.text ?? null,
       lastInboundAt: inbound?.at ?? null,
       followupCount: followupCountByLead.get(lead.id) ?? 0,
+      hasDmSent: hasDmSentByLead.get(lead.id) ?? false,
       lifecycle,
     }
   })

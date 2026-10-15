@@ -314,9 +314,19 @@ export function buildUserPrompt(
     ? strategyToPromptBlock(input.strategy)
     : ''
 
+  // BUG-19/20: For replies, the conversation context MUST come first — before
+  // strategy, lead data, or anything that could trigger a fresh pitch. The LLM
+  // was ignoring a bottom-placed context and falling back to a connection-note
+  // opener. Placing it at the top forces the model to respond to the prospect's
+  // actual words instead of restarting the pitch.
+  const isReply = input.type === 'reply'
+  const ctxBlock = input.conversationContext ?? ''
+
   return [
     `Message kind: ${messageKind(input)}`,
     '',
+    isReply && ctxBlock ? ctxBlock : null,
+    isReply && ctxBlock ? '' : null,
     strategyBlock,
     strategyBlock ? '' : null,
     factsBlock,
@@ -335,8 +345,8 @@ export function buildUserPrompt(
     '',
     leadBlock,
     '',
-    input.conversationContext ?? '',
-    input.conversationContext ? '' : null,
+    !isReply && ctxBlock ? ctxBlock : null,
+    !isReply && ctxBlock ? '' : null,
     opts?.asPlainText
       ? 'End the draft, then put ---SELFCHECK--- on its own line and the self-check JSON object after it, exactly as the system message describes. The draft itself is only the message text.'
       : 'Return the JSON object described in the system message.',
