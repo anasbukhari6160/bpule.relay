@@ -42,15 +42,36 @@ export async function GET() {
   return generateAndRespond(store, user.organization.id, localDate, user.rep.timezone ?? 'UTC')
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   const user = await getCurrentUser()
   if (!user || user.rep.role !== 'admin') {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 })
   }
 
+  const body = await request.json().catch(() => ({}))
+  const rejectTitle = body.rejectTitle as string | undefined
+  const rejectAngle = body.rejectAngle as string | undefined
+  const markPosted = body.markPosted as boolean | undefined
+
   const store = await createScoutStore()
   const localDate = getLocalDate(user.rep.timezone ?? 'UTC')
-  return generateAndRespond(store, user.organization.id, localDate, user.rep.timezone ?? 'UTC')
+
+  if (markPosted) {
+    const existing = await store.getDailyGrowthBrief(localDate)
+    if (existing) {
+      await store.markDailyGrowthBriefCopied(existing.id).catch(() => {})
+    }
+    return NextResponse.json({ posted: true })
+  }
+
+  return generateAndRespond(
+    store,
+    user.organization.id,
+    localDate,
+    user.rep.timezone ?? 'UTC',
+    rejectTitle ? [rejectTitle] : [],
+    rejectAngle ? [rejectAngle] : [],
+  )
 }
 
 async function generateAndRespond(
@@ -58,6 +79,8 @@ async function generateAndRespond(
   orgId: string,
   localDate: string,
   timezone: string,
+  rejectTitles: string[] = [],
+  rejectAngles: string[] = [],
 ) {
   try {
     const trendItems = await store.listTrendItems({ limit: 50 })
@@ -68,11 +91,13 @@ async function generateAndRespond(
         store,
         orgId,
         trendCandidates,
-        recentGrowthTopics: [],
+        recentGrowthTopics: rejectTitles,
+        recentGrowthAngles: rejectAngles,
         recentGrowthHooks: [],
-        recentGrowthAngles: [],
         localDate,
         timezone,
+        excludeTitles: rejectTitles,
+        excludeAngles: rejectAngles,
       })
 
       if (!brief.postCaption || brief.postCaption.length < 20) {

@@ -107,6 +107,8 @@ export interface GrowthGenerationInput {
   recentGrowthAngles: string[]
   localDate: string
   timezone: string
+  excludeTitles?: string[]
+  excludeAngles?: string[]
 }
 
 export async function generateGrowthBriefViaStudioEngine(
@@ -138,11 +140,19 @@ export async function generateGrowthBriefViaStudioEngine(
     })),
   ]
 
-  const recentIdeas = input.recentGrowthTopics.map((t, i) => ({
+  const rejectedIdeas = (input.excludeTitles ?? []).map((t, i) => ({
     title: t,
     territory: RELAY_BRAND_TERRITORIES[i % RELAY_BRAND_TERRITORIES.length],
-    angle: input.recentGrowthAngles[i] ?? '',
+    angle: (input.excludeAngles ?? [])[i] ?? '',
   }))
+  const recentIdeas = [
+    ...input.recentGrowthTopics.map((t, i) => ({
+      title: t,
+      territory: RELAY_BRAND_TERRITORIES[i % RELAY_BRAND_TERRITORIES.length],
+      angle: input.recentGrowthAngles[i] ?? '',
+    })),
+    ...rejectedIdeas,
+  ]
 
   const briefInput: DailyBriefInput = {
      persona,

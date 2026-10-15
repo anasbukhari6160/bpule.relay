@@ -14,6 +14,7 @@ export function GrowthTodayV2() {
   const [generatingImage, setGeneratingImage] = useState(false)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [rejectionCount, setRejectionCount] = useState(0)
+  const [selectedAngle, setSelectedAngle] = useState<{ title: string; angle: string } | null>(null)
 
   const fetchBrief = useCallback(async (): Promise<boolean> => {
     try {
@@ -49,8 +50,9 @@ export function GrowthTodayV2() {
   }, [fetchBrief, generateBrief])
 
   const handleCopy = () => {
-    if (!data?.postCaption) return
-    navigator.clipboard.writeText(data.postCaption)
+    const text = selectedAngle ? `${selectedAngle.title}\n\n${selectedAngle.angle}` : data?.postCaption
+    if (!text) return
+    navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -68,13 +70,14 @@ export function GrowthTodayV2() {
   const handleRejectAndNext = async () => {
     if (!data) return
     setRejectionCount(c => c + 1)
-    const title = data.postCaption?.split('\n')[0]?.slice(0, 100) ?? ''
+    setSelectedAngle(null)
+    const title = data.alternateIdeas?.[0]?.title ?? data.postCaption?.split('\n')[0]?.slice(0, 100) ?? ''
     await generateBrief(title, undefined)
   }
 
-  const handleSelectAlternate = (_title: string, angle: string) => {
+  const handleSelectAlternate = (title: string, angle: string) => {
     setRejectionCount(0)
-    setData(prev => prev ? { ...prev, postCaption: angle } : prev)
+    setSelectedAngle({ title, angle })
   }
 
   const handleGenerateImage = async () => {
@@ -145,7 +148,16 @@ export function GrowthTodayV2() {
               </div>
 
               <div className="px-5 py-5">
-                {data.postCaption ? (
+                {selectedAngle ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-orange-signal/10 px-2 py-0.5 text-[10px] font-medium text-orange-signal">Angle selected</span>
+                      <button onClick={() => setSelectedAngle(null)} className="text-xs text-ink/40 hover:text-ink/60">← Back to post</button>
+                    </div>
+                    <p className="text-base font-medium text-ink">{selectedAngle.title}</p>
+                    <p className="text-sm leading-relaxed text-ink/60">{selectedAngle.angle}</p>
+                  </div>
+                ) : data.postCaption ? (
                   <div className="whitespace-pre-wrap text-[15px] leading-[1.7] text-ink/80">{data.postCaption}</div>
                 ) : (
                   <p className="text-sm text-ink/40">No post generated yet. Click below.</p>
@@ -163,7 +175,7 @@ export function GrowthTodayV2() {
               <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-3 bg-bone/50">
                 <button
                   onClick={handleCopy}
-                  disabled={!data.postCaption}
+                  disabled={!selectedAngle && !data.postCaption}
                   className="flex items-center gap-2 rounded-lg bg-orange-signal px-4 py-2 text-sm font-medium text-on-accent transition-colors hover:bg-orange-dark disabled:opacity-50"
                 >
                   <Copy className="h-4 w-4" />
