@@ -534,49 +534,50 @@ async function generateFinishedPost(input: {
   diversificationBlock?: string
 }): Promise<string> {
   const divBlock = input.diversificationBlock ? `\n\n${input.diversificationBlock}` : ''
-  const system = `You write LinkedIn posts for experienced professionals that get high engagement because they teach something real, challenge assumptions, or share a specific insight earned through practice.
+  const system = `You write LinkedIn posts that get hundreds of reactions because they are SPECIFIC, SURPRISING, and REAL. Generic posts get ignored. Specific posts get shared.
+
+WARNING: If the post sounds like it could have been written by anyone in the field, it FAILS. You MUST use the specific details from the persona and idea below.
+
+PERSONA YOU ARE WRITING FOR:
+${input.personaContext}
 
 ${divBlock}
 
+${input.repairHint ? `REPAIR REQUIRED: ${input.repairHint}` : ''}
+
 QUALITY BAR — every post MUST pass these tests:
-1. HOOK: Would this first line make someone stop scrolling? It should contain a surprising number, a contrarian claim, a short story, or a bold statement. NOT a question about "how do you..." or "have you ever..."
-2. SPECIFICITY: Real numbers, real tools, real situations. If the post could have been written by anyone in the field, it fails.
-3. INSIGHT: The reader should think differently after reading. What's the counterintuitive take? What did you learn that others haven't?
-4. VOICE: Sounds like a smart professional sharing something real — not a brand, not a journalist, not a motivational speaker.
+1. HOOK: First line must contain a surprising number, a contrarian claim, or a specific story detail. NOT "I believe...", "In my opinion...", or any filler.
+2. SPECIFICITY: Use the persona's real tools, real projects, real numbers. "3 years", "40%", "TypeScript", "AWS", "$12k". No vague claims.
+3. INSIGHT: The reader should learn something they didn't know. What's the counterintuitive take? What did you discover the hard way?
+4. VOICE: Like a smart professional at a bar explaining something real. Not a brand. Not a journalist. Not a motivational speaker.
 
-STRUCTURE:
-Write 4-6 short paragraphs (1-2 sentences each) separated by blank lines:
+STRUCTURE (4-6 short paragraphs, 1-2 sentences each, blank lines between):
 
-[HOOK: Surprising number, contrarian claim, or specific story. 1 line.]
+[HOOK: Lead with the most surprising number, claim, or story detail. 1 line.]
 
-[CONTEXT: Set the scene. What was the situation? Use specifics — numbers, tools, timelines. 1-2 sentences.]
+[CONTEXT: Set the scene with specifics. Numbers, tools, timelines. What actually happened?]
 
-[INSIGHT: The counterintuitive take or lesson. What should the reader reconsider? 1-2 sentences.]
+[INSIGHT: The counterintuitive take. What should the reader reconsider?]
 
-[ACTION: What you did about it, or what the reader should consider doing. 1-2 sentences.]
+[ACTION: What you did about it. Concrete next step.]
 
 [CLOSE: End with a genuine question that invites specific answers. NOT "Thoughts?" or "Agree?"]
 
-EXAMPLE (study this quality level):
-We deleted half our Kubernetes cluster on a Tuesday. Costs dropped 40% that week.
+REFERENCE QUALITY (engagement these get: 100-700+ reactions):
+"We deleted half our Kubernetes cluster on a Tuesday. Costs dropped 40% that week. It started when I noticed we were running 3 nodes for a service that peaked at 200 requests per minute. Nobody had reviewed the autoscaling config in 8 months. The counterintuitive part: adding more nodes was making it worse. Each new node added latency from cross-zone networking. We were paying more to go slower. I set a rule now: every service gets a monthly cost-to-traffic review. If the ratio drifts, we scale down before scaling up. When did you last check if your infrastructure matches your actual traffic?"
 
-It started when I noticed we were running 3 nodes for a service that peaked at 200 requests per minute. Nobody had reviewed the autoscaling config in 8 months.
-
-The counterintuitive part: adding more nodes was making it worse. Each new node added latency from cross-zone networking. We were paying more to go slower.
-
-I set a rule now: every service gets a monthly cost-to-traffic review. If the ratio drifts, we scale down before scaling up.
-
-When did you last check if your infrastructure matches your actual traffic?
+"55 FASTAPI FILES. 792,105 CHARACTERS. ONE QUESTION. OpenAI / GPT-5-mini: $0.005406, 11.66 seconds. Telnyx / GLM-5.3 Flash: $0.004905, 11.06 seconds. That is about 9% lower cost and 5% faster."
 
 RULES:
 - NO em dashes. Use commas or periods only.
 - NO listicles, no numbered lists, no "here are X tips".
-- NO filler: "Here's the thing", "Let that sink in", "Game changer", "In today's fast-paced world", "leverage", "synergy".
-- 100-220 words for LinkedIn.
-- Named tools/metrics required when relevant.
+- NO filler: "Here's the thing", "Let that sink in", "Game changer", "In today's fast-paced world", "leverage", "synergy", "overlooked power", "critical importance".
+- 80-200 words for LinkedIn. Short paragraphs.
+- Named tools/metrics REQUIRED. No post without at least one specific number or tool name.
 - NO hashtags, NO emojis, NO exclamation marks, NO sign-off.
+- REJECT generic marketing language. If it reads like a LinkedIn bot wrote it, start over.
 
-TONE: Like a senior professional explaining something to a peer. Direct, specific, slightly opinionated. Human.`
+TONE: Direct, specific, slightly opinionated. Like sharing a real lesson with a peer. Human.`
 
   const userObj: Record<string, unknown> = {
     persona: input.personaContext,
@@ -763,6 +764,12 @@ export function cleanPost(raw: string): string {
   text = text.replace(/(\d)([a-zA-Z]{2,})/g, '$1 $2')
   // But don't break common patterns like "50%" or "2x"
   text = text.replace(/(\d)\s+(%|x\b|min|hr|mo|yr)/gi, '$1$2')
+
+  // Fix missing space after period: "solutions.Last" → "solutions. Last"
+  text = text.replace(/([.!?])([A-Z])/g, '$1 $2')
+  // Fix missing space between sentences: "solutionsLast" → "solutionsLast" becomes "solutions. Last"
+  // Only when lowercase precedes uppercase AND the lowercase is mid-word (preceded by lowercase)
+  text = text.replace(/(?<=[a-z])([a-z])([A-Z][a-z])/g, '$1. $2')
 
   // Fix grammar: "Each additional added points" → "Each additional point"
   text = text.replace(/\b(each|every|all)\s+(\w+)\s+added\s+points?\b/gi, '$1 $2 point')
