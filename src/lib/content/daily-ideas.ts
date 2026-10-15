@@ -51,7 +51,7 @@ export function generateDailyIdeas(input: {
   )
 
   if (input.profile) {
-    for (const exp of input.profile.expertise) {
+    for (const exp of input.profile.expertise ?? []) {
       if (exp.level === 'expert' || exp.level === 'advanced') {
         const alreadyCovered = [...coveredTopics].some((t) => t.includes(exp.area.toLowerCase()))
         if (!alreadyCovered) {
@@ -70,7 +70,7 @@ export function generateDailyIdeas(input: {
       }
     }
 
-    for (const opinion of input.profile.opinions) {
+    for (const opinion of input.profile.opinions ?? []) {
       const confidence = opinion.strength === 'strong' ? 0.8 : opinion.strength === 'moderate' ? 0.65 : 0.5
       ideas.push({
         id: `op-${opinion.belief.slice(0, 30)}`,
@@ -85,8 +85,8 @@ export function generateDailyIdeas(input: {
       })
     }
 
-    for (const project of input.profile.projects) {
-      if (project.lessons.length > 0) {
+    for (const project of input.profile.projects ?? []) {
+      if ((project.lessons ?? []).length > 0) {
         ideas.push({
           id: `proj-${project.name}`,
           title: `What building ${project.name} taught you`,
@@ -99,7 +99,7 @@ export function generateDailyIdeas(input: {
           territoryColor: TERRITORY_COLORS.proof,
         })
       }
-      if (project.outcome && !project.lessons.length) {
+      if (project.outcome && !(project.lessons ?? []).length) {
         ideas.push({
           id: `proj-out-${project.name}`,
           title: `The outcome of ${project.name} and what it means`,
@@ -114,7 +114,7 @@ export function generateDailyIdeas(input: {
       }
     }
 
-    for (const exp of input.profile.experiences) {
+    for (const exp of input.profile.experiences ?? []) {
       if (exp.lesson.trim()) {
         const typeLabel = exp.type === 'mistake' ? 'mistake' : exp.type === 'success' ? 'win' : exp.type === 'decision' ? 'decision' : 'experience'
         ideas.push({
@@ -131,7 +131,7 @@ export function generateDailyIdeas(input: {
       }
     }
 
-    for (const tech of input.profile.technologies) {
+    for (const tech of input.profile.technologies ?? []) {
       if (tech.proficiency === 'expert' || tech.proficiency === 'proficient') {
         const alreadyCovered = [...coveredTopics].some((t) => t.includes(tech.name.toLowerCase()))
         if (!alreadyCovered) {
