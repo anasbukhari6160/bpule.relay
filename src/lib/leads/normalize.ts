@@ -147,13 +147,23 @@ export function cleanPersonName(raw: string | null | undefined): string | null {
   let name = raw.trim()
   if (!name) return null
 
-  // Reject if it's in the blocklist (case-insensitive, prefix match)
   const lower = name.toLowerCase()
-  if (PERSON_NAME_BLOCKLIST.some((word) => lower === word || lower.startsWith(word + ' '))) {
-    return null
-  }
 
-  // Reject single-word names that look like UI chrome (unless they're a known single-name person)
+  // Strip LinkedIn action prefixes like "View ", "View profile ", "Follow "
+  // so "View John Gummadi's profile" becomes "John Gummadi's profile"
+  for (const word of PERSON_NAME_BLOCKLIST) {
+    if (lower.startsWith(word + ' ') || lower === word) {
+      name = name.slice(word.length).trim()
+      break
+    }
+  }
+  if (!name) return null
+
+  // Strip trailing LinkedIn chrome like "profile", "image", "photo"
+  name = name.replace(/\s*(profile|image|photo|banner|logo|connection)s?$/i, '').trim()
+  if (!name) return null
+
+  // Reject single-word UI fragments that survived stripping
   const words = name.split(/\s+/).filter(Boolean)
   if (words.length === 1 && words[0].length <= 4 && !/^[A-Z][a-z]+$/.test(words[0])) {
     return null

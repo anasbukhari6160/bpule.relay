@@ -422,13 +422,10 @@ export async function POST(
       throw draftErr
     }
 
-    await store.saveDraft({
-      leadId: detail.id,
-      type: draftResult.type,
-      draftText: draftResult.draftText,
-      modelUsed: draftResult.modelUsed,
-    })
-
+    // Do NOT persist a draft row — the generated text lives only in the
+    // component state until the user explicitly logs it as sent via /contact.
+    // Saving drafts pollutes the timeline (shows "Draft" entries) and breaks
+    // the state machine (latestMessage filters by sentText, ignoring drafts).
     if (profile) {
       try {
         await store.updateLeadSenderProfile(detail.id, profile.id)
