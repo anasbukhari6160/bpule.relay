@@ -18,10 +18,12 @@ import type {
   V3BoundedDecision,
   V3ShadowComparison,
   CommercialPotentialAssessment,
+  V3EvidenceQuote,
 } from '../types'
 import type { V3EvidenceGraph } from '../graph/evidence-graph'
 import { V3_CONFIG_VERSION } from '../config'
-import { scoreEpisode, type V3ScoreInput } from '../scoring/score-v3'
+import { scoreEpisode, isEmploymentHiringNotPurchase, type V3ScoreInput, type V3ScoreOutput } from '../scoring/score-v3'
+import { detectCommercialRequest, findContactInstruction, isVerbatimInSource } from '../source-facts'
 import { determineAction } from '../action/action-policy'
 import type { V3ProviderResult } from './decision-provider'
 import {
@@ -80,6 +82,13 @@ export interface V3AssemblerInput {
   v2Canonical?: CanonicalProspectIntelligence
   /** Raw source text for latent signal scanning */
   rawText?: string
+  /**
+   * The episode the provider's bounded answers were produced for. The
+   * decision only describes that episode, so it is the one scored and
+   * reported — re-ranking other episodes with the same answers let an
+   * inferred hiring episode outscore the explicit request it came from.
+   */
+  decidedEpisodeId?: string | null
 }
 
 export interface V3AssemblerOutput {
@@ -104,7 +113,15 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     rawText,
   } = input
 
-  const decision = buildBoundedDecision(providerResult)
+  const decidedEpisode = input.decidedEpisodeId
+    ? episodes.find((e) => e.id === input.decidedEpisodeId) ?? null
+    : null
+  const { decision, adjustments: decisionAdjustments } = guardBoundedDecision(
+    buildBoundedDecision(providerResult),
+    rawText,
+    decidedEpisode,
+  )
+  const quotesFor = (episode: V3OpportunityEpisode) => verbatimEpisodeQuotes(episode, graph, rawText)
 
   // Assess commercial potential once (deterministic, no AI call)
   let commercialPotential = null
@@ -124,6 +141,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
       proofRelevance: proofRelevanceMap[episode.id] ?? estimateProofRelevance(episode, senderCapabilities),
       evidenceQuality: evidenceQualityMap[episode.id] ?? estimateEvidenceQuality(episode, graph),
       rawText,
+      episodeQuotes: quotesFor(episode),
       commercialPotential: episode.organizationName && commercialPotential
         ? scopeCommercialPotentialToOrg(commercialPotential, episode.organizationName, graph)
         : commercialPotential ?? undefined,
@@ -132,11 +150,16 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     const scoreOutput = scoreEpisode(scoreInput)
     episodeScores.push({ episodeId: episode.id, score: scoreOutput.score })
 
-    // Best active episode wins
-    if (episode.status !== 'CLOSED' && scoreOutput.score > bestScore) {
+    // Without a decided episode, the best active episode wins.
+    if (!decidedEpisode && episode.status !== 'CLOSED' && scoreOutput.score > bestScore) {
       bestScore = scoreOutput.score
       bestEpisode = episode
     }
+  }
+
+  if (decidedEpisode && decidedEpisode.status !== 'CLOSED') {
+    bestEpisode = decidedEpisode
+    bestScore = episodeScores.find((e) => e.episodeId === decidedEpisode.id)?.score ?? 0
   }
 
   if (!bestEpisode && episodes.length > 0) {
@@ -153,13 +176,14 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
         evidenceQuality: evidenceQualityMap[bestEpisode.id] ?? estimateEvidenceQuality(bestEpisode, graph),
         rawText,
         senderCapabilities,
+        episodeQuotes: quotesFor(bestEpisode),
         commercialPotential: bestEpisode.organizationName && commercialPotential
           ? scopeCommercialPotentialToOrg(commercialPotential, bestEpisode.organizationName, graph)
           : commercialPotential ?? undefined,
       }
     : null
 
-  let selectedScore = selectedScoreInput
+  let selectedScore: V3ScoreOutput = selectedScoreInput
     ? scoreEpisode(selectedScoreInput)
     : { score: 0, label: 'Not a fit', qualification: 'SKIP' as const, reasons: ['No episodes found'], watchOut: [], dimensions: [] }
 
@@ -211,6 +235,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
           : ['No explicit buyer signal detected'],
         watchOut: [`Current buyer intent: UNKNOWN. ${latentAssessment.signals.join(', ')}`],
         dimensions: [],
+        calculation: latentCalculation(latentScore, `No concrete opportunity episode; scored on ${latentAssessment.overallPotential.toLowerCase()} latent commercial potential.`),
       }
       actionOutput = {
         action: latentAction.action as import('../types').V3Action,
@@ -229,6 +254,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
       reasons: ['No explicit buyer signal detected'],
       watchOut: ['No meaningful commercial opportunity identified'],
       dimensions: [],
+      calculation: latentCalculation(0, 'No concrete opportunity episode and low commercial potential.'),
     }
     actionOutput = { action: 'SKIP', messageEligible: false, reason: 'No buyer intent and low commercial potential', needsReview: false }
   }
@@ -267,6 +293,9 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     reasons: selectedScore.reasons,
     watchOut: selectedScore.watchOut,
     dimensions: selectedScore.dimensions,
+    scoreCalculation: selectedScore.calculation ?? null,
+    decisionAdjustments,
+    evidenceQuotes: bestEpisode ? episodeEvidenceQuotes(bestEpisode, graph, rawText) : [],
     evidenceRefs,
     proofStrength: proofRelevanceMap[bestEpisode?.id ?? ''] ?? 0.5,
     confidence: latentAssessment ? latentAssessment.confidence : confidence,
@@ -284,6 +313,93 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
   }
 }
 
+
+function latentCalculation(score: number, detail: string): NonNullable<V3ScoreOutput['calculation']> {
+  return {
+    modelSubtotal: score,
+    statusMultiplier: 1,
+    relationshipMultiplier: 1,
+    modelScore: score,
+    signalCheckTotal: null,
+    modelWeight: 1,
+    floorApplied: null,
+    finalScore: score,
+    steps: [{ label: 'Latent potential score', value: `${score}/100`, detail }],
+  }
+}
+
+const BUYER_CAP = 0.2
+
+/**
+ * Deterministic guards on the model's bounded answers. The model is a
+ * classifier over one episode; these rules hold regardless of its output and
+ * every change is recorded so the response explains it.
+ */
+export function guardBoundedDecision(
+  decision: V3BoundedDecision,
+  rawText: string | undefined,
+  episode: V3OpportunityEpisode | null,
+): { decision: V3BoundedDecision; adjustments: string[] } {
+  const adjustments: string[] = []
+  const next = { ...decision }
+  const text = rawText ?? ''
+
+  if (isEmploymentHiringNotPurchase(text, episode)) {
+    if (next.buyerRequestProbability > BUYER_CAP) {
+      adjustments.push(`Buyer request capped at ${BUYER_CAP.toFixed(2)} (model: ${decision.buyerRequestProbability.toFixed(2)}): employee hiring with no request to an external provider.`)
+      next.buyerRequestProbability = BUYER_CAP
+    }
+    if (next.externalNeedProbability > BUYER_CAP) {
+      adjustments.push(`External need capped at ${BUYER_CAP.toFixed(2)} (model: ${decision.externalNeedProbability.toFixed(2)}): the need is filled by hiring, not outside help.`)
+      next.externalNeedProbability = BUYER_CAP
+    }
+    if (next.relationship === 'BUYER') {
+      adjustments.push('Relationship BUYER → UNKNOWN: recruiting an employee is not buying services.')
+      next.relationship = 'UNKNOWN'
+    }
+    if (next.needOwnerType !== 'HIRING_NEED' && (next.needOwnerType === 'ORGANIZATION_NEED' || next.needOwnerType === 'UNKNOWN')) {
+      adjustments.push(`Need owner ${next.needOwnerType} → HIRING_NEED: the source describes employee recruitment.`)
+      next.needOwnerType = 'HIRING_NEED'
+    }
+  } else if (detectCommercialRequest(text).externalServiceRequest && next.needOwnerType === 'HIRING_NEED') {
+    adjustments.push('Need owner HIRING_NEED → ORGANIZATION_NEED: the source asks for an external provider, not employees.')
+    next.needOwnerType = 'ORGANIZATION_NEED'
+  }
+
+  // An explicit invitation to get in touch is a contact route; the model
+  // answering NONE/INDIRECT produced a 0/10 Access row quoting that line.
+  // Candidate apply instructions ("submit your CV") are not a contact route
+  // for a vendor, so employee-only hiring is left as the model judged it.
+  const contact = isEmploymentHiringNotPurchase(text, episode) ? null : findContactInstruction(text)
+  if (contact && (next.access === 'NONE' || next.access === 'INDIRECT')) {
+    adjustments.push(`Access ${next.access} → CONNECTION: the source invites contact ("${contact.line.slice(0, 100)}").`)
+    next.access = 'CONNECTION'
+  }
+
+  return { decision: next, adjustments }
+}
+
+function verbatimEpisodeQuotes(episode: V3OpportunityEpisode, graph: V3EvidenceGraph, rawText: string | undefined): string[] {
+  return episodeEvidenceQuotes(episode, graph, rawText).filter((q) => q.verbatim).map((q) => q.quote)
+}
+
+function episodeEvidenceQuotes(episode: V3OpportunityEpisode, graph: V3EvidenceGraph, rawText: string | undefined): V3EvidenceQuote[] {
+  const seen = new Set<string>()
+  const out: V3EvidenceQuote[] = []
+  for (const id of episode.evidenceRefs) {
+    const ev = graph.evidence.get(id)
+    const q = ev?.quote?.trim()
+    if (!ev || !q || seen.has(q.toLowerCase())) continue
+    seen.add(q.toLowerCase())
+    out.push({
+      quote: q,
+      verbatim: isVerbatimInSource(q, rawText ?? ''),
+      sourceType: ev.sourceType,
+      needOwner: ev.needOwner,
+    })
+  }
+  return out
+}
 
 function buildBoundedDecision(result: V3ProviderResult): V3BoundedDecision {
   return {

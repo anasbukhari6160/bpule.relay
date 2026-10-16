@@ -144,7 +144,9 @@ function clamp(value: unknown): number {
 }
 
 function computeConfidence(answers: V3DecisionAnswers): number {
-  const buyerConf = 1 - 2 * Math.abs(answers.buyerRequestProbability - 0.5)
-  const externalConf = 1 - 2 * Math.abs(answers.externalNeedProbability - 0.5)
+  // 1 near 0 or 1, 0 at 0.5. The old 1 - 2|p - 0.5| was inverted and
+  // reported ~0.04 for a decisive 0.98.
+  const buyerConf = 2 * Math.abs(answers.buyerRequestProbability - 0.5)
+  const externalConf = 2 * Math.abs(answers.externalNeedProbability - 0.5)
   return Math.round(((buyerConf + externalConf) / 2) * 100) / 100
 }

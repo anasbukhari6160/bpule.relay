@@ -218,6 +218,40 @@ export type V3Qualification =
   | 'SKIP'
   | 'INELIGIBLE'
 
+/** 'model' rows sum to the model subtotal; 'signals' rows are the deterministic signal check blended into the total. */
+export type V3DimensionGroup = 'model' | 'signals'
+
+export interface V3DimensionEvidence {
+  text: string
+  /** quote = verbatim source line; signal = deterministic detection; inference = no source text behind it */
+  kind: 'quote' | 'signal' | 'inference'
+}
+
+export interface V3ScoreCalculationStep {
+  label: string
+  value: string
+  detail: string
+}
+
+export interface V3ScoreCalculation {
+  modelSubtotal: number
+  statusMultiplier: number
+  relationshipMultiplier: number
+  modelScore: number
+  signalCheckTotal: number | null
+  modelWeight: number
+  floorApplied: number | null
+  finalScore: number
+  steps: V3ScoreCalculationStep[]
+}
+
+export interface V3EvidenceQuote {
+  quote: string
+  verbatim: boolean
+  sourceType: string
+  needOwner: string
+}
+
 export interface V3LeadDecisionPacket {
   /** Schema version */
   version: 'relay_decision_v3'
@@ -246,7 +280,13 @@ export interface V3LeadDecisionPacket {
   /** Cautions */
   watchOut: string[]
   /** Per-dimension scoring breakdown */
-  dimensions: Array<{ key: string; label: string; contribution: number; raw: number; weight: number; note: string }>
+  dimensions: Array<{ key: string; label: string; contribution: number; raw: number; weight: number; note: string; group?: V3DimensionGroup; evidence?: V3DimensionEvidence[] }>
+  /** How the dimension contributions became the final score (PRO-006). */
+  scoreCalculation?: V3ScoreCalculation | null
+  /** Deterministic guards applied to the model's bounded answers, with the reason. */
+  decisionAdjustments?: string[]
+  /** Evidence behind the selected episode, marked verbatim when it appears in the source. */
+  evidenceQuotes?: V3EvidenceQuote[]
   /** Evidence used */
   evidenceRefs: string[]
   /** Semantic proof strength 0-1 */

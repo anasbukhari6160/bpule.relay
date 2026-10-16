@@ -16,6 +16,7 @@ import { classifyLeadFact } from '@/lib/relay/profile-intelligence'
 import { buildConnectionNoteStrategy } from '@/lib/prospect/strategy'
 import { validateAndRepair, normalizeGreeting, CONNECTION_NOTE_MAX_CHARS } from '@/lib/prospect/connection-note'
 import { evaluateProspectQualification } from '@/lib/prospect/qualification-gate'
+import { normalizeProspectPaste } from '@/lib/prospect/paste-normalize'
 import { classifyRoleFromTitle } from '@/lib/leads/targeting-pure'
 import { isLinkedInChromeText } from '@/lib/intelligence-v2/role-signals'
 import type { ExtractedLead, Profile, MatchedProof } from '@/lib/domain/types'
@@ -142,7 +143,9 @@ export async function POST(request: Request) {
     })
   }
 
-  const rawText = body.rawText?.trim()
+  // LinkedIn button/link labels are not prospect evidence; strip them once
+  // here so extraction, eligibility, caching and reuse all see the same text.
+  const rawText = typeof body.rawText === 'string' ? normalizeProspectPaste(body.rawText) : ''
   const generateNote = body.generateNote === true
   if (!rawText) {
     return new Response(JSON.stringify({ error: 'Paste some profile text first.' }), {
@@ -198,13 +201,7 @@ export async function POST(request: Request) {
 
   return sseStream(async (emit) => {
     if (precheck.inputHardFail) {
-      const isIrrelevant = precheck.inputClassification.classification === 'IRRELEVANT'
-      emit({
-        type: 'status',
-        message: isIrrelevant
-          ? 'Couldn\'t identify a prospect — this looks like a login/product page rather than a person, company, job, or business opportunity.'
-          : 'Not enough context for a reliable qualification score.',
-      })
+      emit({ type: 'status', message: describeUnscorableInput(precheck).status })
       emitInsufficientDone(emit, minimumExtracted, precheck)
       return
     }
@@ -465,6 +462,7 @@ export async function POST(request: Request) {
           watchOut: rewordWatchOutForNoOutreach(canonical.scoreBreakdown.watchOut),
           dimensions: normalizeScoreDimensions(canonical.scoreBreakdown.dimensions),
           missingInfo: canonical.scoreBreakdown.missingInfo,
+          ...scoreTrace(canonical),
         },
         remoteEligibility: canonical.remoteEligibility,
         evidenceLedger: canonical.evidenceLedger,
@@ -951,6 +949,7 @@ export async function POST(request: Request) {
         watchOut: canonical.scoreBreakdown.watchOut,
         dimensions: normalizeScoreDimensions(canonical.scoreBreakdown.dimensions),
         missingInfo: canonical.scoreBreakdown.missingInfo,
+        ...scoreTrace(canonical),
       },
       remoteEligibility: canonical.remoteEligibility,
       evidenceLedger: canonical.evidenceLedger,
@@ -1001,12 +1000,63 @@ export async function POST(request: Request) {
   })
 }
 
+/** The score calculation trace and decision guards, when the canonical result carries them. */
+function scoreTrace(canonical: CanonicalProspectIntelligence): { calculation: unknown; decisionAdjustments: string[] } {
+  const breakdown = canonical.scoreBreakdown as unknown as { calculation?: unknown; decisionAdjustments?: unknown }
+  return {
+    calculation: breakdown.calculation ?? null,
+    decisionAdjustments: Array.isArray(breakdown.decisionAdjustments) ? breakdown.decisionAdjustments.map(String) : [],
+  }
+}
+
+/**
+ * Copy for input that cannot be scored. Only the login/product-UI case
+ * mentions login UI; everything else names what is actually missing.
+ */
+function describeUnscorableInput(qualification: ReturnType<typeof evaluateProspectQualification>): {
+  inputStatus: 'not_prospect' | 'insufficient'
+  headline: string
+  status: string
+  noMessageReason: string
+  nextAction: string
+} {
+  const classification = qualification.inputClassification
+  const isIrrelevant = classification.classification === 'IRRELEVANT'
+  const looksLikeUi = isIrrelevant && classification.reasons.some((r) => /login|authentication|ui\/navigation/i.test(r))
+  if (looksLikeUi) {
+    return {
+      inputStatus: 'not_prospect',
+      headline: 'Not a prospect',
+      status: 'Couldn\'t identify a prospect — this looks like a login or product page, not a person, company, job, or opportunity.',
+      noMessageReason: 'The paste is a login or product screen, not information about a person or company.',
+      nextAction: 'Paste a LinkedIn profile, company page, job post, or conversation.',
+    }
+  }
+  if (isIrrelevant) {
+    return {
+      inputStatus: 'not_prospect',
+      headline: 'Not a prospect',
+      status: 'Couldn\'t identify a prospect — no person, employer, or commercial opportunity in the paste.',
+      noMessageReason: 'No identifiable person, employer, or commercial opportunity in the pasted text.',
+      nextAction: 'Add identifying and opportunity details to continue.',
+    }
+  }
+  return {
+    inputStatus: 'insufficient',
+    headline: 'Insufficient profile information',
+    status: 'Not enough context for a reliable qualification score.',
+    noMessageReason: 'Not enough verified information about the person, employer, or opportunity.',
+    nextAction: 'Add identifying and opportunity details to continue.',
+  }
+}
+
 function emitInsufficientDone(
   emit: (event: object) => void,
   extracted: ExtractedLead,
   qualification: ReturnType<typeof evaluateProspectQualification>,
 ): void {
-  const isIrrelevant = qualification.inputClassification.classification === 'IRRELEVANT'
+  const copy = describeUnscorableInput(qualification)
+  const isNotProspect = copy.inputStatus === 'not_prospect'
   emit({
     type: 'done',
     extracted,
@@ -1016,23 +1066,21 @@ function emitInsufficientDone(
       fit: 'LOW',
       intent: 'UNKNOWN',
       confidence: 'LOW',
-      why: isIrrelevant
-        ? 'This is not a prospect. No message.'
-        : 'Not enough evidence to decide.',
-      act: isIrrelevant ? 'SKIP' : 'RESEARCH_MORE',
+      why: isNotProspect ? 'This is not a prospect. No message.' : 'Not enough evidence to decide.',
+      act: isNotProspect ? 'SKIP' : 'RESEARCH_MORE',
       reason: 'NO_CREDIBLE_REASON',
-      nextAction: isIrrelevant ? 'Skip — paste a real profile' : 'Add more context',
+      nextAction: copy.nextAction,
       messageRecommended: false,
-      noMessageReason: isIrrelevant
-        ? 'Login or product UI is not a reason to contact anyone.'
-        : 'Insufficient evidence.',
+      noMessageReason: copy.noMessageReason,
       messageJob: null,
     },
-    score: isIrrelevant ? 'N/A' : null,
-    scoreNA: isIrrelevant,
-    scoreReason: isIrrelevant
-      ? 'Couldn\'t identify a prospect. This looks like a login/product page rather than a person, company, job, or business opportunity. Paste a LinkedIn profile, company page, job post, conversation, or other prospect information.'
-      : null,
+    // No valid prospect means no score — never a numeric 0 that reads as
+    // "a prospect that scored zero".
+    score: null,
+    scoreNA: true,
+    inputStatus: copy.inputStatus,
+    inputHeadline: copy.headline,
+    scoreReason: copy.noMessageReason,
     remoteEligibility: null,
     evidenceLedger: [],
     sources: null,

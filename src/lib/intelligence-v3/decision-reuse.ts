@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto'
 import { V3_CONFIG_VERSION } from './config'
 import { INTELLIGENCE_PIPELINE_VERSION, normalizeForHash } from '../intelligence-v2/input-hash'
 
-export const V3_DECISION_PROMPT_VERSION = 'v3_decision_prompt_v1'
+export const V3_DECISION_PROMPT_VERSION = 'v3_decision_prompt_v2'
 
 export interface V3ReuseKeyParams {
   rawText: string

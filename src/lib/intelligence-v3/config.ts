@@ -8,7 +8,7 @@
 import type { V3ScoringWeights } from './types'
 
 
-export const V3_CONFIG_VERSION = 'relay_decision_v3.0.0'
+export const V3_CONFIG_VERSION = 'relay_decision_v3.1.0'
 
 
 export const V3_SCORING_WEIGHTS: V3ScoringWeights = {

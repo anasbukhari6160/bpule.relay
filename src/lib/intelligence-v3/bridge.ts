@@ -3,16 +3,18 @@ import { produceCanonicalIntelligence } from '@/lib/intelligence-v2/orchestrator
 import { runV3Decision, type V2BridgeInput } from '@/lib/intelligence-v3/orchestrator'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
-import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
+import { V3_CANONICAL, V3_CONFIG_VERSION } from '@/lib/intelligence-v3/config'
 import { initializeV3 } from '@/lib/intelligence-v3/index'
 import { extractEventsFromSource } from './event-extractor'
 import { buildV3ReuseKey, buildV3ReuseCacheKey } from './decision-reuse'
 import { cleanCompanyName } from '@/lib/leads/normalize'
 import { separateRoleFromEmployer } from '@/lib/intelligence-v2/extraction-pipeline'
 import { deriveCommercialReading } from '@/lib/intelligence-v2/commercial-reading'
+import { isLinkedInChromeLine, nameFromViewProfileLabel } from '@/lib/prospect/paste-normalize'
+import { stripEmployerFromTitle } from '@/lib/leads/role-line'
 
 
-function buildV3BridgeInput(
+export function buildV3BridgeInput(
   canonical: CanonicalProspectIntelligence,
   rawText: string,
   extractedEvents: Awaited<ReturnType<typeof extractEventsFromSource>>,
@@ -85,6 +87,7 @@ function buildV3BridgeInput(
       eventType: e.eventType,
       description: e.evidenceQuote,
       explicitRequest: e.explicitness === 'EXPLICIT',
+      needOwner: e.needOwner,
       requestedCapabilities: e.requestedCapabilities,
       requestedAssets: e.requestedAssets,
       applicationChannels: e.applicationChannels,
@@ -121,12 +124,30 @@ function v3PacketToCanonical(
     label: packet.label,
     reasons: packet.reasons,
     watchOut: packet.watchOut,
+    calculation: packet.scoreCalculation ?? null,
+    decisionAdjustments: packet.decisionAdjustments ?? [],
   }
+
+  // The selected episode's verbatim evidence is the evidence ledger; an
+  // empty ledger left every score row without a citable source.
+  const evidenceLedger: CanonicalProspectIntelligence['evidenceLedger'] = (packet.evidenceQuotes ?? [])
+    .filter((q) => q.verbatim)
+    .map((q) => ({
+      signal: q.quote,
+      source: 'pasted_text' as const,
+      evidenceType: 'FACT' as const,
+      ownership: q.needOwner === 'HIRING_NEED' ? 'HIRING_INTENT' as const : 'BUYER_INTENT' as const,
+      confidence: 'HIGH' as const,
+      safeForOutreach: true,
+      verbatimQuote: q.quote,
+    }))
 
   return {
     ...v2Canonical,
+    confidence: Math.round((packet.confidence ?? 0) * 100),
+    evidenceLedger: evidenceLedger.length > 0 ? evidenceLedger : v2Canonical.evidenceLedger,
     intelligenceRunId: packet.decisionRunId,
-    intelligenceVersion: 'relay_decision_v3.0.0',
+    intelligenceVersion: V3_CONFIG_VERSION,
     computedAt: new Date().toISOString(),
     canonicalScore: packet.score,
     scoreVersion: packet.scoreVersion,
@@ -332,27 +353,90 @@ function looksLikeRole(text: string): boolean {
  * so we only need basic normalization (not full AI extraction).
  * Saves 2-3 AI calls per extraction.
  */
-function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence {
-  const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean)
-  const sectionHeaders = /^(about|activity|experience|posts?|comments?|education|skills|highlights|contact\s*info|show\s*all)$/i
-  const identityLines = lines.slice(0, lines.findIndex((l) => sectionHeaders.test(l)))
+const SECTION_HEADER = /^(about|activity|experience|posts?|comments?|education|skills|highlights|contact\s*info|show\s*all|linkedin\s+post:?|post:?)$/i
+const ROLE_WORDS = /\b(founder|ceo|cto|cfo|chief|officer|vp|head|director|manager|lead|engineer|developer|architect|recruiter|rekruter(?:ka)?|headhunter|sourcer|consultant|president|owner|partner)\b/i
+const LABELED_FIELD = /^(name|company|organization|employer|role|title|position|location|headline)\s*:\s*(.*)$/i
 
-  // Name is the first line
-  const name = identityLines[0]?.split(/\s+·\s+/)[0]?.split(/\s+at\s+/)[0]?.trim() || null
+function labeledField(lines: string[], ...labels: string[]): string | null {
+  for (const line of lines) {
+    const m = line.match(LABELED_FIELD)
+    if (m && labels.includes(m[1].toLowerCase()) && m[2].trim()) return m[2].trim()
+  }
+  return null
+}
 
-  // Title: find the line with role keywords (founder, engineer, etc.)
-  const titleLine = identityLines.find((line) =>
-    /\b(founder|ceo|cto|cfo|chief|officer|vp|head|director|manager|lead|engineer|developer|architect|recruiter|rekruter(?:ka)?|headhunter|sourcer|consultant|president|owner|partner)\b/i.test(line),
+/** A line that reads as a person's name: 2-4 capitalized words, no role words or punctuation. */
+function looksLikePersonName(line: string): boolean {
+  const t = line.trim()
+  if (!/^[\p{L}][\p{L} .'’-]{2,60}$/u.test(t)) return false
+  if (ROLE_WORDS.test(t) || isLinkedInChromeLine(t)) return false
+  const words = t.split(/\s+/)
+  if (words.length < 2 || words.length > 4) return false
+  return words.every((w) => /^[\p{Lu}]/u.test(w) || /^(de|da|van|von|bin|al|del|la|le)$/i.test(w))
+}
+
+/**
+ * Identity lines are the short header lines before the content starts —
+ * a section header, a labeled post, or the first full sentence. Without a
+ * section header the old slice(0, -1) treated the whole post as header.
+ */
+export function splitIdentityAndBody(lines: string[]): { identity: string[]; body: string[] } {
+  let end = lines.findIndex((l, i) =>
+    SECTION_HEADER.test(l)
+    || (i > 0 && !LABELED_FIELD.test(l) && (l.length > 90 || /[.!?]["”']?$/.test(l) && l.split(/\s+/).length > 6)),
   )
+  if (end === -1) end = Math.min(lines.length, 4)
+  const identity = lines.slice(0, end)
+  const body = lines.slice(end).filter((l) => !SECTION_HEADER.test(l) && !LABELED_FIELD.test(l) && !isLinkedInChromeLine(l))
+  return { identity, body }
+}
+
+function pickPersonName(identityLines: string[], allLines: string[]): string | null {
+  const labeled = labeledField(allLines, 'name')
+  if (labeled) return labeled
+  for (const line of identityLines) {
+    const fromLabel = nameFromViewProfileLabel(line)
+    if (fromLabel && looksLikePersonName(fromLabel)) return fromLabel
+  }
+  const named = identityLines.find(looksLikePersonName)
+  if (named) return named
+  const first = identityLines.find((l) => !isLinkedInChromeLine(l))
+  const candidate = first?.split(/\s+·\s+/)[0]?.split(/\s+at\s+/)[0]?.trim() ?? ''
+  return candidate && !ROLE_WORDS.test(candidate) && candidate.split(/\s+/).length <= 5 ? candidate : null
+}
+
+export function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence {
+  const lines = rawText.split('\n').map((l) => l.trim()).filter((l) => l && !isLinkedInChromeLine(l))
+  const { identity: identityLines, body: bodyLines } = splitIdentityAndBody(lines)
+
+  const name = pickPersonName(identityLines, lines)
+
+  // Title: a labeled role, else the identity line with role keywords.
+  const titleLine = labeledField(lines, 'role', 'title', 'position', 'headline')
+    ?? identityLines.find((line) => ROLE_WORDS.test(line))
   const title = titleLine
     ? titleLine.split(/\s*\|\s*/)[0].replace(/·/g, '').trim().slice(0, 120) || null
     : null
 
   // Company: multi-strategy extraction, then reject a role line saved as the employer.
-  const extractedCompany = extractCompanyFromProfile(rawText, lines, title, identityLines)
+  const extractedCompany = labeledField(lines, 'company', 'organization', 'employer')
+    ?? extractCompanyFromProfile(rawText, lines, title, identityLines)
   const identity = separateRoleFromEmployer(rawText, title, extractedCompany)
   const companyName = identity.company
-  const resolvedTitle = identity.title ?? title
+  const resolvedTitle = stripEmployerFromTitle(identity.title ?? title, companyName)
+
+  // The opportunity text is the body, not the first 200 characters of the
+  // paste — budget and timing usually sit at the end of a brief.
+  const opportunityText = bodyLines.join(' ').replace(/\s+/g, ' ').trim().slice(0, 1200) || null
+  const completenessChecks: Array<[string, boolean]> = [
+    ['name', Boolean(name)],
+    ['title', Boolean(resolvedTitle)],
+    ['company', Boolean(companyName)],
+    ['opportunity_text', Boolean(opportunityText && opportunityText.length >= 40)],
+  ]
+  const presentFields = completenessChecks.filter(([, ok]) => ok).map(([f]) => f)
+  const missingFields = completenessChecks.filter(([, ok]) => !ok).map(([f]) => f)
+  const completenessScore = Math.round((presentFields.length / completenessChecks.length) * 100)
 
   return {
     version: 'relay_qualification_v2',
@@ -369,7 +453,7 @@ function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence
     intelligence: {
       person: { fullName: name || null, firstName: name?.split(' ')[0] || null, title: resolvedTitle, seniority: null, location: null, linkedinUrl: null, otherUrls: [] },
       company: { name: companyName, domain: null, linkedinUrl: null, industry: null, size: null, sizeEvidence: null, product: null, stage: null, stageEvidence: null },
-      opportunity: { signals: [], primarySignal: null, description: rawText.slice(0, 200), urgency: 'unknown' },
+      opportunity: { signals: [], primarySignal: null, description: opportunityText, urgency: 'unknown' },
       job: { title: null, employmentType: 'unknown', workplaceType: 'UNKNOWN', allowedGeography: null, timezone: null, compensation: null, skills: [], seniority: 'unknown', source: null, postedDate: null },
       content: { recentPosts: [], topics: [], explicitProblems: [], initiatives: [], launches: [], technicalSignals: [], hiringSignals: [] },
       probableNeed: null,
@@ -387,7 +471,7 @@ function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence
     rawSource: { rawInput: rawText, sourceType: 'mixed' as const, sourceUrl: null, profileUrl: null, companyUrl: null, jobUrl: null, postUrls: [], rawPosts: [], rawJobDescription: null, rawProfileText: rawText.slice(0, 500), rawCompanyText: null, capturedAt: new Date().toISOString() },
     evidenceLedger: [],
     remoteEligibility: { workplaceType: 'REMOTE', remoteScope: 'UNKNOWN', eligibility: 'ELIGIBLE', reason: 'No restrictions stated', evidence: [] },
-    extractionCompleteness: { score: 0, presentFields: [], missingFields: [], weakFields: [], repairAttempted: false, repairImproved: false, sourceUrlsFound: [], urlsPreserved: [] },
+    extractionCompleteness: { score: completenessScore, presentFields, missingFields, weakFields: [], repairAttempted: false, repairImproved: false, sourceUrlsFound: [], urlsPreserved: [] },
     rescoreEvents: [],
     recommendedIdentityId: null,
     recommendedProofIds: [],

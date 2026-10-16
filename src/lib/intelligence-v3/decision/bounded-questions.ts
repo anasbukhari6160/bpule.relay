@@ -140,10 +140,13 @@ You only see ONE episode at a time.
 Your output is typed classification only. No explanations. No business impact analysis.
 
 RELATIONSHIP CLASSIFICATION (choose exactly one):
-- BUYER: The organization/person is looking to buy/acquire software development services.
-  Signals: "hiring a developer", "looking for a team", "need help building", "send resume/portfolio",
-  explicit apply instructions, requests for outside help, vendor evaluation, outsourcing needs.
-  Note: A service provider CAN also be a buyer if they're hiring for their own company or outsourcing overflow.
+- BUYER: The organization/person is looking to buy software development services from an EXTERNAL provider.
+  Signals: "looking for an agency/vendor/development partner", "outsourced team", "hire a contractor/freelancer",
+  "need help building", requests for proposals/quotes/portfolios from providers, vendor evaluation, outsourcing needs.
+  Note: A service provider CAN also be a buyer if they're outsourcing overflow to another provider.
+  NOT a buyer: recruiting EMPLOYEES. "We are hiring a full-time developer", "join our internal team",
+  "submit your CV/resume", "interested candidates" describe employment (needOwner=HIRING_NEED). For employee
+  hiring with no request to an external provider, buyerRequestProbability must be <= 0.2 and externalNeedProbability <= 0.2.
 
 - SERVICE_PROVIDER: The person/company SELLS software development services to clients.
   Signals: "we provide development services", "we help companies build", "our agency/firm",
@@ -173,12 +176,13 @@ KEY RULES:
 1. Score the EPISODE, not the person's identity
 2. A SERVICE_PROVIDER relationship does NOT disqualify an explicit BUYER_REQUEST episode
 3. An agency can hire another agency. A founder can sell services AND hire developers.
-4. Explicit apply instructions (email, DM, link) increase buyer_request_probability significantly
+4. Explicit instructions for PROVIDERS to respond (agencies send a proposal, contractors DM) increase buyer_request_probability significantly; apply instructions for job CANDIDATES do not
 5. Timing is separate from intent — high intent + stale timing = aging opportunity, not "no opportunity"
 6. Organization scoping: only evaluate the episode for the specified organization
 7. If evidence is weak, probabilities should be low
 8. Relationship classification describes the PRIMARY role in THIS episode, not the person globally
-9. When in doubt between BUYER and SERVICE_PROVIDER, look for EXPLICIT apply instructions or direct asks for help — those make it BUYER`
+9. When in doubt between BUYER and SERVICE_PROVIDER, look for EXPLICIT asks for outside help — those make it BUYER
+10. "Not full-time employees" / "outsourced team" / "agency" language means an external-service request (ORGANIZATION_NEED), not HIRING_NEED, even if the word "hire" appears`
 
 
 export function buildDecisionUserPrompt(ctx: V3DecisionContext): string {

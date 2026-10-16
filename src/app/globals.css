@@ -52,6 +52,12 @@
   --color-warning: var(--status-warning);
   --color-danger: var(--status-danger);
   --color-info: var(--status-info);
+  /* Components use bg-status-success / text-status-warning etc.; without
+     these tokens those classes generated nothing (e.g. empty score bars). */
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-danger: var(--status-danger);
+  --color-status-info: var(--status-info);
 
   --color-surface: var(--bone);
   --color-surface-raised: var(--bone-raised);
@@ -3412,5 +3418,14 @@
   .lg3-movecard--executing { animation: none !important; }
 }
 
-
-
+/* Third-party Feedback widget (widget.js, .gv-button): on small screens it
+   sat on top of the fixed bottom navigation. Lift it above the nav and the
+   safe area, and make it compact. */
+@media (max-width: 1023.98px) {
+  .gv-button {
+    bottom: calc(4.25rem + env(safe-area-inset-bottom)) !important;
+    right: 12px !important;
+    padding: 7px 12px !important;
+    font-size: 12px !important;
+  }
+}

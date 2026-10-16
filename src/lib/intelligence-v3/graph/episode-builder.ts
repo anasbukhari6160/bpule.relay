@@ -53,7 +53,10 @@ export function buildEpisodes(
     }
   }
 
-  const evidenceOnlyEpisodes = buildEpisodesFromEvidenceOnly(graph, refDate, minEvidence)
+  // Evidence an event episode already absorbed is part of that opportunity;
+  // re-grouping it produced a duplicate synthetic episode for the same need.
+  const absorbed = new Set(episodes.flatMap((e) => e.evidenceRefs))
+  const evidenceOnlyEpisodes = buildEpisodesFromEvidenceOnly(graph, refDate, minEvidence, absorbed)
   episodes.push(...evidenceOnlyEpisodes)
 
   // Sort: most recent first
@@ -142,12 +145,13 @@ function buildEpisodesFromEvidenceOnly(
   graph: V3EvidenceGraph,
   refDate: Date,
   minEvidence: number,
+  absorbed: ReadonlySet<string> = new Set(),
 ): V3OpportunityEpisode[] {
   const episodes: V3OpportunityEpisode[] = []
   const processedEvidence = new Set<string>()
 
   const allEvidence = Array.from(graph.evidence.values()).filter(
-    (e: V3Evidence) => !e.eventId && (e.polarity === 'ACTIVE' || e.polarity === 'FUTURE')
+    (e: V3Evidence) => !e.eventId && !absorbed.has(e.id) && (e.polarity === 'ACTIVE' || e.polarity === 'FUTURE')
   )
 
   const orgGroups = new Map<string, V3Evidence[]>()
@@ -269,7 +273,7 @@ function groupEventsByTimeProximity(
 }
 
 
-function eventNeedOwner(eventType: V3Event['eventType']): V3NeedOwner {
+export function eventNeedOwner(eventType: V3Event['eventType']): V3NeedOwner {
   switch (eventType) {
     case 'HIRING':
       return 'HIRING_NEED'

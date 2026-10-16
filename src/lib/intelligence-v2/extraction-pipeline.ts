@@ -1272,7 +1272,15 @@ function extractLocation(lines: string[], rawText: string): string | null {
   return bare ?? null
 }
 
-const EMPLOYER_AT = /\s+(?:at|@)\s+([A-Z0-9][\p{L}\p{N}.&'’-]{1,60}?)(?:\s*[|·—]|$)/iu
+// Multi-word employers ("at Northstar Technologies") must match whole, or the
+// role line keeps its "at Employer" suffix and the company shows twice.
+// Each word is capitalized (or a camel-cased brand like "bPulse"); small
+// connector words are allowed between them.
+const EMPLOYER_WORD = String.raw`(?:[\p{Lu}0-9&][\p{L}\p{N}.&'’-]*|\p{Ll}+\p{Lu}[\p{L}\p{N}.&'’-]*)`
+const EMPLOYER_AT = new RegExp(
+  String.raw`\s+(?:[Aa][Tt]|@)\s+(${EMPLOYER_WORD}(?:\s+(?:${EMPLOYER_WORD}|of|and|the|for|de))*)\s*(?:[|·—,]|$)`,
+  'u',
+)
 const HEADER_LOCATION = /^[\p{L}][\p{L} .'-]+,\s*[\p{L}]/u
 const CONNECTION_DEGREE = /^[·•]?\s*\d+(st|nd|rd|th)\b/i
 const EMPLOYMENT_LINE = /^(.{2,80}?)\s*[·|]\s*(?:Full-time|Part-time|Contract|Freelance|Self-employed)\b/i

@@ -18,6 +18,8 @@ import { deriveNextLeadAction } from '@/lib/relay/lead-state-machine'
 import type { Message } from '@/lib/domain/types'
 import { displayScoreFromCanonical, normalizeScoreDimensions, scoreExplanation } from '@/lib/scoring/display-score'
 import { calendarDaysBetween, followupDueInDays } from '@/lib/leads/followup'
+import { formatRoleLine, stripEmployerFromTitle } from '@/lib/leads/role-line'
+import { ScoreBreakdown } from '@/components/score-breakdown'
 
 type Mode = 'connection' | 'dm' | 'reply' | 'followup' | null
 
@@ -197,8 +199,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               <div className="min-w-0">
                 <h1 className="text-[18px] font-medium text-ink truncate">{lead.contactName ?? 'Unnamed prospect'}</h1>
                 <p className="text-[13px] text-graphite truncate flex items-center gap-1">
-                  <Building2 className="size-3 shrink-0" /><span className="truncate">{lead.company?.trim() && lead.company !== 'Unknown company' ? lead.company : 'Unknown'}</span>
-                  <span className="ml-1 text-stone truncate">· {lead.contactTitle?.trim() || 'Unknown'}</span>
+                  <Building2 className="size-3 shrink-0" /><span className="truncate">{formatRoleLine(lead.contactTitle, lead.company)}</span>
                 </p>
               </div>
             </div>
@@ -272,8 +273,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           </summary>
           <div className="space-y-3 border-t border-line/40 p-5">
             <div>
-              <p className="text-[12px] font-medium text-ink">Why this score?</p>
-              <p className="mt-1 text-[12px] text-graphite">
+              <p className="text-[12px] text-graphite">
                 {scoreExplanation({
                   displayScore,
                   canonicalScore: lead.canonicalScore ?? null,
@@ -295,29 +295,13 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                 </ul>
               )}
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-            {dimensions.map((dim, i) => {
-              const pct = dim.max && dim.points != null ? Math.min(100, Math.round((dim.points / dim.max) * 100)) : 0
-              return (
-                <div key={`${dim.label}-${i}`} className="rounded-lg border border-line/50 bg-bone p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[12px] font-medium text-ink">{dim.label}</span>
-                    <span className="text-[11px] font-mono text-stone">
-                      {dim.unavailable || dim.points == null || dim.max == null ? 'Unavailable' : `${dim.points.toFixed(1)} / ${dim.max.toFixed(0)}`}
-                    </span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-line/40 overflow-hidden">
-                    <div className={cn('h-full rounded-full', pct >= 70 ? 'bg-status-success' : pct >= 40 ? 'bg-orange' : 'bg-status-warning')} style={{ width: `${pct}%` }} />
-                  </div>
-                  <p className="mt-1 text-[10px] text-stone">
-                    {dim.note || 'No interpretation for this row.'}
-                    {dim.inTotal ? '' : ' Context only. Not added on top of the total.'}
-                  </p>
-                  <p className="text-[10px] text-stone">Evidence: No source quote for this row.</p>
-                </div>
-              )
-            })}
-            </div>
+            <ScoreBreakdown
+              dimensions={rawDimensions}
+              calculation={scoreBreakdown?.calculation}
+              decisionAdjustments={Array.isArray(scoreBreakdown?.decisionAdjustments) ? scoreBreakdown.decisionAdjustments.map(String) : []}
+              canonicalScore={lead.canonicalScore ?? null}
+              layout="grid"
+            />
           </div>
         </details>
       )}
@@ -472,7 +456,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
       </details>
 
       {/* Context */}
-      {(lead.company || lead.contactTitle || lead.signalEvidence || (lead.tags?.length ?? 0) > 0) && (
+      {(lead.company || lead.contactTitle || lead.signalEvidence || lead.rawInput || (lead.tags?.length ?? 0) > 0) && (
         <details className="group rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">
           <summary className="px-5 py-3 cursor-pointer flex items-center gap-2 select-none hover:bg-bone-raised/40 transition-colors">
             <Sparkles className="size-4 text-cobalt" />
@@ -487,13 +471,22 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
             </div>
             <div className="rounded-lg border border-line/50 bg-bone p-3">
               <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Title</p>
-              <p className="text-[13px] text-ink">{lead.contactTitle?.trim() || 'Unknown'}</p>
+              <p className="text-[13px] text-ink">{stripEmployerFromTitle(lead.contactTitle, lead.company) || 'Unknown'}</p>
             </div>
             {lead.signalEvidence && (
               <div className="rounded-lg border border-line/50 bg-bone p-3 sm:col-span-2">
                 <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Signal evidence</p>
-                <p className="text-[12px] text-ink">{lead.signalEvidence}</p>
+                <p className="text-[12px] text-ink whitespace-pre-wrap">{lead.signalEvidence}</p>
               </div>
+            )}
+            {lead.rawInput?.trim() && (
+              <details className="group/raw rounded-lg border border-line/50 bg-bone p-3 sm:col-span-2">
+                <summary className="cursor-pointer select-none text-[11px] font-medium text-cobalt hover:underline">
+                  View original pasted evidence
+                </summary>
+                <p className="mt-1 text-[10px] text-stone">Exactly what was pasted when this lead was analyzed.</p>
+                <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-bone-raised/60 p-2 font-mono text-[11px] text-ink">{lead.rawInput}</pre>
+              </details>
             )}
             {(lead.tags?.length ?? 0) > 0 && (
               <div className="rounded-lg border border-line/50 bg-bone p-3 sm:col-span-2">

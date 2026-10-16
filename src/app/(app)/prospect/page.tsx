@@ -28,7 +28,9 @@ import type { ExtractedLead, Profile, MatchedProof } from '@/lib/domain/types'
 import type { ProspectQualificationAssessment } from '@/lib/prospect/qualification-gate'
 import { describeVerdictForDisplay, type RevenueLoopSnapshot } from '@/lib/relay/revenue-strategy'
 import { duplicateNotice } from '@/lib/ui/api-error-toast'
-import { normalizeScoreDimensions, scoreExplanation } from '@/lib/scoring/display-score'
+import { scoreExplanation } from '@/lib/scoring/display-score'
+import { ScoreBreakdown } from '@/components/score-breakdown'
+import { formatRoleLine } from '@/lib/leads/role-line'
 import { notifyError } from '@/lib/ui/notify'
 import { trackEvent } from '@/lib/analytics/tracker'
 
@@ -48,7 +50,12 @@ type AnalyzeEvent =
         watchOut: string[]
         dimensions: Array<{ label: string; points: number; max: number; note: string }>
         missingInfo: string[]
+        calculation?: unknown
+        decisionAdjustments?: string[]
       } | null
+      inputStatus?: 'not_prospect' | 'insufficient'
+      inputHeadline?: string
+      extractionCompleteness?: { score?: number; missingFields?: string[] } | null
       canonical: unknown
       bestSender: Profile | null
       bestSenderProof: MatchedProof[]
@@ -76,7 +83,13 @@ interface AnalysisState {
     watchOut: string[]
     dimensions: Array<{ label: string; points: number; max: number; note: string }>
     missingInfo: string[]
+    calculation?: unknown
+    decisionAdjustments?: string[]
   } | null
+  /** Set when the paste could not be scored at all (no valid prospect). */
+  inputStatus: 'not_prospect' | 'insufficient' | null
+  inputHeadline: string | null
+  extractionCompleteness: { score?: number; missingFields?: string[] } | null
   canonical: { extractionCompleteness?: { score?: number } } | null
   bestSender: Profile | null
   bestSenderProof: MatchedProof[]
@@ -143,6 +156,9 @@ export default function ProspectCheckPage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Field-level problem with the paste itself — shown once, next to the
+  // textarea, never as a "Something failed" banner or a toast.
+  const [validationError, setValidationError] = useState<string | null>(null)
   const [result, setResult] = useState<AnalysisState | null>(null)
   const [copied, setCopied] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -197,11 +213,11 @@ export default function ProspectCheckPage() {
   async function analyze(mode: 'analyze' | 'try-another-angle' | 'generate' = 'analyze', profileIdOverride?: string) {
     const guard = pasteGuard(rawInput)
     if (guard) {
-      setError(guard)
-      notifyError(guard, 'Check the paste')
+      setValidationError(guard)
       rawRef.current?.focus()
       return
     }
+    setValidationError(null)
 
     // "Try Another Angle" must never re-derive canonical evidence/score/
     // qualification/action — only a new message angle. Capture the
@@ -264,6 +280,9 @@ export default function ProspectCheckPage() {
                 demoMode: event.demoMode,
                 qualification: event.qualification,
                 revenue: event.revenue ?? null,
+                inputStatus: event.inputStatus ?? null,
+                inputHeadline: event.inputHeadline ?? null,
+                extractionCompleteness: event.extractionCompleteness ?? null,
               })
               if (event.bestSender) {
                 setSelectedProfileId(event.bestSender.id)
@@ -467,7 +486,12 @@ export default function ProspectCheckPage() {
         <Textarea
           ref={rawRef}
           value={rawInput}
-          onChange={(e) => setRawInput(e.target.value)}
+          aria-invalid={validationError ? true : undefined}
+          aria-describedby={validationError ? 'prospect-paste-error' : undefined}
+          onChange={(e) => {
+            setRawInput(e.target.value)
+            if (validationError) setValidationError(null)
+          }}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
               e.preventDefault()
@@ -476,10 +500,21 @@ export default function ProspectCheckPage() {
           }}
           placeholder="Paste the LinkedIn profile here..."
           rows={10}
-          className="mt-3 max-h-[24rem] overflow-y-auto font-mono text-[13px]"
+          className={cn(
+            'mt-3 max-h-[24rem] overflow-y-auto font-mono text-[13px]',
+            validationError && 'border-status-danger focus-visible:ring-status-danger/30',
+          )}
         />
+        {validationError ? (
+          <p id="prospect-paste-error" role="alert" className="mt-1.5 flex items-center gap-1.5 text-[12px] text-status-danger">
+            <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+            {validationError}
+          </p>
+        ) : null}
         <div className="mt-3 flex items-center justify-between gap-3">
-          <span className="text-xs text-stone">Cmd / Ctrl + Enter</span>
+          {/* Keyboard hint is for desktop; touch layouts rely on the Analyze button. */}
+          <span className="hidden text-xs text-stone sm:inline">Cmd / Ctrl + Enter</span>
+          <span className="sm:hidden" aria-hidden="true" />
           <div className="flex items-center gap-2">
             {result && (
               <Button variant="ghost" size="sm" onClick={skip}>
@@ -514,7 +549,7 @@ export default function ProspectCheckPage() {
                     {result.extracted.name ?? 'Unnamed prospect'}
                   </h2>
                   <p className="text-[12px] text-graphite">
-                    {result.extracted.titleRaw ?? result.extracted.title ?? 'Unknown'} · {result.extracted.company?.trim() && result.extracted.company !== 'Unknown company' ? result.extracted.company : 'Unknown'}
+                    {formatRoleLine(result.extracted.title ?? result.extracted.titleRaw, result.extracted.company)}
                   </p>
                 </div>
                 {verdictDisplay?.contradicted ? (
@@ -537,13 +572,27 @@ export default function ProspectCheckPage() {
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <SignalChip label="Fit" value={result.revenue.fit} />
                   <SignalChip label="Intent" value={result.revenue.intent} />
-                  <SignalChip label="Confidence" value={result.revenue.confidence} />
+                  {/* Decision confidence: how decisive the qualification is. It is
+                      not extraction certainty — that caveat is shown below. */}
+                  <SignalChip label="Decision confidence" value={result.revenue.confidence} />
                   {/* Channel-explicit: this reflects the connection-note
                       channel specifically. Lead Detail may correctly show a
                       different policy for the DM channel on the same lead —
                       not a contradiction, a different question. */}
                   <SignalChip label="Connection" value={result.revenue.messagingPolicy?.replaceAll('_', ' ') ?? '—'} />
                 </div>
+              )}
+              {result.extractionCompleteness?.score != null && result.extractionCompleteness.score < 75 && (
+                <p className="mt-2 flex items-start gap-1.5 text-[11px] text-status-warning">
+                  <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                  <span>
+                    Extraction is {result.extractionCompleteness.score}% complete
+                    {result.extractionCompleteness.missingFields?.length
+                      ? ` — missing ${result.extractionCompleteness.missingFields.map((f) => f.replaceAll('_', ' ')).join(', ')}`
+                      : ''}
+                    . Decision confidence does not cover missing identity details.
+                  </span>
+                </p>
               )}
               <p className="mt-3 text-[12px] text-graphite">
                 {scoreExplanation({
@@ -598,72 +647,38 @@ export default function ProspectCheckPage() {
               </button>
 
               {showDetails && (
-                <div className="mt-2 space-y-2 border-t border-line pt-2">
-                  <p className="text-[11px] font-medium text-ink">Why this score?</p>
-                  {normalizeScoreDimensions(result.score.dimensions).map((dim) => {
-                    const frac = dim.max && dim.max > 0 && dim.points != null ? dim.points / dim.max : 0
-                    return (
-                      <div key={`${dim.key}-${dim.label}`} className="space-y-0.5">
-                        <div className="flex items-baseline justify-between gap-3 text-[11px]">
-                          <span className="text-ink">{dim.label}</span>
-                          <span className="font-mono text-stone">
-                            {dim.unavailable || dim.points == null || dim.max == null
-                              ? 'Unavailable'
-                              : `${dim.points.toFixed(1)}/${dim.max.toFixed(0)}`}
-                          </span>
-                        </div>
-                        <div className="h-1 overflow-hidden rounded-full bg-line/60">
-                          <div
-                            className={cn(
-                              'h-full rounded-full transition-all',
-                              frac >= 0.7 ? 'bg-status-success' : frac > 0.3 ? 'bg-orange' : 'bg-line',
-                            )}
-                            style={{ width: `${Math.max(frac * 100, frac > 0 ? 8 : 0)}%` }}
-                          />
-                        </div>
-                        <p className="text-[10px] text-stone">
-                          {dim.note || 'No interpretation for this row.'}
-                          {dim.inTotal ? '' : ' Context only. Not added on top of the total.'}
-                        </p>
-                        <p className="text-[10px] text-stone">Evidence: No source quote for this row.</p>
-                      </div>
-                    )
-                  })}
-                  {result.score.dimensions.length === 0 && (
-                    <p className="text-[11px] text-stone">Score details are unavailable for this analysis.</p>
-                  )}
+                <div className="mt-2 border-t border-line pt-3">
+                  <ScoreBreakdown
+                    dimensions={result.score.dimensions}
+                    calculation={result.score.calculation}
+                    decisionAdjustments={result.score.decisionAdjustments ?? []}
+                    canonicalScore={result.score.total}
+                  />
                 </div>
               )}
             </div>
           ) : (
             <div className="border-l-2 border-status-warning/40 pl-4">
-              <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-status-warning">Not enough information</p>
-              <p className="mt-1 text-[14px] font-medium text-ink">Relay could not verify enough evidence to score this prospect.</p>
-              <p className="mt-1 text-[12px] text-graphite">Add richer person, company, and opportunity context, then analyze again.</p>
-              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-graphite">
-                <span>Input: {result.qualification.inputQuality}/100</span>
-                <span>·</span>
-                <span>Extractability: {result.qualification.extractability}/100</span>
-                <span>·</span>
-                <span>Evidence: {result.qualification.evidenceCoverage}/100</span>
-              </div>
-              {((Array.isArray(result.qualification.reasons) && result.qualification.reasons.length > 0) || (Array.isArray(result.qualification.missingCritical) && result.qualification.missingCritical.length > 0)) && (
-                <ul className="mt-2 space-y-0.5">
-                  {Array.isArray(result.qualification.reasons) && result.qualification.reasons.slice(0, 3).map((w, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[12px] text-graphite">
-                      <AlertTriangle className="mt-0.5 size-3 shrink-0 text-status-warning" aria-hidden="true" />
-                      {w}
-                    </li>
-                  ))}
-                </ul>
+              <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-status-warning">
+                {result.inputHeadline ?? 'Insufficient profile information'}
+              </p>
+              <p className="mt-1 text-[14px] font-medium text-ink">
+                {result.inputStatus === 'not_prospect'
+                  ? 'This paste can’t be qualified — it doesn’t describe a prospect.'
+                  : 'Relay could not verify enough evidence to score this prospect.'}
+              </p>
+              {result.revenue?.noMessageReason && (
+                <p className="mt-1 text-[12px] text-graphite">{result.revenue.noMessageReason}</p>
               )}
-              {Array.isArray(result.qualification.suggestions) && result.qualification.suggestions.length > 0 && (
-                <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-graphite">
-                  {result.qualification.suggestions.map((suggestion) => (
-                    <li key={suggestion}>{suggestion}</li>
-                  ))}
-                </ul>
+              <p className="mt-1 text-[12px] text-graphite">Not scored — there is no valid prospect to score.</p>
+              {(result.qualification?.missingCritical.length ?? 0) > 0 && (
+                <p className="mt-2 text-[12px] text-graphite">
+                  Missing: {result.qualification.missingCritical.join(', ')}.
+                </p>
               )}
+              <p className="mt-2 text-[12px] text-ink">
+                Add identifying and opportunity details to continue: the person’s name and role, their company, and the job, project, or need you are qualifying.
+              </p>
             </div>
           )}
 
@@ -788,14 +803,19 @@ export default function ProspectCheckPage() {
           ) : (
             <div className="rounded-md border border-dashed border-line bg-bone-raised/40 p-3">
               <p className="text-[12px] text-graphite">
-                Analysis complete — qualification and signals are shown above.
-                Create a lead to start outreach from the lead detail page.
+                {canSaveLead
+                  ? 'Analysis complete — qualification and signals are shown above. Create a lead to start outreach from the lead detail page.'
+                  : result.score
+                    ? 'Add identifying and opportunity details to continue. A lead can’t be created from this paste yet.'
+                    : 'A lead can’t be created from this paste yet.'}
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button variant="secondary" size="sm" onClick={() => void analyze('analyze')} disabled={analyzing}>
-                  <RefreshCw className="size-3" aria-hidden="true" />
-                  Try another angle
-                </Button>
+                {result.score && (
+                  <Button variant="secondary" size="sm" onClick={() => void analyze('analyze')} disabled={analyzing}>
+                    <RefreshCw className="size-3" aria-hidden="true" />
+                    Try another angle
+                  </Button>
+                )}
                 <Button variant="orange" size="sm" onClick={() => void saveAsLead()} disabled={saving || !canSaveLead}>
                   {saving ? 'Creating...' : (
                     <>
@@ -812,7 +832,7 @@ export default function ProspectCheckPage() {
             </div>
           )}
 
-            {!canSaveLead && (
+            {!canSaveLead && result.score && (
               <div className="mt-2 flex items-start gap-2 rounded-md border border-status-warning/30 bg-status-warning/5 px-3 py-2">
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-status-warning" aria-hidden="true" />
                 <div className="text-[12px] leading-relaxed text-graphite">

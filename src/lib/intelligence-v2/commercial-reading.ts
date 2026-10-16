@@ -1,3 +1,4 @@
+import { extractStatedTimeline } from '@/lib/intelligence-v3/source-facts'
 import type { OpportunitySignal } from './types'
 
 export type ServiceBuyerIntent = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
@@ -116,6 +117,15 @@ export function deriveCommercialReading(rawText: string): CommercialReading {
       immediateBuyerNeed = true
     } else if (/\b(soon|next month|this quarter)\b/i.test(rawText)) {
       buyerTiming = 'NEAR_TERM'
+    } else {
+      // A stated start ("Expected start: within 2 weeks") is timing evidence.
+      const stated = extractStatedTimeline(rawText)
+      if (stated && stated.days <= 7) {
+        buyerTiming = 'IMMEDIATE'
+        immediateBuyerNeed = true
+      } else if (stated && stated.days <= 90) {
+        buyerTiming = 'NEAR_TERM'
+      }
     }
   }
 

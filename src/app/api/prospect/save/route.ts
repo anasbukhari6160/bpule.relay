@@ -4,6 +4,7 @@ import { createScoutStore } from '@/lib/store'
 import { computeScore } from '@/lib/score/rubric'
 import type { SignalId, ExtractedLead, RoleCategory, MarketRegion } from '@/lib/domain/types'
 import { classifyRoleFromTitle, mapLocationToRegion } from '@/lib/leads/targeting'
+import { normalizeProspectPaste } from '@/lib/prospect/paste-normalize'
 import { evaluateProspectQualification } from '@/lib/prospect/qualification-gate'
 import { buildV3ReuseKey } from '@/lib/intelligence-v3/decision-reuse'
 
@@ -103,9 +104,13 @@ export async function POST(request: Request) {
         ? (canonicalForGate.qualification as 'strong' | 'worth_pursuing' | 'maybe' | 'skip')
         : null
 
+    // Same normalization as analyze, so eligibility and the reuse key agree
+    // with what was scored. The stored rawInput stays the original paste.
+    const normalizedRawInput = typeof body.rawInput === 'string' ? normalizeProspectPaste(body.rawInput) : null
+
     const qualification = evaluateProspectQualification({
       extracted,
-      rawText: typeof body.rawInput === 'string' ? body.rawInput : null,
+      rawText: normalizedRawInput,
       canonicalQualification: canonicalQualificationForGate,
     })
     if (!qualification.qualificationEligibility) {
@@ -198,8 +203,8 @@ export async function POST(request: Request) {
       decisionModel,
       decisionRunId,
       selectedEpisodeId,
-      v3ReuseKey: typeof body.rawInput === 'string' ? buildV3ReuseKey({
-        rawText: body.rawInput,
+      v3ReuseKey: normalizedRawInput ? buildV3ReuseKey({
+        rawText: normalizedRawInput,
         profileId: senderProfileId,
       }) : null,
     })

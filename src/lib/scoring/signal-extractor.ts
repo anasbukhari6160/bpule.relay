@@ -14,6 +14,8 @@
  *   - Access: connection degree, mutual signals
  */
 
+import { detectCommercialRequest } from '@/lib/intelligence-v3/source-facts'
+
 export interface ExtractedSignals {
   company: CompanySignals
   person: PersonSignals
@@ -261,7 +263,12 @@ function extractIndustry(text: string): string | null {
 }
 
 function countHiringRoles(text: string): number {
-  const matches = text.match(/\b(hiring|recruiting|looking for|seeking|open role|position)\b/gi)
+  // Lines asking for an external provider are a vendor search, not open roles.
+  const external = detectCommercialRequest(text).externalServiceRequest?.line
+  const roleText = external
+    ? text.split('\n').filter((line) => line.trim() !== external && !/\b(?:agenc(?:y|ies)|vendors?|outsourc\w*)\b/i.test(line)).join('\n')
+    : text
+  const matches = roleText.match(/\b(hiring|recruiting|looking for|seeking|open role|position)\b/gi)
   return matches ? Math.min(matches.length, 10) : 0
 }
 
@@ -317,7 +324,12 @@ function extractTenure(text: string): number | null {
 function extractIntentSignals(text: string, lower: string): IntentSignals {
   const explicitAsk = ASK_PATTERNS.some((p) => p.test(text))
   const askingForHelp = /\b(help me|need help|anyone who knows|recommendation|advice on)\b/i.test(text)
-  const hiring = HIRING_PATTERNS.some((p) => p.test(text))
+  const commercial = detectCommercialRequest(text)
+  // "Looking for an agency" is a vendor search, not hiring. Generic
+  // looking-for wording only counts as hiring when no external provider is
+  // being sought and nothing else says employment.
+  const hiring = commercial.employmentHiring !== null
+    || (commercial.externalServiceRequest === null && HIRING_PATTERNS.some((p) => p.test(text)))
 
   let hiringUrgency: IntentSignals['hiringUrgency'] = 'none'
   if (HIRING_URGENCY[0].test(text)) hiringUrgency = 'immediate'
@@ -327,7 +339,8 @@ function extractIntentSignals(text: string, lower: string): IntentSignals {
   const launchedProduct = extractProductName(text)
 
   const jobPosting = /\b(job|role|position|hiring for|apply now|we're hiring)\b/i.test(text)
-  const seekingVendor = /\b(looking for a|seeking a|need a vendor|need a partner|need a dev)\b/i.test(text)
+  const seekingVendor = commercial.externalServiceRequest !== null
+    || (!hiring && /\b(looking for a|seeking a|need a vendor|need a partner|need a dev)\b/i.test(text))
   const budgetMentioned = BUDGET_PATTERNS.some((p) => p.test(text))
 
   const urgencyWords = URGENCY_WORDS.filter((w) => lower.includes(w))

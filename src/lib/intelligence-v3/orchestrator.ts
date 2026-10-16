@@ -14,7 +14,7 @@ import {
   linkEvidenceToEvent,
   markOrganizationAsServiceProvider,
 } from './graph/evidence-graph'
-import { buildEpisodes } from './graph/episode-builder'
+import { buildEpisodes, eventNeedOwner } from './graph/episode-builder'
 import {
   getDecisionRegistry,
   type V3ProviderContext,
@@ -165,6 +165,7 @@ export async function runV3Decision(
     senderCapabilities: options.senderCapabilities,
     v2Canonical: options.v2Canonical,
     rawText: v2Intelligence?.rawInput,
+    decidedEpisodeId: bestEpisode?.id ?? null,
   })
 
   return {
@@ -233,8 +234,9 @@ Rules:
 1. Score the EPISODE, not the person's identity
 2. A SERVICE_PROVIDER relationship does NOT disqualify an explicit BUYER_REQUEST episode
 3. An agency CAN hire another agency — verify this distinction carefully
-4. Explicit apply instructions (email, DM, link) are strong buyer evidence
-5. If evidence is genuinely weak, probabilities should be low`
+4. Explicit requests to an external provider (agency, vendor, contractor, freelancer, outsourced team) are strong buyer evidence
+5. Recruiting EMPLOYEES (full-time/part-time roles, "submit your CV", "join our team") is NOT buying services: needOwner=HIRING_NEED, buyerRequestProbability <= 0.2, relationship is not BUYER
+6. If evidence is genuinely weak, probabilities should be low`
 
     const userPrompt = `Review this uncertain opportunity episode and provide a definitive classification:\n\n${context.person ? `Person: ${context.person.fullName || 'Unknown'}\n` : ''}${context.organization ? `Organization: ${context.organization.name || 'Unknown'}\n` : ''}\n## Evidence:\n${context.evidence.map((e) => `  [${e.needOwner}] ${e.quote}`).join('\n')}\n\nRemember: A person can be a service provider AND have a separate buyer event. Score the episode, not the person.`
 
@@ -298,7 +300,8 @@ Rules:
       providerId: 'openai_gpt-4.1',
       modelVersion: 'openai_gpt-4.1_v3',
       latencyMs: 0,
-      confidence: 1 - 2 * Math.abs(clampEscalProb(parsed.buyerRequestProbability) - 0.5),
+      // Decisiveness: 1 when the probability is near 0 or 1, 0 at 0.5.
+      confidence: Math.round(2 * Math.abs(clampEscalProb(parsed.buyerRequestProbability) - 0.5) * 100) / 100,
     }
   } catch {
     return null
@@ -401,6 +404,8 @@ export interface V2BridgeInput {
     eventType: string
     description: string
     explicitRequest: boolean
+    /** Need owner the extractor assigned to this event, when it gave one */
+    needOwner?: string
     requestedCapabilities: string[]
     requestedAssets: string[]
     applicationChannels: string[]
@@ -475,9 +480,14 @@ function buildV3GraphFromV2(v2: V2BridgeInput): V3EvidenceGraph {
   if (v2.sourceEvents && v2.sourceEvents.length > 0) {
     for (const srcEvent of v2.sourceEvents) {
       const eventOrg = upsertOrganization(graph, srcEvent.organizationName, null, null)
+      const eventType = mapSourceEventType(srcEvent.eventType)
+      // The event's own need owner. Hard-coding HIRING_NEED here turned every
+      // agency/project request into hiring evidence and spawned a synthetic
+      // hiring episode next to it.
+      const eventNeed = sourceEventNeedOwner(srcEvent.needOwner, eventType)
 
       const event = addEvent(graph, {
-        eventType: mapSourceEventType(srcEvent.eventType),
+        eventType,
         personId: person.id,
         organizationId: eventOrg.id,
         organizationName: srcEvent.organizationName,
@@ -497,7 +507,7 @@ function buildV3GraphFromV2(v2: V2BridgeInput): V3EvidenceGraph {
         subjectOrganizationName: srcEvent.organizationName,
         confidence: 0.9,
         evidenceType: srcEvent.evidenceType as 'FACT' | 'STRONG_INFERENCE' | 'WEAK_INFERENCE',
-        needOwner: 'HIRING_NEED',
+        needOwner: eventNeed,
         polarity: 'ACTIVE',
         temporalScope: srcEvent.ageDays === null ? 'UNKNOWN' : srcEvent.ageDays <= 14 ? 'CURRENT' : srcEvent.ageDays <= 45 ? 'RECENT' : 'HISTORICAL',
         occurredAt: srcEvent.occurredAt,
@@ -505,8 +515,10 @@ function buildV3GraphFromV2(v2: V2BridgeInput): V3EvidenceGraph {
 
       linkEvidenceToEvent(graph, event.id, evidence.id)
 
+      // Requested assets belong to the event that asked for them; left
+      // unlinked they formed a separate evidence-only episode.
       for (const asset of srcEvent.requestedAssets) {
-        addEvidence(graph, {
+        const assetEvidence = addEvidence(graph, {
           sourceType: 'linkedin_post',
           quote: `Requested: ${asset}`,
           subjectPersonId: person.id,
@@ -514,9 +526,10 @@ function buildV3GraphFromV2(v2: V2BridgeInput): V3EvidenceGraph {
           subjectOrganizationName: srcEvent.organizationName,
           confidence: 0.95,
           evidenceType: 'FACT',
-          needOwner: 'HIRING_NEED',
+          needOwner: eventNeed,
           polarity: 'ACTIVE',
         })
+        linkEvidenceToEvent(graph, event.id, assetEvidence.id)
       }
     }
   }
@@ -626,10 +639,31 @@ function scoreEpisodeCommercialStrength(ep: V3OpportunityEpisode): number {
   else if (ep.needOwnerType === 'ORGANIZATION_NEED') score += 8
   else if (ep.needOwnerType === 'SELF_NEED') score += 6
 
+  // A direct request to an external provider is the commercial opportunity
+  // itself and outranks an employee-hiring reading of the same post.
+  if (ep.explicitRequest && EXTERNAL_SERVICE_EVENTS.has(ep.anchorEvent.eventType)) score += 12
+
+  // Episodes synthesized from loose evidence are inferences, never the
+  // primary opportunity when an event-backed episode exists.
+  if (ep.anchorEvent.id.startsWith('evt_synthetic_')) score -= 15
+
   // Service offering is NOT a buyer signal (penalty)
   if (ep.needOwnerType === 'SERVICE_OFFERING') score -= 20
 
   return score
+}
+
+const EXTERNAL_SERVICE_EVENTS: ReadonlySet<string> = new Set([
+  'AGENCY_REQUEST', 'FREELANCE_REQUEST', 'PROJECT_REQUEST', 'VENDOR_EVALUATION',
+])
+
+function sourceEventNeedOwner(given: string | undefined, eventType: import('./types').V3EventType): import('./types').V3NeedOwner {
+  const fromType = eventNeedOwner(eventType)
+  // An external-service event is an organization need whatever label the
+  // extractor attached; for other types trust a valid extractor label.
+  if (EXTERNAL_SERVICE_EVENTS.has(eventType)) return 'ORGANIZATION_NEED'
+  const mapped = mapNeedOwner(given)
+  return mapped !== 'UNKNOWN' ? mapped : fromType
 }
 
 function buildProviderContext(

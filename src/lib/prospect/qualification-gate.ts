@@ -1,10 +1,13 @@
 import type { ExtractedLead } from '@/lib/domain/types'
+import { detectCommercialRequest } from '@/lib/intelligence-v3/source-facts'
 
 export type InputClassification =
   | 'PERSON_PROFILE'
   | 'COMPANY_PROFILE'
   | 'JOB_POST'
   | 'HIRING_POST'
+  /** A request to buy from an external provider (agency, vendor, contractor, outsourced team). */
+  | 'SERVICE_REQUEST'
   | 'CONVERSATION'
   | 'INBOUND_REQUEST'
   | 'BUSINESS_OPPORTUNITY'
@@ -106,8 +109,27 @@ export function classifyInput(rawText: string): ClassificationResult {
   const hasHiringIntent = /\b(hiring|recruiting|looking\s+(?:for|to)|need\s+(?:a|an|someone))\b/i.test(text)
   const hasProjectNeed = /\b(need\s+(?:help|support|a\s+developer|an\s+engineer)|looking\s+for\s+(?:a\s+developer|an\s+engineer|freelance|contract))\b/i.test(text)
 
+  // An explicit request to an external provider outranks generic "hire" /
+  // "requirements" wording: "outsourced team, not full-time employees" is a
+  // vendor procurement, not a job post.
+  const commercial = detectCommercialRequest(text)
+  if (commercial.externalServiceRequest) {
+    return {
+      classification: 'SERVICE_REQUEST',
+      confidence: 80,
+      reasons: [
+        `External service request detected: "${commercial.externalServiceRequest.line.slice(0, 140)}"`,
+        ...(commercial.employmentHiring ? ['Hiring wording is also present; the external-provider request drives the classification.'] : []),
+      ],
+    }
+  }
+
   if (hasJobMarkers && markerHits >= 2) {
     return { classification: hasHiringIntent ? 'HIRING_POST' : 'JOB_POST', confidence: 75, reasons: ['Job description language detected.'] }
+  }
+
+  if (commercial.employmentHiring && markerHits >= 2) {
+    return { classification: 'HIRING_POST', confidence: 70, reasons: [`Employee hiring detected: "${commercial.employmentHiring.line.slice(0, 140)}"`] }
   }
 
   if (hasProjectNeed || hasHiringIntent) {
@@ -231,7 +253,9 @@ function hasSpecificSignalEvidence(value: string | null | undefined): boolean {
     /\b(hiring|recruiting|looking\s+for|open\s+role|opening|job\s+post|need|needs|seeking|backlog|incident|outage|latency|migration|rewrite|rebuild|deadline|launch|ship|shipping)\b/i.test(text)
   const hasTechCue =
     /\b(rails|ruby|react|node|python|go|java|kotlin|swift|postgres|mysql|api|backend|frontend|mobile|ios|android|devops|sre|kubernetes|aws|gcp|azure)\b/i.test(text)
-  const hasQuotedCue = /["']/.test(text)
+  // A real quotation, not an apostrophe: "Gummadi's" used to count as a
+  // quote and flipped lead eligibility on the same profile.
+  const hasQuotedCue = /"[^"\n]{3,}"|“[^”\n]{3,}”/.test(text)
   const concreteCueCount = [hasMetricCue, hasOpportunityCue, hasTechCue, hasQuotedCue].filter(Boolean).length
   if (concreteCueCount === 0) return false
   if (isGenericMarketingText(text) && concreteCueCount < 2) return false
