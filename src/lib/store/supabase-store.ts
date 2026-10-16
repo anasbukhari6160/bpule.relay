@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { determineFollowup } from '@/lib/relay/followup-engine'
 import type {
   ContentDraft,
   ContentDraftFeedback,
@@ -1104,6 +1105,77 @@ export class SupabaseStore implements ScoutStore {
       }
     }
 
+    if (type === 'connection') {
+      const { data: existingConn } = await this.client
+        .from('messages')
+        .select('id')
+        .eq('organization_id', this.orgId)
+        .eq('lead_id', leadId)
+        .eq('type', 'connection')
+        .order('sent_at', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      if (existingConn?.id) {
+        const todaySendsNow = await this.countTodaysSends(type)
+        return { allowed: true, todaySends: todaySendsNow, limit: messageTypeLimit(type), messageId: existingConn.id as string, idempotent: true }
+      }
+    }
+
+    if (type === 'followup') {
+      const [{ data: priorRows }, { data: leadExtra }] = await Promise.all([
+        this.client
+          .from('messages')
+          .select('id, type, sent_text, sent_at, direction, organization_id, lead_id, rep_id, created_at')
+          .eq('organization_id', this.orgId)
+          .eq('lead_id', leadId),
+        this.client
+          .from('leads')
+          .select('connection_accepted_at, status, company, contact_name')
+          .eq('id', leadId)
+          .maybeSingle(),
+      ])
+      const priorMessages = ((priorRows ?? []) as Array<Record<string, unknown>>).map((row) => ({
+        id: String(row.id),
+        organizationId: String(row.organization_id ?? this.orgId),
+        leadId,
+        repId: row.rep_id ? String(row.rep_id) : null,
+        type: row.type as Message['type'],
+        draftText: null,
+        sentText: (row.sent_text as string | null) ?? null,
+        sentAt: (row.sent_at as string | null) ?? null,
+        direction: (row.direction as Message['direction']) ?? 'outbound',
+        modelUsed: null,
+        createdAt: (row.created_at as string | null) ?? '',
+      }))
+      const lastOutbound = priorMessages
+        .filter((m) => m.direction !== 'inbound' && m.sentAt)
+        .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+        .at(-1)
+      const lastInbound = priorMessages
+        .filter((m) => m.direction === 'inbound' && m.sentAt)
+        .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+        .at(-1)
+      const strategy = determineFollowup({
+        lead: {
+          id: leadId,
+          organizationId: this.orgId,
+          company: (leadExtra?.company as string | null) ?? '',
+          contactName: (leadExtra?.contact_name as string | null) ?? null,
+          status: ((leadExtra?.status as string | null) ?? 'contacted') as Lead['status'],
+          connectionAcceptedAt: (leadExtra?.connection_accepted_at as string | null) ?? null,
+        } as Lead,
+        priorMessages,
+        conversationStage: (leadExtra?.status as string | null) ?? 'contacted',
+        senderProfileId: null,
+        followupCount: priorMessages.filter((m) => m.type === 'followup').length,
+        lastSentAt: lastOutbound?.sentAt ?? null,
+        lastReplyAt: lastInbound?.sentAt ?? null,
+      })
+      if (!strategy.shouldFollowUp) {
+        throw new Error(`NOT_ELIGIBLE: ${strategy.waitReason ?? strategy.reason}`)
+      }
+    }
+
     const todaySends = await this.countTodaysSends(type)
     const limit = messageTypeLimit(type)
     if (todaySends >= limit) {
@@ -1175,6 +1247,21 @@ export class SupabaseStore implements ScoutStore {
         .select('id')
         .eq('organization_id', this.orgId)
         .eq('idempotency_key', idempotencyKey)
+        .maybeSingle()
+      if (winner) {
+        const todaySendsNow = await this.countTodaysSends(type)
+        return { allowed: true, todaySends: todaySendsNow, limit: messageTypeLimit(type), messageId: winner.id as string, idempotent: true }
+      }
+    }
+    if (insertError && type === 'connection' && (insertError as { code?: string }).code === '23505') {
+      const { data: winner } = await this.client
+        .from('messages')
+        .select('id')
+        .eq('organization_id', this.orgId)
+        .eq('lead_id', leadId)
+        .eq('type', 'connection')
+        .order('sent_at', { ascending: true })
+        .limit(1)
         .maybeSingle()
       if (winner) {
         const todaySendsNow = await this.countTodaysSends(type)

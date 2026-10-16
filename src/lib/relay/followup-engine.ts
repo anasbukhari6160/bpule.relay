@@ -65,7 +65,36 @@ export function determineFollowup(context: FollowupContext): FollowupStrategy {
     }
   }
 
-  // Timing check: allow follow-up even early, just flag it
+  const hasConversation = priorMessages.some((m) => (m.type === 'dm' || m.type === 'followup') && m.sentAt)
+  const hasConnection = priorMessages.some((m) => m.type === 'connection' && m.sentAt)
+  if (hasConnection && !hasConversation) {
+    const waiting = !lead.connectionAcceptedAt
+    return {
+      shouldFollowUp: false,
+      reason: waiting ? 'Waiting for acceptance.' : 'Connection accepted. The first message has not been sent.',
+      approach: 'none',
+      tone: 'none',
+      ctaApproach: 'none',
+      valueAdd: null,
+      waitReason: waiting
+        ? 'Waiting for acceptance. A follow-up opens after they accept and the first message is due.'
+        : 'Send the first message. Follow-up starts after that message, on the 3/6/6 calendar-day schedule.',
+    }
+  }
+
+  if (context.lastReplyAt || lead.status === 'replied') {
+    return {
+      shouldFollowUp: false,
+      reason: 'They already replied.',
+      approach: 'none',
+      tone: 'none',
+      ctaApproach: 'none',
+      valueAdd: null,
+      waitReason: 'They already replied. Answer that message instead of following up.',
+    }
+  }
+
+  // A normal follow-up waits for the 3/6/6 calendar-day gap.
   const dueIn = followupDueInDays(followupCount)
   const daysSince = calendarDaysBetween(new Date(lastSentAt), now)
   const isEarly = daysSince < dueIn
@@ -77,13 +106,24 @@ export function determineFollowup(context: FollowupContext): FollowupStrategy {
 
   const lastText = lastSent?.sentText ?? ''
 
+  if (isEarly) {
+    return {
+      shouldFollowUp: false,
+      reason: `Follow-up is not due yet (${daysSince}/${dueIn} calendar days).`,
+      approach: 'none',
+      tone: 'none',
+      ctaApproach: 'none',
+      valueAdd: null,
+      waitReason: `Not due yet. Next follow-up is due after ${dueIn} calendar days (${daysSince} calendar day${daysSince === 1 ? '' : 's'} since the last message).`,
+      early: true,
+    }
+  }
+
   const approach = chooseFollowupApproach(lastText, lead)
 
   return {
     shouldFollowUp: true,
-    reason: isEarly
-      ? `Early follow-up (${daysSince}/${dueIn} days). Follow-up ${followupCount + 1} of 3.`
-      : `${daysSince} days since last send. Follow-up ${followupCount + 1} of 3.`,
+    reason: `${daysSince} calendar days since last send. Follow-up ${followupCount + 1} of 3.`,
     approach: approach.approach,
     tone: approach.tone,
     ctaApproach: approach.ctaApproach,
@@ -135,7 +175,7 @@ function chooseFollowupApproach(
   return {
     approach: 'Short nudge. Acknowledge they are busy. Give an easy out.',
     tone: 'respectful, brief',
-    ctaApproach: '"Not now" is a perfect reply',
+    ctaApproach: 'One plain question about their work, with an easy way to pass',
     valueAdd: null,
   }
 }
@@ -158,6 +198,7 @@ export function buildFollowupPrompt(
   parts.push(`### Approach: ${strategy.approach}`)
   parts.push(`### Tone: ${strategy.tone}`)
   parts.push(`### CTA: ${strategy.ctaApproach}`)
+  parts.push(`Do not write "Not now is a perfect reply" or any canned opt-out slogan. If the thread has no specific fact, do not invent advice about recruitment or their industry. Say that more research is needed, or ask one question that uses only a fact already in the thread.`)
 
   if (strategy.valueAdd) {
     parts.push(`### Value to add: ${strategy.valueAdd}`)

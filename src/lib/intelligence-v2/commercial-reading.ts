@@ -130,7 +130,7 @@ export function deriveCommercialReading(rawText: string): CommercialReading {
     serviceBuyerIntent = 'MEDIUM'
   }
 
-  return enforceBuyerIntentBoundary({
+  return recruiterHiringIsNotAPurchase(rawText, enforceBuyerIntentBoundary({
     serviceBuyerIntent,
     externalEngineeringNeed: hasBuyer ? 'EXPLICIT' : 'NONE_DETECTED',
     immediateBuyerNeed,
@@ -140,7 +140,26 @@ export function deriveCommercialReading(rawText: string): CommercialReading {
     preLaunchActivity,
     technicalRelevance,
     buyerEvidenceKinds,
-  })
+  }))
+}
+
+const RECRUITER_HEADER = /\b(?:it recruiter|technical recruiter|tech recruiter|recruiter|rekruter(?:ka)?|talent acquisition|sourcer|headhunter)\b/i
+const EXTERNAL_PURCHASE = /\b(?:looking for|need|seeking|hire)\b[\s\S]{0,80}\b(?:agency|vendor|outsourc\w*|development partner|software partner|external team|staff augmentation)\b/i
+
+/** A recruiter hiring for an employer is not a vendor purchase. */
+function recruiterHiringIsNotAPurchase(rawText: string, reading: CommercialReading): CommercialReading {
+  const header = rawText.split('\n').slice(0, 12).join('\n')
+  if (!RECRUITER_HEADER.test(header)) return reading
+  if (EXTERNAL_PURCHASE.test(rawText)) return reading
+  const kinds = reading.buyerEvidenceKinds.filter((kind) => kind === 'HIRING_SIGNAL')
+  return {
+    ...reading,
+    serviceBuyerIntent: kinds.includes('HIRING_SIGNAL') ? 'LOW' : 'UNKNOWN',
+    externalEngineeringNeed: 'NONE_DETECTED',
+    immediateBuyerNeed: false,
+    buyerTiming: 'UNKNOWN',
+    buyerEvidenceKinds: kinds,
+  }
 }
 
 /** Product momentum is not buyer intent. HIGH buyer intent requires buyer-directional evidence. */

@@ -87,6 +87,7 @@ import type {
 } from '@/lib/store/types'
 import { companyFuzzyKey, companyKey, contactKey, normalizeLeadUrl } from '@/lib/leads/normalize'
 import { dailyConnectionSendLimit, dailySendLimit, messageTypeLimit } from '@/lib/ai/config'
+import { determineFollowup } from '@/lib/relay/followup-engine'
 import { defaultTargetsForChannel } from '@/lib/accountability/default-targets'
 import { computeRates, type RateBucket } from '@/lib/store/rates'
 import { matchProofItemsByTags } from '@/lib/ai/proof-match'
@@ -997,6 +998,35 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         }
       }
       const type = messageType
+      if (type === 'connection') {
+        const existingConn = messages.find((m) => m.leadId === leadId && m.type === 'connection')
+        if (existingConn) {
+          const todaySendsNow = messages.filter((m) => {
+            if (!m.sentAt || m.type !== type || leads.find((l) => l.id === m.leadId)?.ownerRepId !== rep.id) return false
+            const s = new Date(m.sentAt)
+            const now = new Date()
+            return s.getFullYear() === now.getFullYear() && s.getMonth() === now.getMonth() && s.getDate() === now.getDate()
+          }).length
+          return { allowed: true, todaySends: todaySendsNow, limit: messageTypeLimit(type), messageId: existingConn.id, idempotent: true }
+        }
+      }
+      if (type === 'followup') {
+        const prior = messages.filter((m) => m.leadId === leadId)
+        const lastOutbound = prior.filter((m) => m.direction !== 'inbound' && m.sentAt).sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? '')).at(-1)
+        const lastInbound = prior.filter((m) => m.direction === 'inbound' && m.sentAt).sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? '')).at(-1)
+        const strategy = determineFollowup({
+          lead,
+          priorMessages: prior,
+          conversationStage: lead.status,
+          senderProfileId: null,
+          followupCount: prior.filter((m) => m.type === 'followup').length,
+          lastSentAt: lastOutbound?.sentAt ?? null,
+          lastReplyAt: lastInbound?.sentAt ?? null,
+        })
+        if (!strategy.shouldFollowUp) {
+          throw new Error(`NOT_ELIGIBLE: ${strategy.waitReason ?? strategy.reason}`)
+        }
+      }
       const todaySends = await (async () => {
         const now = new Date()
         return messages.filter((m) => {

@@ -445,6 +445,10 @@ function stabilizePassA(rawText: string, sourceUrls: string[], modelPassA: PassA
     (post) => !isLinkedInChromeText(post.paraphrase) && !isLinkedInChromeText(post.verbatimQuote),
   )
 
+  const identity = separateRoleFromEmployer(rawText, out.person.title, out.company.name)
+  out.person.title = identity.title
+  out.company.name = identity.company
+
   return constrainNonBuyerPassA(out, rawText)
 }
 
@@ -1238,7 +1242,7 @@ function extractTitle(lines: string[]): string | null {
   // → use AI in development") cannot become the prospect's title.
   const headerLines = identityBlockLines(lines)
   const titleLine = headerLines.find((line) =>
-    /\b(founder|ceo|cto|coo|cfo|chief|officer|vp|head|director|manager|lead|owner|president|engineer|developer|architect|recruiter|recruiting|partner|consultant|managing)\b/i.test(line),
+    /\b(founder|ceo|cto|coo|cfo|chief|officer|vp|head|director|manager|lead|owner|president|engineer|developer|architect|recruiter|rekruter(?:ka)?|recruiting|headhunter|sourcer|partner|consultant|managing)\b/i.test(line),
   )
   if (!titleLine) return null
   return titleLine
@@ -1266,6 +1270,104 @@ function extractLocation(lines: string[], rawText: string): string | null {
     /^[A-Z][A-Za-z .'-]+,\s*[A-Z][A-Za-z .'-]+$/.test(line),
   )
   return bare ?? null
+}
+
+const EMPLOYER_AT = /\s+(?:at|@)\s+([A-Z0-9][\p{L}\p{N}.&'’-]{1,60}?)(?:\s*[|·—]|$)/iu
+const HEADER_LOCATION = /^[\p{L}][\p{L} .'-]+,\s*[\p{L}]/u
+const CONNECTION_DEGREE = /^[·•]?\s*\d+(st|nd|rd|th)\b/i
+const EMPLOYMENT_LINE = /^(.{2,80}?)\s*[·|]\s*(?:Full-time|Part-time|Contract|Freelance|Self-employed)\b/i
+
+function roleOnlyLine(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed || trimmed.length > 80 || trimmed.split(/\s+/).length > 8) return false
+  if (/[.!?]/.test(trimmed)) return false
+  const rolePart = trimmed.split(/\s+(?:at|@)\s+/i)[0]?.trim() ?? trimmed
+  return isRecruiterTitle(rolePart)
+}
+
+function employerFromAt(text: string | null | undefined): string | null {
+  if (!text) return null
+  const match = text.match(EMPLOYER_AT)
+  const name = match?.[1]?.trim() ?? ''
+  if (!name || roleOnlyLine(name)) return null
+  return name
+}
+
+function employerLine(line: string): string | null {
+  const trimmed = line.trim()
+  if (!trimmed || trimmed.length > 60 || trimmed.split(/\s+/).length > 5) return null
+  if (/[.!?]/.test(trimmed) || HEADER_LOCATION.test(trimmed) || CONNECTION_DEGREE.test(trimmed)) return null
+  if (roleOnlyLine(trimmed) || /^(full-time|part-time|contract|freelance)$/i.test(trimmed)) return null
+  if (!/^[\p{L}0-9]/u.test(trimmed)) return null
+  return trimmed
+}
+
+function employerFromExperience(lines: string[]): string | null {
+  const start = lines.findIndex((line) => /^experience$/i.test(line))
+  if (start < 0) return null
+  for (const line of lines.slice(start + 1, start + 8)) {
+    if (/^(about|education|skills|licenses?|projects|recommendations|activity)$/i.test(line)) break
+    const match = line.match(EMPLOYMENT_LINE)
+    const name = match?.[1]?.trim() ?? ''
+    if (name && !roleOnlyLine(name)) return name
+  }
+  return null
+}
+
+/**
+ * A role line is not an employer. "Rekruter IT" stays the title;
+ * the next header line or "Company · Full-time" is the employer.
+ * When no employer is present the company stays empty.
+ */
+export function separateRoleFromEmployer(
+  rawText: string,
+  title: string | null,
+  company: string | null,
+): { title: string | null; company: string | null } {
+  const lines = splitLines(rawText)
+  const header = identityBlockLines(lines)
+  let resolvedTitle = title?.trim() || null
+  let resolvedCompany = company && !roleOnlyLine(company) ? company.trim() : null
+
+  const embedded = employerFromAt(resolvedTitle) ?? header.map((line) => employerFromAt(line)).find(Boolean) ?? null
+  if (!resolvedCompany && embedded) resolvedCompany = embedded
+
+  if (!resolvedCompany) {
+    let sawRole = false
+    for (let i = 1; i < header.length; i++) {
+      const line = header[i]
+      if (CONNECTION_DEGREE.test(line) || HEADER_LOCATION.test(line)) continue
+      if (roleOnlyLine(line)) {
+        sawRole = true
+        if (!resolvedTitle || roleOnlyLine(resolvedTitle)) {
+          resolvedTitle = line.split(/\s+(?:at|@)\s+/i)[0]?.trim() || line
+        }
+        continue
+      }
+      if (sawRole) {
+        const next = employerLine(line)
+        if (next) {
+          resolvedCompany = next
+          break
+        }
+      }
+    }
+  }
+
+  if (!resolvedCompany) {
+    const fromExperience = employerFromExperience(lines)
+    if (fromExperience) resolvedCompany = fromExperience
+  }
+
+  if (resolvedCompany && roleOnlyLine(resolvedCompany)) resolvedCompany = null
+  if (resolvedTitle && employerFromAt(resolvedTitle)) {
+    resolvedTitle = resolvedTitle.split(/\s+(?:at|@)\s+/i)[0]?.trim() || resolvedTitle
+  }
+
+  return {
+    title: resolvedTitle || null,
+    company: resolvedCompany || null,
+  }
 }
 
 // Trailing/leading words that mean the adjacent capitalized phrase is a
@@ -1822,6 +1924,7 @@ function demoPassA(rawText: string): PassAOutput {
   const title = extractTitle(lines)
   const location = extractLocation(lines, rawText)
   const company = extractCompany(lines, title, rawText)
+  const identity = separateRoleFromEmployer(rawText, title, company)
   const sizeInfo = extractCompanySize(rawText)
   const clientName = extractClientName(lines)
   const linkedinUrl = extractUrls(rawText).find((u) => u.toLowerCase().includes('linkedin.com/in/')) ?? null
@@ -1838,20 +1941,20 @@ function demoPassA(rawText: string): PassAOutput {
   const signalLine = extractSignalLine(lines)
   const content = extractContentSignals(lines, attributableText)
   const job = extractJobFromText(lines, rawText, skills, signals)
-  const opportunityOrg = extractOpportunityOrganization(rawText, company)
+  const opportunityOrg = extractOpportunityOrganization(rawText, identity.company)
 
   return {
     person: {
       fullName: name ?? clientName ?? null,
       firstName: (name ?? clientName)?.split(/\s+/)[0] ?? null,
-      title: title?.trim() ?? null,
+      title: identity.title,
       seniority: null,
       location,
       linkedinUrl,
       otherUrls,
     },
     company: {
-      name: company,
+      name: identity.company,
       domain: null,
       linkedinUrl: null,
       industry: null,

@@ -1,7 +1,7 @@
 import type { OpportunitySignal } from './types'
 
 const RECRUITER_TITLE =
-  /\b(recruiter|talent acquisition|talent partner|talent scout|sourcer|people ops|human resources|\bhrbp\b|staffing specialist)\b/i
+  /\b(recruiter|rekruter(?:ka)?|talent acquisition|talent partner|talent scout|sourcer|headhunter|people ops|human resources|\bhrbp\b|staffing specialist)\b/i
 
 // Full clinical role/credential words — safe to match case-insensitively
 // against any text (no short, common-English-word collision risk).

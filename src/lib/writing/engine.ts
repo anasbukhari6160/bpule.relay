@@ -673,6 +673,12 @@ export function evaluateMessageStage(
     if (/\b(just following up|checking in|bumping this|just wanted to follow up)\b/i.test(lower)) {
       issues.push('Follow-up uses empty "following up" language')
     }
+    if (/not now is a perfect reply/i.test(lower)) {
+      issues.push('Follow-up uses an unnatural call to action')
+    }
+    if (/\btech recruitment\b/i.test(lower)) {
+      issues.push('Follow-up gives generic advice that is not grounded in this conversation')
+    }
     if (context.connectionNote) {
       const similarity = computeTextSimilarity(text, context.connectionNote)
       if (similarity > 0.5) {

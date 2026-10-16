@@ -123,6 +123,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
       decision,
       proofRelevance: proofRelevanceMap[episode.id] ?? estimateProofRelevance(episode, senderCapabilities),
       evidenceQuality: evidenceQualityMap[episode.id] ?? estimateEvidenceQuality(episode, graph),
+      rawText,
       commercialPotential: episode.organizationName && commercialPotential
         ? scopeCommercialPotentialToOrg(commercialPotential, episode.organizationName, graph)
         : commercialPotential ?? undefined,

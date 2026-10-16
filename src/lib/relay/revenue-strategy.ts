@@ -870,6 +870,14 @@ function assessFitIntentConfidence(source: StrategySource, scoped: ScopedItem[])
     confidenceWhy = 'Some reliable facts exist; several commercially important fields are still unknown.'
   }
 
+  const recruiterHeader = `${source.title ?? ''}\n${(source.rawText ?? '').split('\n').slice(0, 12).join('\n')}`
+  const recruiterProfile = /\b(?:it recruiter|technical recruiter|tech recruiter|recruiter|rekruter(?:ka)?|talent acquisition|sourcer|headhunter)\b/i.test(recruiterHeader)
+  const externalPurchase = /\b(?:looking for|need|seeking|hire)\b[\s\S]{0,80}\b(?:agency|vendor|outsourc\w*|development partner|software partner|external team|staff augmentation)\b/i.test(source.rawText ?? '')
+  if (recruiterProfile && !externalPurchase && intent !== 'LOW') {
+    intent = 'UNKNOWN'
+    intentWhy = 'Buying intent is unproven. This is employer hiring, not a request to buy services. Research before treating them as a buyer.'
+  }
+
   if (source.qualification === 'skip' && source.hardNegatives.includes('IRRELEVANT_OR_INSUFFICIENT_INPUT')) {
     fit = 'LOW'
     intent = 'UNKNOWN'

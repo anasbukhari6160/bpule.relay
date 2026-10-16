@@ -88,6 +88,29 @@ CometHire is building the future of recruiting technology.`,
     }
   })
 
+  it('keeps an IT recruiter title and uses the employer on the next line', async () => {
+    const result = await runIntelligencePipeline(
+      `Michał Walasek
+Rekruter IT
+B2Bnetwork
+Warsaw, Poland`,
+      {},
+    )
+    expect(result.intelligence.person.title).toMatch(/rekruter it/i)
+    expect(result.intelligence.company.name).toBe('B2Bnetwork')
+  })
+
+  it('reads the employer from "IT Recruiter at B2Bnetwork"', async () => {
+    const result = await runIntelligencePipeline(
+      `Michał Walasek
+IT Recruiter at B2Bnetwork
+Warsaw, Poland`,
+      {},
+    )
+    expect(result.intelligence.person.title).toMatch(/it recruiter/i)
+    expect(result.intelligence.company.name).toBe('B2Bnetwork')
+  })
+
   it('company mentioned only via a connector phrase without "works for" (e.g. "lead recruiting operations for X") is honestly left unextracted rather than guessed — a known, accepted extraction gap, not a fabrication risk', async () => {
     const result = await runIntelligencePipeline(
       `Alex Rivera

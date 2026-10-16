@@ -11,6 +11,7 @@ import { computeCanonicalScore, SCORE_VERSION, type ScoreInput } from './scoring
 import { isNonBuyerProfessional, isLinkedInChromeText } from './role-signals'
 import { buildIntelligenceInputHash, INTELLIGENCE_PIPELINE_VERSION } from './input-hash'
 import { classifyNeedOwnership, dominantNeedOwnership } from './need-ownership'
+import { displayScoreFromCanonical } from '@/lib/scoring/display-score'
 
 
 export interface OrchestratorOptions extends ExtractionPipelineOptions {
@@ -656,15 +657,11 @@ export function getDisplayScore(
   canonical: CanonicalProspectIntelligence | null,
 ): number | null {
   if (!canonical) return null
-  if (canonical.intelligenceVersion?.startsWith('relay_decision_v3')) {
-    const qualification = canonical.qualification
-    if (qualification === 'strong') return 9
-    if (qualification === 'worth_pursuing') return 7
-    if (qualification === 'maybe') return 5
-    if (qualification === 'skip') return 2
-    return Math.round(canonical.canonicalScore / 10)
-  }
-  return Math.round(canonical.canonicalScore / 10)
+  return displayScoreFromCanonical({
+    intelligenceVersion: canonical.intelligenceVersion,
+    qualification: canonical.qualification,
+    canonicalScore: canonical.canonicalScore,
+  })
 }
 
 /**

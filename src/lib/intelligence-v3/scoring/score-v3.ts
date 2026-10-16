@@ -132,6 +132,17 @@ export interface V3ScoreDimension {
   note: string
 }
 
+const RECRUITER_HEADER = /\b(?:it recruiter|technical recruiter|tech recruiter|recruiter|rekruter(?:ka)?|talent acquisition|sourcer|headhunter)\b/i
+const EXTERNAL_PURCHASE = /\b(?:looking for|need|seeking|hire)\b[\s\S]{0,80}\b(?:agency|vendor|outsourc\w*|development partner|software partner|external team|staff augmentation)\b/i
+
+function employerHiringNotPurchase(input: V3ScoreInput): boolean {
+  const text = input.rawText ?? ''
+  if (EXTERNAL_PURCHASE.test(text)) return false
+  const header = text.split('\n').slice(0, 15).join('\n')
+  if (RECRUITER_HEADER.test(header)) return true
+  return input.episode.anchorEvent?.eventType === 'HIRING' && !input.episode.explicitRequest
+}
+
 export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   const { episode, decision } = input
   const proofRelevance = input.proofRelevance ?? 0.5
@@ -140,12 +151,10 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   const watchOut: string[] = []
   const dimensions: V3ScoreDimension[] = []
 
-  // BUG-03: A recruiter's hiring post is not an external-service buying
-  // request. Cap buyer probability for hiring episodes unless the prospect
-  // explicitly asked for outside help — otherwise internal headhunting gets
-  // misqualified as a warm buyer lead.
-  const isHiringOnly = episode.anchorEvent?.eventType === 'HIRING' && !episode.explicitRequest
-  const buyerRaw = isHiringOnly
+  // Employer hiring, including a recruiter's own role, is not a vendor purchase.
+  // A high buyer request needs positive external-buying evidence.
+  const capBuyer = employerHiringNotPurchase(input)
+  const buyerRaw = capBuyer
     ? Math.min(decision.buyerRequestProbability, 0.2)
     : decision.buyerRequestProbability
   const buyerContribution = buyerRaw * V3_SCORING_WEIGHTS.buyerRequestProbability * 100
@@ -155,14 +164,18 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
     contribution: buyerContribution,
     raw: buyerRaw,
     weight: V3_SCORING_WEIGHTS.buyerRequestProbability,
-    note: buyerRaw >= 0.7
-      ? 'Strong buyer request signal'
-      : buyerRaw >= 0.4
-        ? 'Moderate buyer signal'
-        : 'Weak or no buyer request',
+    note: capBuyer
+      ? 'Employer hiring. Buying intent is unproven until there is a request to buy services.'
+      : buyerRaw >= 0.7
+        ? 'Strong buyer request signal'
+        : buyerRaw >= 0.4
+          ? 'Moderate buyer signal'
+          : 'Weak or no buyer request',
   })
-  if (buyerRaw >= 0.7) reasons.push('Explicit buyer request detected')
-  if (buyerRaw < 0.3) watchOut.push('No clear buyer request signal')
+  if (!capBuyer && buyerRaw >= 0.7) reasons.push('Explicit buyer request detected')
+  if (buyerRaw < 0.3) watchOut.push(capBuyer
+    ? 'Buying intent is unproven. Employer hiring is not a request to buy services. Research before treating this as a buyer.'
+    : 'No clear buyer request signal')
 
   // Separated from buyer intent. A founder building a product can have
   // buyerIntent=UNKNOWN but commercialPotential=HIGH.
@@ -281,10 +294,10 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
     try {
       const signals = extractSignals(input.rawText)
       const composite = computeCompositeScore({
-        aiBuyerProbability: decision.buyerRequestProbability,
+        aiBuyerProbability: buyerRaw,
         aiFitLevel: decision.fit,
         aiAccessLevel: decision.access,
-        aiIntentLevel: decision.buyerRequestProbability >= 0.6 ? 'HIGH' : decision.buyerRequestProbability >= 0.3 ? 'MEDIUM' : 'LOW',
+        aiIntentLevel: buyerRaw >= 0.6 ? 'HIGH' : buyerRaw >= 0.3 ? 'MEDIUM' : 'LOW',
         signals,
         proofScore: input.proofRelevance,
         senderCapabilities: input.senderCapabilities,
@@ -316,6 +329,12 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
       }
     } catch {
       // Composite scoring is best-effort; V3 score stands alone
+    }
+  }
+
+  if (capBuyer) {
+    for (let i = reasons.length - 1; i >= 0; i--) {
+      if (/explicit buyer request|strong buyer signal/i.test(reasons[i])) reasons.splice(i, 1)
     }
   }
 

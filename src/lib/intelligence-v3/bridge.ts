@@ -8,6 +8,8 @@ import { initializeV3 } from '@/lib/intelligence-v3/index'
 import { extractEventsFromSource } from './event-extractor'
 import { buildV3ReuseKey, buildV3ReuseCacheKey } from './decision-reuse'
 import { cleanCompanyName } from '@/lib/leads/normalize'
+import { separateRoleFromEmployer } from '@/lib/intelligence-v2/extraction-pipeline'
+import { deriveCommercialReading } from '@/lib/intelligence-v2/commercial-reading'
 
 
 function buildV3BridgeInput(
@@ -310,7 +312,7 @@ function looksLikeRole(text: string): boolean {
     'founder', 'co-founder', 'ceo', 'cto', 'cfo', 'cio', 'coo', 'chief',
     'officer', 'president', 'vp', 'vice', 'head', 'director', 'manager',
     'lead', 'senior', 'junior', 'principal', 'staff', 'engineer', 'developer',
-    'architect', 'designer', 'analyst', 'consultant', 'recruiter', 'specialist',
+    'architect', 'designer', 'analyst', 'consultant', 'recruiter', 'rekruter', 'rekruterka', 'headhunter', 'sourcer', 'specialist',
     'coordinator', 'administrator', 'assistant', 'associate', 'intern',
     'talent', 'acquisition', 'hiring', 'human', 'resources', 'marketing',
     'sales', 'operations', 'product', 'project', 'program', 'account',
@@ -340,14 +342,17 @@ function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence
 
   // Title: find the line with role keywords (founder, engineer, etc.)
   const titleLine = identityLines.find((line) =>
-    /\b(founder|ceo|cto|cfo|chief|officer|vp|head|director|manager|lead|engineer|developer|architect|recruiter|consultant|president|owner|partner)\b/i.test(line),
+    /\b(founder|ceo|cto|cfo|chief|officer|vp|head|director|manager|lead|engineer|developer|architect|recruiter|rekruter(?:ka)?|headhunter|sourcer|consultant|president|owner|partner)\b/i.test(line),
   )
   const title = titleLine
     ? titleLine.split(/\s*\|\s*/)[0].replace(/·/g, '').trim().slice(0, 120) || null
     : null
 
-  // Company: multi-strategy extraction from every possible location
-  const companyName = extractCompanyFromProfile(rawText, lines, title, identityLines)
+  // Company: multi-strategy extraction, then reject a role line saved as the employer.
+  const extractedCompany = extractCompanyFromProfile(rawText, lines, title, identityLines)
+  const identity = separateRoleFromEmployer(rawText, title, extractedCompany)
+  const companyName = identity.company
+  const resolvedTitle = identity.title ?? title
 
   return {
     version: 'relay_qualification_v2',
@@ -362,7 +367,7 @@ function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence
     confidence: 50,
     qualification: 'maybe',
     intelligence: {
-      person: { fullName: name || null, firstName: name?.split(' ')[0] || null, title, seniority: null, location: null, linkedinUrl: null, otherUrls: [] },
+      person: { fullName: name || null, firstName: name?.split(' ')[0] || null, title: resolvedTitle, seniority: null, location: null, linkedinUrl: null, otherUrls: [] },
       company: { name: companyName, domain: null, linkedinUrl: null, industry: null, size: null, sizeEvidence: null, product: null, stage: null, stageEvidence: null },
       opportunity: { signals: [], primarySignal: null, description: rawText.slice(0, 200), urgency: 'unknown' },
       job: { title: null, employmentType: 'unknown', workplaceType: 'UNKNOWN', allowedGeography: null, timezone: null, compensation: null, skills: [], seniority: 'unknown', source: null, postedDate: null },
@@ -375,7 +380,7 @@ function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence
       resolvedContradictions: [],
       businessModel: 'PRODUCT',
       relationship: 'UNKNOWN',
-      commercialReading: { serviceBuyerIntent: 'MEDIUM', externalEngineeringNeed: 'NONE_DETECTED', immediateBuyerNeed: false, buyerTiming: 'UNKNOWN', productMomentum: 'MEDIUM', customerDiscovery: 'NONE', preLaunchActivity: 'NONE', technicalRelevance: 'MEDIUM', buyerEvidenceKinds: [] },
+      commercialReading: deriveCommercialReading(rawText),
       remoteEligibility: { workplaceType: 'REMOTE', remoteScope: 'UNKNOWN', eligibility: 'ELIGIBLE', reason: 'No restrictions stated', evidence: [] },
       needOwnershipSummary: { dominant: 'UNKNOWN', counts: { SELF_NEED: 0, CUSTOMER_NEED: 0, MARKET_PROBLEM: 0, SERVICE_OFFERING: 0, PRODUCT_PROBLEM: 0, EMPLOYER_NEED: 0, UNKNOWN: 0 } },
     },

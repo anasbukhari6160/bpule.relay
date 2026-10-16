@@ -20,6 +20,7 @@ import { classifyRoleFromTitle } from '@/lib/leads/targeting-pure'
 import { isLinkedInChromeText } from '@/lib/intelligence-v2/role-signals'
 import type { ExtractedLead, Profile, MatchedProof } from '@/lib/domain/types'
 import { produceCanonicalIntelligence, getDisplayScore, deriveSignalEvidenceFallback, isClientCanonicalStillValid } from '@/lib/intelligence-v2/orchestrator'
+import { normalizeScoreDimensions } from '@/lib/scoring/display-score'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
@@ -462,7 +463,7 @@ export async function POST(request: Request) {
           qualification: canonical.qualification,
           reasons: canonical.scoreBreakdown.reasons,
           watchOut: rewordWatchOutForNoOutreach(canonical.scoreBreakdown.watchOut),
-          dimensions: canonical.scoreBreakdown.dimensions,
+          dimensions: normalizeScoreDimensions(canonical.scoreBreakdown.dimensions),
           missingInfo: canonical.scoreBreakdown.missingInfo,
         },
         remoteEligibility: canonical.remoteEligibility,
@@ -948,7 +949,7 @@ export async function POST(request: Request) {
         qualification: canonical.qualification,
         reasons: canonical.scoreBreakdown.reasons,
         watchOut: canonical.scoreBreakdown.watchOut,
-        dimensions: canonical.scoreBreakdown.dimensions,
+        dimensions: normalizeScoreDimensions(canonical.scoreBreakdown.dimensions),
         missingInfo: canonical.scoreBreakdown.missingInfo,
       },
       remoteEligibility: canonical.remoteEligibility,

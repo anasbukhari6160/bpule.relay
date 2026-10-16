@@ -28,6 +28,7 @@ import type { ExtractedLead, Profile, MatchedProof } from '@/lib/domain/types'
 import type { ProspectQualificationAssessment } from '@/lib/prospect/qualification-gate'
 import { describeVerdictForDisplay, type RevenueLoopSnapshot } from '@/lib/relay/revenue-strategy'
 import { duplicateNotice } from '@/lib/ui/api-error-toast'
+import { normalizeScoreDimensions, scoreExplanation } from '@/lib/scoring/display-score'
 import { notifyError } from '@/lib/ui/notify'
 import { trackEvent } from '@/lib/analytics/tracker'
 
@@ -507,13 +508,13 @@ export default function ProspectCheckPage() {
           {result.score ? (
             <div>
               <div className="flex items-baseline gap-3">
-                <ScoreRing canonicalScore={result.score.total} size={64} />
+                <ScoreRing canonicalScore={result.score.total} displayValue={result.score.displayScore} size={64} />
                 <div className="min-w-0">
                   <h2 className="text-[15px] font-medium text-ink">
                     {result.extracted.name ?? 'Unnamed prospect'}
                   </h2>
                   <p className="text-[12px] text-graphite">
-                    {result.extracted.titleRaw ?? result.extracted.title ?? 'No title'} {result.extracted.company ? `· ${result.extracted.company}` : ''}
+                    {result.extracted.titleRaw ?? result.extracted.title ?? 'Unknown'} · {result.extracted.company?.trim() && result.extracted.company !== 'Unknown company' ? result.extracted.company : 'Unknown'}
                   </p>
                 </div>
                 {verdictDisplay?.contradicted ? (
@@ -544,6 +545,13 @@ export default function ProspectCheckPage() {
                   <SignalChip label="Connection" value={result.revenue.messagingPolicy?.replaceAll('_', ' ') ?? '—'} />
                 </div>
               )}
+              <p className="mt-3 text-[12px] text-graphite">
+                {scoreExplanation({
+                  displayScore: result.score.displayScore,
+                  canonicalScore: result.score.total,
+                  qualification: result.score.qualification,
+                })}
+              </p>
               {result.revenue && (
                 <div className="mt-2 space-y-1">
                   <p className="text-[12px] text-ink">{result.revenue.why}</p>
@@ -558,6 +566,7 @@ export default function ProspectCheckPage() {
 
               {Array.isArray(result.score.reasons) && result.score.reasons.length > 0 && (
                 <div className="mt-3 space-y-0.5">
+                  <p className="text-[11px] font-medium text-ink">Strongest evidence</p>
                   {result.score.reasons.map((w, i) => (
                     <p key={i} className="flex items-start gap-2 text-[12px] text-ink">
                       <Check className="mt-0.5 size-3 shrink-0 text-status-success" aria-hidden="true" />
@@ -567,9 +576,10 @@ export default function ProspectCheckPage() {
                 </div>
               )}
 
-              {Array.isArray(result.score.watchOut) && result.score.watchOut.length > 0 && (
+              {((Array.isArray(result.score.watchOut) && result.score.watchOut.length > 0) || (Array.isArray(result.score.missingInfo) && result.score.missingInfo.length > 0)) && (
                 <div className="mt-2 space-y-0.5">
-                  {result.score.watchOut.map((w, i) => (
+                  <p className="text-[11px] font-medium text-ink">Missing evidence</p>
+                  {[...(result.score.watchOut ?? []), ...(result.score.missingInfo ?? [])].map((w, i) => (
                     <p key={i} className="flex items-start gap-2 text-[12px] text-graphite">
                       <AlertTriangle className="mt-0.5 size-3 shrink-0 text-status-warning" aria-hidden="true" />
                       {w}
@@ -589,13 +599,18 @@ export default function ProspectCheckPage() {
 
               {showDetails && (
                 <div className="mt-2 space-y-2 border-t border-line pt-2">
-                  {result.score.dimensions.map((dim) => {
-                    const frac = dim.max > 0 ? dim.points / dim.max : 0
+                  <p className="text-[11px] font-medium text-ink">Why this score?</p>
+                  {normalizeScoreDimensions(result.score.dimensions).map((dim) => {
+                    const frac = dim.max && dim.max > 0 && dim.points != null ? dim.points / dim.max : 0
                     return (
-                      <div key={dim.label} className="space-y-0.5">
+                      <div key={`${dim.key}-${dim.label}`} className="space-y-0.5">
                         <div className="flex items-baseline justify-between gap-3 text-[11px]">
                           <span className="text-ink">{dim.label}</span>
-                          <span className="font-mono text-stone">{dim.points}/{dim.max}</span>
+                          <span className="font-mono text-stone">
+                            {dim.unavailable || dim.points == null || dim.max == null
+                              ? 'Unavailable'
+                              : `${dim.points.toFixed(1)}/${dim.max.toFixed(0)}`}
+                          </span>
                         </div>
                         <div className="h-1 overflow-hidden rounded-full bg-line/60">
                           <div
@@ -606,10 +621,17 @@ export default function ProspectCheckPage() {
                             style={{ width: `${Math.max(frac * 100, frac > 0 ? 8 : 0)}%` }}
                           />
                         </div>
-                        <p className="text-[10px] text-stone">{dim.note}</p>
+                        <p className="text-[10px] text-stone">
+                          {dim.note || 'No interpretation for this row.'}
+                          {dim.inTotal ? '' : ' Context only. Not added on top of the total.'}
+                        </p>
+                        <p className="text-[10px] text-stone">Evidence: No source quote for this row.</p>
                       </div>
                     )
                   })}
+                  {result.score.dimensions.length === 0 && (
+                    <p className="text-[11px] text-stone">Score details are unavailable for this analysis.</p>
+                  )}
                 </div>
               )}
             </div>

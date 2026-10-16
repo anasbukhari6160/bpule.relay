@@ -26,7 +26,7 @@ interface UpdateOption {
 const UPDATE_OPTIONS: UpdateOption[] = [
   { phase: ['connection_sent', 'connection_due', 'connection_accepted'], label: 'They accepted my connection', value: 'connection_accepted', isMessageAction: false },
   { phase: ['dm_sent', 'waiting_for_reply', 'replied', 'follow_up_due', 'conversation'], label: 'They replied', value: 'client_replied', isMessageAction: true },
-  { phase: ['connection_due', 'connection_sent', 'connection_accepted'], label: 'I sent a connection request', value: 'connection', isMessageAction: true },
+  { phase: ['connection_due'], label: 'I sent a connection request', value: 'connection', isMessageAction: true },
   { phase: ['connection_accepted', 'dm_sent', 'waiting_for_reply'], label: 'I sent a message', value: 'dm', isMessageAction: true },
   { phase: ['dm_sent', 'waiting_for_reply', 'replied'], label: 'I followed up', value: 'followup', isMessageAction: true },
   { phase: ['replied', 'conversation'], label: 'I sent a reply', value: 'reply', isMessageAction: true },

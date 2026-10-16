@@ -106,5 +106,8 @@ describe('Builder connection on LinkedIn', () => {
     const strategy = buildRevenueStrategy(source)
 
     expect(strategy.contact.messageRecommended).toBe(false)
+    expect(strategy.assessment.intent).toBe('UNKNOWN')
+    expect(strategy.assessment.fit).not.toBe('HIGH')
+    expect(strategy.assessment.intentWhy).toMatch(/research/i)
   })
 })

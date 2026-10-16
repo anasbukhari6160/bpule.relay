@@ -180,6 +180,9 @@ export async function POST(
       disposition,
     })
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith('NOT_ELIGIBLE:')) {
+      return NextResponse.json({ error: err.message.replace(/^NOT_ELIGIBLE:\s*/, '') }, { status: 409 })
+    }
     if (err instanceof Error && /locked|owner|unavailable|not yours/i.test(err.message)) {
       if (/connection-locked/i.test(err.message)) {
         return NextResponse.json({ error: err.message }, { status: 429 })

@@ -16,6 +16,8 @@ import type { LeadDetail } from '@/lib/store/types'
 import { computeRelationshipState } from '@/lib/relay/relationship-state'
 import { deriveNextLeadAction } from '@/lib/relay/lead-state-machine'
 import type { Message } from '@/lib/domain/types'
+import { displayScoreFromCanonical, normalizeScoreDimensions, scoreExplanation } from '@/lib/scoring/display-score'
+import { calendarDaysBetween, followupDueInDays } from '@/lib/leads/followup'
 
 type Mode = 'connection' | 'dm' | 'reply' | 'followup' | null
 
@@ -78,13 +80,16 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     if (!next || mode || generating) return
     const match = next.match(/^generate-(connection|dm|reply|followup)$/)
     if (match) {
-      setMode(match[1] as Mode)
-      generateDraft(match[1] as Mode)
+      const requested = match[1] as Mode
+      if (requested === 'followup' && phase !== 'follow_up_due') return
+      if (requested === 'connection' && phase !== 'connection_due') return
+      setMode(requested)
+      generateDraft(requested)
       const url = new URL(window.location.href)
       url.searchParams.delete('next')
       window.history.replaceState({}, '', url.toString())
     }
-  }, [searchParams])
+  }, [searchParams, phase])
 
   const generateDraft = useCallback(async (type: Mode) => {
     if (!type) return
@@ -154,19 +159,30 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   if (ci && typeof ci === 'object') canonicalObj = ci as Record<string, unknown>
   else if (typeof ci === 'string') { try { canonicalObj = JSON.parse(ci) } catch { /* ignore */ } }
   const scoreBreakdown = canonicalObj?.scoreBreakdown as Record<string, unknown> | null
-  const rawDimensions = Array.isArray(scoreBreakdown?.dimensions) ? scoreBreakdown.dimensions as Array<Record<string, unknown>> : []
-  // Normalize V2 (points/max) and V3 (contribution/weight) into a single shape
-  const dimensions = rawDimensions.map((d) => {
-    if (d.points != null && d.max != null) {
-      // V2 format
-      return { label: String(d.label ?? d.key), points: Number(d.points ?? 0), max: Number(d.max ?? 0), note: d.note != null ? String(d.note) : null }
-    }
-    // V3 format: contribution = raw * weight * 100, max = weight * 100
-    const contribution = Number(d.contribution ?? 0)
-    const weight = Number(d.weight ?? 0)
-    const max = weight * 100
-    return { label: String(d.label ?? d.key), points: contribution, max: max > 0 ? max : 100, note: d.note != null ? String(d.note) : null }
+  const rawDimensions = Array.isArray(scoreBreakdown?.dimensions) ? scoreBreakdown.dimensions : []
+  const dimensions = normalizeScoreDimensions(rawDimensions)
+  const qualification = typeof canonicalObj?.qualification === 'string' ? canonicalObj.qualification : null
+  const intelligenceVersion = typeof canonicalObj?.intelligenceVersion === 'string' ? canonicalObj.intelligenceVersion : null
+  const displayScore = displayScoreFromCanonical({
+    intelligenceVersion,
+    qualification,
+    canonicalScore: lead.canonicalScore ?? null,
   })
+  const reasons = Array.isArray(scoreBreakdown?.reasons) ? scoreBreakdown.reasons.map(String) : []
+  const watchOut = Array.isArray(scoreBreakdown?.watchOut) ? scoreBreakdown.watchOut.map(String) : []
+  const missingInfo = Array.isArray(scoreBreakdown?.missingInfo) ? scoreBreakdown.missingInfo.map(String) : []
+  const lastConversationAt = messages
+    .filter((m) => m.direction !== 'inbound' && (m.type === 'dm' || m.type === 'followup') && m.sentAt)
+    .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+    .at(-1)?.sentAt ?? null
+  const followupDueIn = followupDueInDays(lead.followupCount ?? 0)
+  const daysSinceConversation = lastConversationAt ? calendarDaysBetween(new Date(lastConversationAt), new Date()) : 0
+  const followupDueOn = lastConversationAt
+    ? new Date(new Date(lastConversationAt).getTime() + followupDueIn * 24 * 60 * 60 * 1000)
+    : null
+  const followupDueLabel = followupDueOn
+    ? followupDueOn.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    : null
 
   return (
     <div className="space-y-6">
@@ -181,16 +197,16 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               <div className="min-w-0">
                 <h1 className="text-[18px] font-medium text-ink truncate">{lead.contactName ?? 'Unnamed prospect'}</h1>
                 <p className="text-[13px] text-graphite truncate flex items-center gap-1">
-                  {lead.company && <><Building2 className="size-3 shrink-0" /><span className="truncate">{lead.company}</span></>}
-                  {lead.contactTitle && <span className="ml-1 text-stone truncate">· {lead.contactTitle}</span>}
+                  <Building2 className="size-3 shrink-0" /><span className="truncate">{lead.company?.trim() && lead.company !== 'Unknown company' ? lead.company : 'Unknown'}</span>
+                  <span className="ml-1 text-stone truncate">· {lead.contactTitle?.trim() || 'Unknown'}</span>
                 </p>
               </div>
             </div>
             <div className="mt-3 flex items-center gap-4">
-              <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} size={44} />
+              <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} displayValue={displayScore} size={44} />
               <div>
                 <div className="flex items-center gap-2">
-                   <span className="text-[13px] font-medium text-ink">{lead.canonicalScore != null ? `${Math.round(lead.canonicalScore / 10)}/10` : lead.score != null ? `${lead.score}/12` : '—'}</span>
+                   <span className="text-[13px] font-medium text-ink">{displayScore != null ? `${displayScore}/10` : lead.score != null ? `${lead.score}/12` : '—'}</span>
                   {(() => {
                     const q = (lead.canonicalIntelligence as Record<string, unknown>)?.qualification
                     if (!q) return null
@@ -254,22 +270,54 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
             <span className="ml-auto text-stone group-open:hidden"><ChevronDown className="size-4" /></span>
             <span className="ml-auto text-stone hidden group-open:inline"><ChevronUp className="size-4" /></span>
           </summary>
-          <div className="grid gap-3 p-5 sm:grid-cols-2 border-t border-line/40">
+          <div className="space-y-3 border-t border-line/40 p-5">
+            <div>
+              <p className="text-[12px] font-medium text-ink">Why this score?</p>
+              <p className="mt-1 text-[12px] text-graphite">
+                {scoreExplanation({
+                  displayScore,
+                  canonicalScore: lead.canonicalScore ?? null,
+                  qualification,
+                })}
+              </p>
+              {reasons.length > 0 && (
+                <ul className="mt-2 space-y-0.5">
+                  {reasons.slice(0, 4).map((reason) => (
+                    <li key={reason} className="text-[11px] text-ink">Strongest evidence: {reason}</li>
+                  ))}
+                </ul>
+              )}
+              {[...watchOut, ...missingInfo].length > 0 && (
+                <ul className="mt-1 space-y-0.5">
+                  {[...watchOut, ...missingInfo].slice(0, 4).map((gap) => (
+                    <li key={gap} className="text-[11px] text-stone">Missing: {gap}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
             {dimensions.map((dim, i) => {
-              const pct = dim.max > 0 ? Math.min(100, Math.round((dim.points / dim.max) * 100)) : 0
+              const pct = dim.max && dim.points != null ? Math.min(100, Math.round((dim.points / dim.max) * 100)) : 0
               return (
                 <div key={`${dim.label}-${i}`} className="rounded-lg border border-line/50 bg-bone p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[12px] font-medium text-ink">{dim.label}</span>
-                    <span className="text-[11px] font-mono text-stone">{dim.points.toFixed(1)} / {dim.max.toFixed(0)}</span>
+                    <span className="text-[11px] font-mono text-stone">
+                      {dim.unavailable || dim.points == null || dim.max == null ? 'Unavailable' : `${dim.points.toFixed(1)} / ${dim.max.toFixed(0)}`}
+                    </span>
                   </div>
                   <div className="h-1.5 rounded-full bg-line/40 overflow-hidden">
                     <div className={cn('h-full rounded-full', pct >= 70 ? 'bg-status-success' : pct >= 40 ? 'bg-orange' : 'bg-status-warning')} style={{ width: `${pct}%` }} />
                   </div>
-                  {dim.note && <p className="mt-1 text-[10px] text-stone">{dim.note}</p>}
+                  <p className="mt-1 text-[10px] text-stone">
+                    {dim.note || 'No interpretation for this row.'}
+                    {dim.inTotal ? '' : ' Context only. Not added on top of the total.'}
+                  </p>
+                  <p className="text-[10px] text-stone">Evidence: No source quote for this row.</p>
                 </div>
               )
             })}
+            </div>
           </div>
         </details>
       )}
@@ -346,12 +394,25 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                   <MessageSquare className="size-3.5" /> Send first message
                 </Button>
               )}
-              {/* Follow-up: always available when client hasn't replied after
-                  any outbound message (DM sent, connection sent with no reply) */}
-              {(phase === 'dm_sent' || phase === 'follow_up_due' || (phase === 'connection_sent' && !lead.connectionAcceptedAt)) && !hasUnansweredInbound && (
-                <Button size="sm" onClick={() => generateDraft('followup')} className="w-full justify-center">
-                  <Send className="size-3.5" /> Send follow-up
-                </Button>
+              {phase === 'connection_sent' && !lead.connectionAcceptedAt && (
+                <p className="text-[12px] text-graphite">
+                  Waiting for acceptance. The sent note and date stay in history. A follow-up is not due until they accept, you send the first message, and {followupDueIn} calendar days pass.
+                </p>
+              )}
+              {phase === 'dm_sent' && !hasUnansweredInbound && lastConversationAt && (
+                <p className="text-[12px] text-graphite">
+                  Waiting for a reply. Follow-up is due {followupDueLabel} ({daysSinceConversation} of {followupDueIn} calendar days so far). Reason: no reply yet.
+                </p>
+              )}
+              {phase === 'follow_up_due' && !hasUnansweredInbound && (
+                <div className="space-y-2">
+                  <p className="text-[12px] text-graphite">
+                    Follow-up is due{followupDueLabel ? ` ${followupDueLabel}` : ''}. Reason: no reply after {followupDueIn} calendar days.
+                  </p>
+                  <Button size="sm" onClick={() => generateDraft('followup')} className="w-full justify-center">
+                    <Send className="size-3.5" /> Send follow-up
+                  </Button>
+                </div>
               )}
               <div className="flex flex-wrap gap-2 pt-2 border-t border-line/30">
                 {phase === 'connection_sent' && !lead.connectionAcceptedAt && (
@@ -359,8 +420,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                     <Trophy className="size-3" /> Mark accepted
                   </Button>
                 )}
-                {/* Follow-up always available when waiting on client */}
-                {(phase === 'dm_sent' || phase === 'follow_up_due' || (phase === 'connection_sent' && !lead.connectionAcceptedAt)) && !hasUnansweredInbound && (
+                {phase === 'follow_up_due' && !hasUnansweredInbound && (
                   <Button size="sm" variant="outline" onClick={() => generateDraft('followup')}>
                     <Clock className="size-3" /> Follow up
                   </Button>
@@ -421,18 +481,14 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
             <span className="ml-auto text-stone hidden group-open:inline"><ChevronUp className="size-4" /></span>
           </summary>
           <div className="grid gap-3 p-5 border-t border-line/40 sm:grid-cols-2">
-            {lead.company && (
-              <div className="rounded-lg border border-line/50 bg-bone p-3">
-                <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Company</p>
-                <p className="text-[13px] text-ink">{lead.company}</p>
-              </div>
-            )}
-            {lead.contactTitle && (
-              <div className="rounded-lg border border-line/50 bg-bone p-3">
-                <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Title</p>
-                <p className="text-[13px] text-ink">{lead.contactTitle}</p>
-              </div>
-            )}
+            <div className="rounded-lg border border-line/50 bg-bone p-3">
+              <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Company</p>
+              <p className="text-[13px] text-ink">{lead.company?.trim() && lead.company !== 'Unknown company' ? lead.company : 'Unknown'}</p>
+            </div>
+            <div className="rounded-lg border border-line/50 bg-bone p-3">
+              <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Title</p>
+              <p className="text-[13px] text-ink">{lead.contactTitle?.trim() || 'Unknown'}</p>
+            </div>
             {lead.signalEvidence && (
               <div className="rounded-lg border border-line/50 bg-bone p-3 sm:col-span-2">
                 <p className="text-[10px] font-medium uppercase tracking-wider text-stone mb-1">Signal evidence</p>
