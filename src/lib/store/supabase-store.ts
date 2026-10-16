@@ -2689,10 +2689,18 @@ export class SupabaseStore implements ScoutStore {
     sentText: string,
     type: UpworkMessage['type'] = 'cover',
   ): Promise<void> {
+    // Look up the job's connects cost before updating
+    const { data: jobRow } = await this.client
+      .from('upwork_jobs')
+      .select('connects_cost')
+      .eq('id', jobId)
+      .maybeSingle()
+    const connectsCost = (jobRow as unknown as { connects_cost: number })?.connects_cost ?? 0
+
     await Promise.all([
       this.client
         .from('upwork_jobs')
-        .update({ status: 'applied' })
+        .update({ status: 'applied', connects_used: connectsCost })
         .eq('id', jobId)
         .eq('owner_rep_id', this.rep.id),
       this.client.from('upwork_messages').insert({

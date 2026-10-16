@@ -3,6 +3,7 @@ import { Plus, Briefcase, ArrowRight } from 'lucide-react'
 import { createScoutStore } from '@/lib/store'
 import { PageHeader } from '@/components/ui/page-header'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ConnectsPanel } from '@/components/upwork-connects-panel'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,6 +26,9 @@ export default async function UpworkPage() {
           </Link>
         }
       />
+
+      {/* Connects usage */}
+      <ConnectsPanel />
 
       {jobs.length === 0 ? (
         <EmptyState
@@ -49,7 +53,12 @@ export default async function UpworkPage() {
                 <Link href={`/upwork/${job.id}`} className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-console-raised">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-medium text-ink">{job.title}</p>
-                    <p className="text-[11px] text-graphite capitalize">{job.status}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[11px] text-graphite capitalize">{job.status}</span>
+                      {job.connectsCost > 0 && (
+                        <span className="text-[10px] text-stone">• {job.connectsCost} Connects</span>
+                      )}
+                    </div>
                   </div>
                   <ArrowRight className="size-3.5 shrink-0 text-stone" />
                 </Link>

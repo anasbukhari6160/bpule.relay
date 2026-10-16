@@ -203,6 +203,7 @@ export interface UpworkJob {
   hourlyRateMax: number | null
   proposalCount: number | null
   connectsCost: number
+  connectsUsed?: number
   requiredSkills: string[]
   urgencySignal: string | null
   score: number | null
