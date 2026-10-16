@@ -131,7 +131,7 @@ export function TargetsManager() {
 
   async function patchTarget(id: string, patches: { targetCount?: number; active?: boolean }) {
     setError(null)
-    const res = await fetch(`/api/admin/targets/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patches) })
+    const res = await fetch(`/api/admin/targets/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patches) })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) { setError(typeof data.error === 'string' ? data.error : 'Update failed'); return }
     const updated = data.target as DailyTarget
