@@ -1271,7 +1271,10 @@ export class SupabaseStore implements ScoutStore {
     if (insertError) throw insertError
     if (!inserted) throw new Error('Failed to log the send.')
 
-    // When a client replies, mark lead as replied and create an outcome
+    // type 'reply' here is the REP answering the client (client replies go
+    // through recordProspectReply). The lead stays 'replied' — it is a live
+    // conversation — but no 'replied' outcome is created: that outcome means
+    // the client responded, and logging our own answer must not inflate it.
     const leadStatus = type === 'reply' ? 'replied' : type === 'followup' ? 'followed_up' : 'contacted'
     // Auto-restore on reply: a reply means the lead is active again and must
     // return to the live dashboard automatically, even if it had been swept
@@ -1297,22 +1300,6 @@ export class SupabaseStore implements ScoutStore {
       }
     }
 
-    // When a client replies, create an outcome so the Reply CTA activates
-    if (type === 'reply') {
-      try {
-        await this.client
-          .from('outcomes')
-          .insert({
-            organization_id: this.orgId,
-            lead_id: leadId,
-            stage: 'replied',
-            occurred_at: new Date().toISOString(),
-          })
-      } catch {
-        // Non-fatal: outcome creation must not block the send
-      }
-    }
-
     // Connection-pacing lock: when a connection note is sent on a good-profile
     // lead, lock the lead from further outreach for 6 working hours. The lead
     // resurfaces at unlock as a "Send connection message" priority task.
@@ -1333,8 +1320,11 @@ export class SupabaseStore implements ScoutStore {
       const convState = await this.getConversationState(leadId)
       await this.upsertConversationState({
         leadId,
-        stage: type === 'reply' ? 'replied' : 'contacted',
+        // Our reply keeps the conversation at whatever stage it reached.
+        stage: type === 'reply' ? (convState?.stage ?? 'replied') : 'contacted',
         followupCount: type === 'followup' ? (convState?.followupCount ?? 0) + 1 : (convState?.followupCount ?? 0),
+        lastSentAt: new Date().toISOString(),
+        lastSentMessageId: inserted.id as string,
       })
     } catch {
       // Non-fatal: conversation state must not block the send
@@ -1495,7 +1485,7 @@ export class SupabaseStore implements ScoutStore {
       }
     }
 
-    return { allowed: true, todaySends: todaySends + 1, limit }
+    return { allowed: true, todaySends: todaySends + 1, limit, messageId: inserted.id as string }
   }
 
   /**
@@ -1544,7 +1534,7 @@ export class SupabaseStore implements ScoutStore {
     }
   }
 
-  async recordProspectReply(leadId: string, replyText: string): Promise<Message> {
+  async recordProspectReply(leadId: string, replyText: string, options?: { receivedAt?: string | null }): Promise<Message> {
     const { data: leadRow, error: leadError } = await this.client
       .from('leads')
       .select('id, status, sender_profile_id')
@@ -1557,7 +1547,11 @@ export class SupabaseStore implements ScoutStore {
       throw new Error('This lead is locked.')
     }
 
-    const now = new Date().toISOString()
+    // When the rep knows when the client actually wrote (pasted later),
+    // keep that time so the thread orders correctly. Never in the future.
+    const nowMs = Date.now()
+    const received = options?.receivedAt ? new Date(options.receivedAt).getTime() : NaN
+    const now = new Date(Number.isFinite(received) && received <= nowMs ? received : nowMs).toISOString()
     const replyPayload: Record<string, unknown> = {
       organization_id: this.orgId,
       lead_id: leadId,
@@ -1972,6 +1966,42 @@ export class SupabaseStore implements ScoutStore {
       .eq('organization_id', this.orgId)
     if (error) throw error
     return (data ?? []).map(mapProofItem)
+  }
+
+  async listConversationSnapshots(leadIds: string[]): Promise<Map<string, { messages: Message[]; followupCount: number; memoryStage: string | null }>> {
+    const out = new Map<string, { messages: Message[]; followupCount: number; memoryStage: string | null }>()
+    if (leadIds.length === 0) return out
+    for (const id of leadIds) out.set(id, { messages: [], followupCount: 0, memoryStage: null })
+    const chunks: string[][] = []
+    for (let i = 0; i < leadIds.length; i += 200) chunks.push(leadIds.slice(i, i + 200))
+    for (const chunk of chunks) {
+      const [msgs, states] = await Promise.all([
+        this.client
+          .from('messages')
+          .select('*')
+          .eq('organization_id', this.orgId)
+          .in('lead_id', chunk)
+          .not('sent_at', 'is', null)
+          .order('sent_at', { ascending: true }),
+        this.client
+          .from('conversation_states')
+          .select('*')
+          .eq('organization_id', this.orgId)
+          .in('lead_id', chunk),
+      ])
+      if (msgs.error) throw msgs.error
+      for (const row of (msgs.data ?? []) as Row[]) {
+        out.get(row.lead_id as string)?.messages.push(mapMessage(row))
+      }
+      for (const row of (states.data ?? []) as Row[]) {
+        const entry = out.get(row.lead_id as string)
+        if (!entry) continue
+        entry.followupCount = (row.followup_count as number) ?? 0
+        const memory = row.memory as { stage?: string } | null
+        entry.memoryStage = memory?.stage ?? null
+      }
+    }
+    return out
   }
 
   async listMessages(leadId: string): Promise<Message[]> {
@@ -4873,6 +4903,10 @@ export class SupabaseStore implements ScoutStore {
     lostAt?: string | null
     lostReason?: string | null
     commercialState?: Record<string, unknown> | null
+    lastSentAt?: string | null
+    lastSentMessageId?: string | null
+    memory?: import('@/lib/conversation/types').ConversationMemory | null
+    composerDraft?: import('@/lib/conversation/types').ComposerDraft | null
   }): Promise<ConversationState> {
     const existing = await this.getConversationState(input.leadId)
     const previousStage = existing?.stage ?? 'new'
@@ -4891,7 +4925,14 @@ export class SupabaseStore implements ScoutStore {
       won_at: input.wonAt ?? existing?.wonAt ?? null,
       lost_at: input.lostAt ?? existing?.lostAt ?? null,
       lost_reason: input.lostReason ?? existing?.lostReason ?? null,
-      commercial_state: input.commercialState ?? existing?.commercialState ?? {},
+      // Merge: several writers (draft strategy, memory) share this object.
+      commercial_state: input.commercialState
+        ? { ...(existing?.commercialState ?? {}), ...input.commercialState }
+        : existing?.commercialState ?? {},
+      last_sent_at: input.lastSentAt ?? existing?.lastSentAt ?? null,
+      last_sent_message_id: input.lastSentMessageId ?? existing?.lastSentMessageId ?? null,
+      memory: input.memory ?? existing?.memory ?? null,
+      composer_draft: input.composerDraft !== undefined ? input.composerDraft : existing?.composerDraft ?? null,
       updated_at: new Date().toISOString(),
     }
     let { data, error } = await this.client
@@ -4899,11 +4940,29 @@ export class SupabaseStore implements ScoutStore {
       .upsert(row)
       .select('*')
       .single()
-    if (error && /commercial_state|42703|PGRST204/i.test(error.message ?? '')) {
-      const { commercial_state: _dropped, ...legacyRow } = row
-      const retry = await this.client.from('conversation_states').upsert(legacyRow).select('*').single()
+    // Columns from newer migrations may not exist yet: drop them and retry,
+    // so an unapplied migration degrades features instead of breaking sends.
+    if (error && /memory|composer_draft|42703|PGRST204/i.test(error.message ?? '')) {
+      // Pre-migration: keep memory and the draft inside commercial_state so
+      // the conversation view still remembers them.
+      const { memory: _m, composer_draft: _d, ...rest } = row
+      const withoutConversationColumns = {
+        ...rest,
+        commercial_state: {
+          ...(rest.commercial_state as Record<string, unknown>),
+          [MEMORY_FALLBACK_KEY]: row.memory,
+          [DRAFT_FALLBACK_KEY]: row.composer_draft,
+        },
+      }
+      const retry = await this.client.from('conversation_states').upsert(withoutConversationColumns).select('*').single()
       data = retry.data
       error = retry.error
+      if (error && /commercial_state|42703|PGRST204/i.test(error.message ?? '')) {
+        const { commercial_state: _c, ...legacyRow } = withoutConversationColumns
+        const legacy = await this.client.from('conversation_states').upsert(legacyRow).select('*').single()
+        data = legacy.data
+        error = legacy.error
+      }
     }
     if (error) throw error
 
@@ -4981,6 +5040,25 @@ export class SupabaseStore implements ScoutStore {
     const { data, error } = await q
     if (error) throw error
     return (data ?? []).map(mapSalesMemory)
+  }
+
+  async listRecentEdits(limit: number): Promise<Array<{ originalText: string; editedText: string; createdAt: string }>> {
+    const { data, error } = await this.client
+      .from('edit_learning')
+      .select('original_text, edited_text, created_at')
+      .eq('organization_id', this.orgId)
+      .eq('rep_id', this.rep.id)
+      .order('created_at', { ascending: false })
+      .limit(Math.max(limit * 3, limit))
+    if (error) return []
+    return ((data ?? []) as Row[])
+      .map((r) => ({
+        originalText: String(r.original_text ?? ''),
+        editedText: String(r.edited_text ?? ''),
+        createdAt: String(r.created_at ?? ''),
+      }))
+      .filter((r) => r.originalText.trim() && r.originalText.trim() !== r.editedText.trim())
+      .slice(0, limit)
   }
 
   async logEditLearning(input: {
@@ -8599,6 +8677,10 @@ function mapProofCard(r: Row): ProofCard {
   }
 }
 
+/** commercial_state keys used for memory/draft until the conversation-memory migration is applied. */
+const MEMORY_FALLBACK_KEY = '__conversationMemory'
+const DRAFT_FALLBACK_KEY = '__composerDraft'
+
 function mapConversationState(r: Row): ConversationState {
   return {
     id: r.id as string,
@@ -8618,6 +8700,12 @@ function mapConversationState(r: Row): ConversationState {
     lostAt: (r.lost_at as string) ?? null,
     lostReason: (r.lost_reason as string) ?? null,
     commercialState: (r.commercial_state as Record<string, unknown>) ?? null,
+    memory: (r.memory as ConversationState['memory'])
+      ?? ((r.commercial_state as Record<string, unknown> | null)?.[MEMORY_FALLBACK_KEY] as ConversationState['memory'])
+      ?? null,
+    composerDraft: r.composer_draft !== undefined
+      ? (r.composer_draft as ConversationState['composerDraft']) ?? null
+      : ((r.commercial_state as Record<string, unknown> | null)?.[DRAFT_FALLBACK_KEY] as ConversationState['composerDraft']) ?? null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   }

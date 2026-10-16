@@ -62,6 +62,9 @@ async function updateConversationOnReply(supabase: ReturnType<typeof createServi
       lead_id: leadId,
       rep_id: repId,
       type: 'reply',
+      // The client's email reply. Without this it defaulted to outbound and
+      // showed as something the rep sent.
+      direction: 'inbound',
       sent_text: replyBody,
       sent_at: nowIso,
       model_used: 'email_webhook',

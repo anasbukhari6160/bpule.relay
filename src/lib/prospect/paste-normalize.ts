@@ -35,3 +35,14 @@ export function normalizeProspectPaste(rawText: string): string {
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
+
+/**
+ * Display name for a lead saved before chrome stripping existed:
+ * "View Riya Rajeev’s profile, open to work" → "Riya Rajeev".
+ */
+export function displayContactName(name: string | null | undefined): string | null {
+  const t = name?.trim()
+  if (!t) return null
+  const m = t.match(/^view\s+(.+?)['’]s?\s+(?:full\s+)?profile\b.*$/i)
+  return m?.[1]?.trim() || t
+}

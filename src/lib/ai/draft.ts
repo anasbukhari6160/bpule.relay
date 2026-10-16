@@ -238,6 +238,14 @@ function buildFewShotBlock(
   return lines.join('\n')
 }
 
+const HISTORY_TURNS = 8
+const HISTORY_CHARS = 600
+
+function clip(text: string, max: number): string {
+  const t = text.replace(/\s+/g, ' ').trim()
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t
+}
+
 export function buildUserPrompt(
   input: DraftInput,
   opts?: { asPlainText?: boolean },
@@ -301,13 +309,16 @@ export function buildUserPrompt(
     .join('\n')
 
   const historyBlock = (() => {
+    // Both sides, labeled by who wrote them, oldest first. The old block
+    // called the client's messages "what the sender already wrote" and
+    // listed them newest-first under a "newest last" heading.
     const sent = (input.history ?? [])
       .filter((m) => m.sentText && m.sentAt)
       .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+      .slice(-HISTORY_TURNS)
     if (sent.length === 0) return ''
-    return `What the sender already wrote on this lead (newest last), so a follow-up can reference it:\n${sent
-      .map((m) => `- [${m.type}] ${m.sentText}`)
-      .reverse()
+    return `Conversation so far (oldest first; "Me" is the sender, "Client" is the prospect):\n${sent
+      .map((m) => `- ${m.direction === 'inbound' ? 'Client' : 'Me'} [${m.type}]: ${clip(m.sentText ?? '', HISTORY_CHARS)}`)
       .join('\n')}`
   })()
 

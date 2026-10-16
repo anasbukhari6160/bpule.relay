@@ -356,6 +356,8 @@ export interface ScoutStore {
    getRecentLeads(repId: string, limit: number): Promise<Lead[]>
    /** @param includeArchived defaults to false — archived leads are excluded from the default read path. */
    listOwnedLeads(includeArchived?: boolean): Promise<Lead[]>
+  /** Sent messages and conversation state for many leads in one round trip (inbox). */
+  listConversationSnapshots(leadIds: string[]): Promise<Map<string, { messages: Message[]; followupCount: number; memoryStage: string | null }>>
   /** @param includeArchived defaults to false — archived leads are excluded from the default read path. */
   fetchLeadsAll(scopeToUser?: boolean, includeArchived?: boolean): Promise<Lead[]>
   getQueue(): Promise<QueueData>
@@ -386,7 +388,7 @@ export interface ScoutStore {
    * 'replied', record the outcome, and emit a CLIENT_REPLIED event. Returns
    * the inserted message. Owner-scoped.
    */
-  recordProspectReply(leadId: string, replyText: string): Promise<Message>
+  recordProspectReply(leadId: string, replyText: string, options?: { receivedAt?: string | null }): Promise<Message>
   /**
    * Admin override: clear a lead's connection-pacing lock immediately. No-op
    * if the lead is not locked. Admin/owner-scoped.
@@ -868,7 +870,13 @@ export interface ScoutStore {
     wonAt?: string | null
     lostAt?: string | null
     lostReason?: string | null
+    /** Merged into the existing commercial state, never replaces it. */
     commercialState?: Record<string, unknown> | null
+    lastSentAt?: string | null
+    lastSentMessageId?: string | null
+    memory?: import('@/lib/conversation/types').ConversationMemory | null
+    /** undefined keeps the current draft; null clears it. */
+    composerDraft?: import('@/lib/conversation/types').ComposerDraft | null
   }): Promise<ConversationState>
   addSalesMemory(input: {
     memoryType: SalesMemoryType
@@ -902,6 +910,8 @@ export interface ScoutStore {
     sendDisposition?: import('@/lib/domain/types').SendDisposition | null
     rejectReasons?: import('@/lib/domain/types').SendFeedbackReason[]
   }): Promise<void>
+  /** The current rep's most recent sends where the AI draft was edited, newest first. */
+  listRecentEdits(limit: number): Promise<Array<{ originalText: string; editedText: string; createdAt: string }>>
   updateLeadSenderProfile(leadId: string, senderProfileId: string | null): Promise<void>
   updateLeadStatus(leadId: string, status: 'won' | 'lost'): Promise<void>
   updateLeadRevenueIdentity(leadId: string, revenueIdentityId: string): Promise<void>

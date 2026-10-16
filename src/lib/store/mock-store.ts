@@ -922,6 +922,18 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         .filter((l) => includeArchived || !l.archived)
         .map((l) => ({ ...l, direction: l.direction ?? 'outbound', source: l.source ?? null, inboundMessage: l.inboundMessage ?? null, inboundRaw: l.inboundRaw ?? null, archived: l.archived ?? false, archivedAt: l.archivedAt ?? null }))
     },
+    async listConversationSnapshots(leadIds: string[]) {
+      const out = new Map<string, { messages: Message[]; followupCount: number; memoryStage: string | null }>()
+      for (const id of leadIds) {
+        const state = conversationStates.find((c) => c.leadId === id)
+        out.set(id, {
+          messages: messages.filter((m) => m.leadId === id && m.sentAt).sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? '')),
+          followupCount: state?.followupCount ?? 0,
+          memoryStage: state?.memory?.stage ?? null,
+        })
+      }
+      return out
+    },
     async listMessages(leadId: string) {
       return messages.filter((m) => m.leadId === leadId)
     },
@@ -1047,17 +1059,11 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
       }
 
       if (type === 'reply') {
+        // The rep answering the client: conversation stays live, but no
+        // 'replied' outcome (that means the client responded).
         lead.status = 'replied'
-        // Auto-restore on reply — mirrors SupabaseStore.markContacted.
         lead.archived = false
         lead.archivedAt = null
-        outcomes.push({
-          id: nextId('out'),
-          organizationId: DEMO_ORG_ID,
-          leadId,
-          stage: 'replied',
-          occurredAt: new Date().toISOString(),
-        })
       } else {
         lead.status = type === 'followup' ? 'followed_up' : 'contacted'
       }
@@ -1087,12 +1093,9 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
 
       const existingState = conversationStates.find((s) => s.leadId === leadId)
       if (existingState) {
-        existingState.stage = type === 'reply' ? 'replied' : 'contacted'
+        existingState.stage = type === 'reply' ? existingState.stage : 'contacted'
         existingState.lastSentAt = new Date().toISOString()
         existingState.lastSentMessageId = msgId
-        if (type === 'reply') {
-          existingState.lastReplyAt = new Date().toISOString()
-        }
         existingState.updatedAt = new Date().toISOString()
       } else {
         conversationStates.push({
@@ -1102,7 +1105,7 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
           stage: type === 'reply' ? 'replied' : 'contacted',
           lastSentAt: new Date().toISOString(),
           lastSentMessageId: msgId,
-          lastReplyAt: type === 'reply' ? new Date().toISOString() : null,
+          lastReplyAt: null,
           senderProfileId: null,
           lastStrategy: null,
           lastAngle: null,
@@ -1131,11 +1134,12 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
       lead.lockedUntil = null
       lead.lockedReason = null
     },
-    async recordProspectReply(leadId: string, replyText: string): Promise<Message> {
+    async recordProspectReply(leadId: string, replyText: string, options?: { receivedAt?: string | null }): Promise<Message> {
       const lead = leads.find((l) => l.id === leadId)
       if (!lead || lead.ownerRepId !== rep.id) throw new Error('Lead not found')
       if (lead.status === 'no' || lead.status === 'dead') throw new Error('This lead is locked.')
-      const now = new Date().toISOString()
+      const received = options?.receivedAt ? new Date(options.receivedAt).getTime() : NaN
+      const now = new Date(Number.isFinite(received) && received <= Date.now() ? received : Date.now()).toISOString()
       const msgId = nextId('msg')
       const message: Message = { id: msgId, organizationId: DEMO_ORG_ID, leadId, repId: rep.id, type: 'reply', draftText: null, sentText: replyText, sentAt: now, modelUsed: null, direction: 'inbound', createdAt: now }
       messages.push(message)
@@ -2626,8 +2630,8 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         organizationId: DEMO_ORG_ID,
         leadId: input.leadId,
         stage: input.stage ?? existing?.stage ?? 'new',
-        lastSentAt: existing?.lastSentAt ?? null,
-        lastSentMessageId: existing?.lastSentMessageId ?? null,
+        lastSentAt: input.lastSentAt ?? existing?.lastSentAt ?? null,
+        lastSentMessageId: input.lastSentMessageId ?? existing?.lastSentMessageId ?? null,
         lastReplyAt: existing?.lastReplyAt ?? null,
         senderProfileId: input.senderProfileId ?? existing?.senderProfileId ?? null,
         lastStrategy: input.lastStrategy ?? existing?.lastStrategy ?? null,
@@ -2638,7 +2642,11 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         wonAt: input.wonAt ?? existing?.wonAt ?? null,
         lostAt: input.lostAt ?? existing?.lostAt ?? null,
         lostReason: input.lostReason ?? existing?.lostReason ?? null,
-        commercialState: input.commercialState ?? existing?.commercialState ?? null,
+        commercialState: input.commercialState
+          ? { ...(existing?.commercialState ?? {}), ...input.commercialState }
+          : existing?.commercialState ?? null,
+        memory: input.memory ?? existing?.memory ?? null,
+        composerDraft: input.composerDraft !== undefined ? input.composerDraft : existing?.composerDraft ?? null,
         createdAt: existing?.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
@@ -2672,6 +2680,13 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
       if (opts?.profileId) results = results.filter((m) => m.profileId === opts.profileId)
       if (opts?.industry) results = results.filter((m) => m.industry === opts.industry)
       return results.slice(0, opts?.limit ?? 50)
+    },
+    async listRecentEdits(limit: number) {
+      return [...editLearnings]
+        .reverse()
+        .filter((e) => e.originalText.trim() && e.originalText.trim() !== e.editedText.trim())
+        .slice(0, limit)
+        .map((e) => ({ originalText: e.originalText, editedText: e.editedText, createdAt: e.createdAt }))
     },
     async logEditLearning(input) {
       editLearnings.push({

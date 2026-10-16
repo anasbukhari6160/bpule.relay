@@ -214,7 +214,9 @@ export async function POST(
         }
 
         if (prospectReply) {
-          const priorMessages = detail.messages.filter((m) => m.sentAt && m.sentAt < (prospectReplyMsg?.sentAt ?? ''))
+          // A pasted reply (no stored message) is the newest turn, so every
+          // stored message is prior context — '' as the bound hid them all.
+          const priorMessages = detail.messages.filter((m) => m.sentAt && m.sentAt < (prospectReplyMsg?.sentAt ?? new Date().toISOString()))
           const convStage = detail.status === 'followed_up' ? 'contacted' : detail.status === 'new' ? 'new' : detail.status === 'contacted' ? 'contacted' : detail.status === 'replied' ? 'replied' : detail.status === 'no' ? 'lost' : detail.status === 'dead' ? 'lost' : 'contacted'
           const replyAnalysis = analyzeReply(prospectReply, {
             leadId: detail.id,

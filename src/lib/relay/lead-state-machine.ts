@@ -25,28 +25,35 @@ export interface LeadActionResult {
   followupDue: boolean
   /** Number of follow-ups remaining (0-3) */
   followupsRemaining: number
+  /** True once the client has written at least once — a live two-way thread. */
+  inConversation?: boolean
 }
 
 const MAX_FOLLOWUPS = 3
+const DAY_MS = 1000 * 60 * 60 * 24
+
+function bySentAtDesc(a: Message, b: Message): number {
+  return (b.sentAt ?? '').localeCompare(a.sentAt ?? '')
+}
 
 function latestMessage(messages: Message[], type: string): Message | null {
   return messages
-    .filter((m) => m.type === type && m.sentText && m.sentAt)
-    .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0] ?? null
-}
-
-function latestInbound(messages: Message[]): Message | null {
-  return messages
-    .filter((m) => m.direction === 'inbound' && m.sentText && m.sentAt)
-    .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0] ?? null
+    .filter((m) => m.type === type && m.direction !== 'inbound' && m.sentText && m.sentAt)
+    .sort(bySentAtDesc)[0] ?? null
 }
 
 function isAutoReply(text: string): boolean {
   return /out of office|ooo|auto.?(reply|response)|i am currently away|i('m| am) on vacation|on leave|delayed response|limited email access/i.test(text)
 }
 
-export function deriveNextLeadAction(lead: LeadDetail): LeadActionResult {
-  const now = Date.now()
+/**
+ * Next action for a lead. The rule is turn-taking: whoever wrote the last
+ * real message decides whose move it is. A client message that came after
+ * our last message always means "reply", however many rounds in — the old
+ * "any outbound reply ever" check made every second client reply read as
+ * "waiting for client".
+ */
+export function deriveNextLeadAction(lead: LeadDetail, now: number = Date.now()): LeadActionResult {
   const messages = lead.messages
 
   if (lead.status === 'won') {
@@ -75,83 +82,87 @@ export function deriveNextLeadAction(lead: LeadDetail): LeadActionResult {
   // connection-type message (even with empty sentText) means the request
   // was made. Sending without a note must still advance the lifecycle.
   const connectionMsg = messages
-    .filter((m) => m.type === 'connection' && m.sentAt)
-    .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0] ?? null
+    .filter((m) => m.type === 'connection' && m.direction !== 'inbound' && m.sentAt)
+    .sort(bySentAtDesc)[0] ?? null
   const connectionSent = Boolean(connectionMsg)
   const connectionAccepted = lead.connectionAcceptedAt != null
 
-  const dmMsg = latestMessage(messages, 'dm')
-  const dmSent = Boolean(dmMsg)
+  const dmSent = Boolean(latestMessage(messages, 'dm'))
 
-  const lastInbound = latestInbound(messages)
-  const clientReplied = Boolean(lastInbound) && !isAutoReply(lastInbound!.sentText ?? '')
+  const lastInbound = messages
+    .filter((m) => m.direction === 'inbound' && m.sentText && m.sentAt && !isAutoReply(m.sentText))
+    .sort(bySentAtDesc)[0] ?? null
+  // Inbound-first leads: the client's opening message lives on the lead.
+  const inboundFirst = lead.direction === 'inbound' && Boolean(lead.inboundMessage?.trim())
+  const clientWrote = Boolean(lastInbound) || inboundFirst
 
-  const outboundReply = messages
-    .filter((m) => m.type === 'reply' && m.direction !== 'inbound' && m.sentText && m.sentAt)
-    .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0] ?? null
-  const replySent = Boolean(outboundReply)
+  const lastOutbound = messages
+    .filter((m) => m.direction !== 'inbound' && m.sentText && m.sentAt)
+    .sort(bySentAtDesc)[0] ?? null
 
   const followupCount = lead.followupCount ?? 0
   const followupsRemaining = Math.max(0, MAX_FOLLOWUPS - followupCount)
 
-  const lastOutbound = messages
-    .filter((m) => m.direction !== 'inbound' && m.sentText && m.sentAt)
-    .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0] ?? null
-
-
-  // 1. Connection not sent yet
-  if (!connectionSent) {
-    return {
-      action: 'SEND_CONNECTION',
-      primaryLabel: 'Send connection request',
-      reason: 'Reach out to connect.',
-      requiresAction: true,
-      followupDue: false,
-      followupsRemaining,
-    }
-  }
-
-  // 2. Connection sent but not accepted
-  if (connectionSent && !connectionAccepted) {
-    // Connection expired after 14 days
-    if (connectionMsg?.sentAt) {
-      const daysPending = (now - new Date(connectionMsg.sentAt).getTime()) / (1000 * 60 * 60 * 24)
-      if (daysPending > 14) {
-        return {
-          action: 'CLOSED',
-          primaryLabel: 'Connection expired',
-          reason: 'Connection request was not accepted within 14 days.',
-          requiresAction: false,
-          followupDue: false,
-          followupsRemaining: 0,
-        }
-      }
-    }
-    return {
-      action: 'WAIT_CONNECTION',
-      primaryLabel: 'Waiting for connection',
-      reason: `Connection sent ${connectionMsg?.sentAt ? timeAgo(connectionMsg.sentAt, now) : ''}. Waiting for acceptance.`,
-      requiresAction: false,
-      followupDue: false,
-      followupsRemaining,
-    }
-  }
-
-  // 3. Client replied, rep hasn't answered — takes priority over everything.
-  // A reply is the next action whether or not a DM was sent first.
-  if (clientReplied && !replySent) {
+  // 1. Client wrote after our last message → reply. Takes priority over
+  // everything, including a connection that was never logged.
+  const unanswered = lastInbound
+    // Inclusive: a client message logged at the same instant as ours is still unanswered.
+    ? !lastOutbound || (lastOutbound.sentAt ?? '') <= (lastInbound.sentAt ?? '')
+    : inboundFirst && !lastOutbound
+  if (unanswered) {
+    const at = lastInbound?.sentAt ?? null
     return {
       action: 'SEND_REPLY',
       primaryLabel: `Reply to ${lead.contactName ?? 'them'}`,
-      reason: `Client replied ${lastInbound?.sentAt ? timeAgo(lastInbound.sentAt, now) : ''}.`,
+      reason: at ? `Client replied ${timeAgo(at, now)}.` : 'Client wrote first and is waiting for an answer.',
       requiresAction: true,
       followupDue: false,
       followupsRemaining,
+      inConversation: true,
     }
   }
 
-  // 4. Connection accepted, DM not sent
-  if (connectionAccepted && !dmSent) {
+  const engaged = dmSent || clientWrote || Boolean(lastOutbound && lastOutbound.type !== 'connection')
+
+  if (!engaged) {
+    // 2. Connection not sent yet
+    if (!connectionSent) {
+      return {
+        action: 'SEND_CONNECTION',
+        primaryLabel: 'Send connection request',
+        reason: 'Reach out to connect.',
+        requiresAction: true,
+        followupDue: false,
+        followupsRemaining,
+      }
+    }
+
+    // 3. Connection sent but not accepted
+    if (!connectionAccepted) {
+      if (connectionMsg?.sentAt) {
+        const daysPending = (now - new Date(connectionMsg.sentAt).getTime()) / DAY_MS
+        if (daysPending > 14) {
+          return {
+            action: 'CLOSED',
+            primaryLabel: 'Connection expired',
+            reason: 'Connection request was not accepted within 14 days.',
+            requiresAction: false,
+            followupDue: false,
+            followupsRemaining: 0,
+          }
+        }
+      }
+      return {
+        action: 'WAIT_CONNECTION',
+        primaryLabel: 'Waiting for connection',
+        reason: `Connection sent ${connectionMsg?.sentAt ? timeAgo(connectionMsg.sentAt, now) : ''}. Waiting for acceptance.`,
+        requiresAction: false,
+        followupDue: false,
+        followupsRemaining,
+      }
+    }
+
+    // 4. Connection accepted, DM not sent
     return {
       action: 'SEND_DM',
       primaryLabel: 'Send first message',
@@ -162,11 +173,12 @@ export function deriveNextLeadAction(lead: LeadDetail): LeadActionResult {
     }
   }
 
-  // 5. DM sent, waiting for reply, follow-up due
-  if (dmSent && !clientReplied && followupsRemaining > 0 && lastOutbound?.sentAt) {
-    const daysSince = (now - new Date(lastOutbound.sentAt).getTime()) / (1000 * 60 * 60 * 24)
+  // 5. Our move was last. Follow up once the spacing has passed — this
+  // applies mid-conversation too, when the client goes quiet after a reply.
+  if (lastOutbound?.sentAt) {
+    const daysSince = (now - new Date(lastOutbound.sentAt).getTime()) / DAY_MS
     const dueIn = followupDueInDays(followupCount)
-    if (daysSince >= dueIn) {
+    if (followupsRemaining > 0 && daysSince >= dueIn) {
       return {
         action: 'SEND_FOLLOWUP',
         primaryLabel: 'Send follow-up',
@@ -174,35 +186,23 @@ export function deriveNextLeadAction(lead: LeadDetail): LeadActionResult {
         requiresAction: true,
         followupDue: true,
         followupsRemaining,
+        inConversation: clientWrote,
       }
     }
-  }
-
-  // 6. DM sent, waiting for reply, follow-up not yet due
-  if (dmSent && !clientReplied) {
     return {
       action: 'WAIT_REPLY',
-      primaryLabel: 'Waiting for reply',
-      reason: `Last message sent ${lastOutbound?.sentAt ? timeAgo(lastOutbound.sentAt, now) : ''}.`,
+      primaryLabel: clientWrote ? 'Waiting for client' : 'Waiting for reply',
+      reason: clientWrote
+        ? `You replied ${timeAgo(lastOutbound.sentAt, now)}.`
+        : `Last message sent ${timeAgo(lastOutbound.sentAt, now)}.`,
       requiresAction: false,
       followupDue: false,
       followupsRemaining,
+      inConversation: clientWrote,
     }
   }
 
-  // 7. Reply sent, waiting for client
-  if (replySent) {
-    return {
-      action: 'WAIT_REPLY',
-      primaryLabel: 'Waiting for client',
-      reason: `You replied ${outboundReply?.sentAt ? timeAgo(outboundReply.sentAt, now) : ''}.`,
-      requiresAction: false,
-      followupDue: false,
-      followupsRemaining,
-    }
-  }
-
-  // 8. Fallback
+  // 6. Fallback
   return {
     action: 'REVIEW',
     primaryLabel: 'Review lead',

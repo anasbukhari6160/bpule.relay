@@ -23,9 +23,11 @@ export async function POST(
   }
 
   let replyText: string
+  let receivedAt: string | null = null
   try {
     const body = await request.json()
     replyText = typeof body?.text === 'string' ? body.text.trim() : ''
+    receivedAt = typeof body?.receivedAt === 'string' && !Number.isNaN(new Date(body.receivedAt).getTime()) ? body.receivedAt : null
   } catch {
     return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 })
   }
@@ -34,7 +36,7 @@ export async function POST(
   }
 
   try {
-    await store.recordProspectReply(id, replyText)
+    await store.recordProspectReply(id, replyText, { receivedAt })
     const detail = await store.getLead(id)
     return NextResponse.json({ ok: true, lead: detail })
   } catch (error) {

@@ -367,8 +367,8 @@ function LeadCard({ lead, index }: { lead: LeadRow; index: number }) {
 function primaryAction(lead: LeadRow): { label: string; href: string } {
   const stage = derivePipelineStage(lead)
   if (stage === 'to_contact') return { label: 'Send connection', href: `/leads/${lead.id}` }
-  if (stage === 'needs_reply') return { label: 'Reply', href: `/leads/${lead.id}` }
-  if (stage === 'follow_up_due') return { label: 'Follow up', href: `/leads/${lead.id}` }
+  if (stage === 'needs_reply') return { label: 'Reply', href: `/leads/${lead.id}?tab=conversation` }
+  if (stage === 'follow_up_due') return { label: 'Follow up', href: `/leads/${lead.id}?tab=conversation` }
   return { label: 'View', href: `/leads/${lead.id}` }
 }
 

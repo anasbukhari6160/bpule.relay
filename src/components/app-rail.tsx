@@ -9,6 +9,7 @@ import {
   Briefcase,
   Search,
   MessageSquare,
+  MessagesSquare,
   PenLine,
   UserCircle2,
   Shield,
@@ -35,6 +36,7 @@ import type { RepRole } from '@/lib/domain/types'
 const PRIMARY_NAV = [
   { href: '/dashboard', label: 'Today', icon: CalendarDays, exact: true },
   { href: '/leads', label: 'Leads', icon: Target, exact: false },
+  { href: '/chats', label: 'Chats', icon: MessagesSquare, exact: false },
   { href: '/prospect', label: 'Prospect', icon: Search, exact: false },
   { href: '/accountability', label: 'My Numbers', icon: TrendingUp, exact: true },
 ]

@@ -123,7 +123,7 @@ export async function POST(
     try {
       const delta = computeEditDelta(originalDraft, sentText)
       await store.logEditLearning({
-        messageId: null,
+        messageId: result.messageId ?? null,
         originalText: originalDraft,
         editedText: sentText,
         editDistance: delta.editDistance,

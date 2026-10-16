@@ -59,7 +59,7 @@ export interface RelationshipState {
 
 export function computeRelationshipState(lead: LeadDetail, now: number = Date.now()): RelationshipState {
   // Derive presentation state from the canonical state machine
-  const canonical = deriveNextLeadAction(lead)
+  const canonical = deriveNextLeadAction(lead, now)
 
   const lastClient = lead.messages
     .filter((m) => m.direction === 'inbound' && m.sentText && m.sentAt)
@@ -154,7 +154,7 @@ function mapCanonicalToPresentation(
     case 'WAIT_REPLY':
       return {
         kind: 'their_move',
-        phase: 'dm_sent',
+        phase: canonical.inConversation ? 'conversation' : 'dm_sent',
         title: 'Waiting for reply',
         detail: canonical.reason,
         waitingOn: 'client',

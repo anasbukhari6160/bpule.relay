@@ -65,7 +65,7 @@ export function determineFollowup(context: FollowupContext): FollowupStrategy {
     }
   }
 
-  const hasConversation = priorMessages.some((m) => (m.type === 'dm' || m.type === 'followup') && m.sentAt)
+  const hasConversation = priorMessages.some((m) => (m.type === 'dm' || m.type === 'followup' || m.type === 'reply') && m.sentAt)
   const hasConnection = priorMessages.some((m) => m.type === 'connection' && m.sentAt)
   if (hasConnection && !hasConversation) {
     const waiting = !lead.connectionAcceptedAt
@@ -82,7 +82,13 @@ export function determineFollowup(context: FollowupContext): FollowupStrategy {
     }
   }
 
-  if (context.lastReplyAt || lead.status === 'replied') {
+  // Only an UNANSWERED client message blocks a follow-up. Once the rep has
+  // answered, a quiet client can be followed up like any other thread.
+  const lastInboundAt = [
+    context.lastReplyAt ?? '',
+    ...priorMessages.filter((m) => m.direction === 'inbound' && m.sentAt).map((m) => m.sentAt ?? ''),
+  ].sort().at(-1) || null
+  if (lastInboundAt && lastInboundAt >= lastSentAt) {
     return {
       shouldFollowUp: false,
       reason: 'They already replied.',

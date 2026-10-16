@@ -416,7 +416,7 @@ export default function InboundPage() {
 
             {leadId && (
               <Link
-                href={`/leads/${leadId}`}
+                href={`/leads/${leadId}?tab=conversation`}
                 className="inline-flex items-center gap-2 rounded-lg bg-orange px-4 py-2 text-[13px] font-medium text-on-accent transition-all hover:bg-orange-dark active:scale-[0.97]"
               >
                 <Send className="size-4" />

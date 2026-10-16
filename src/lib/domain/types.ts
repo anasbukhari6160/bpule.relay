@@ -907,6 +907,10 @@ export interface ConversationState {
   lostAt: string | null
   lostReason: string | null
   commercialState?: Record<string, unknown> | null
+  /** Rolling conversation memory (summary + deal facts). */
+  memory?: import('@/lib/conversation/types').ConversationMemory | null
+  /** The rep's current unsent draft for this lead. */
+  composerDraft?: import('@/lib/conversation/types').ComposerDraft | null
   createdAt: string
   updatedAt: string
 }

@@ -132,7 +132,14 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     try {
       const res = await fetch(`/api/leads/${lead.id}/contact`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sentText: text.trim(), type }),
+        // originalDraft lets the server learn from the rep's edits; the key
+        // makes a double-click log the send once.
+        body: JSON.stringify({
+          sentText: text.trim(),
+          type,
+          originalDraft: draftText.trim() || null,
+          idempotencyKey: `${lead.id}:${type}:${draftText.length}:${text.trim().length}:${lead.messages.length}`,
+        }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Failed to log send.')
@@ -140,7 +147,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     } catch (err) {
       setGenerationStatus(err instanceof Error ? err.message : 'Failed to log send.')
     } finally { setSending(false) }
-  }, [lead.id, router])
+  }, [lead.id, lead.messages.length, draftText, router])
 
   const markAccepted = useCallback(async () => {
     setMarkingAccepted(true)
