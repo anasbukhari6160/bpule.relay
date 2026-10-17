@@ -107,12 +107,11 @@ export async function POST(request: Request) {
         : classifyRoleFromTitle(
             typeof body.contactTitle === 'string' ? body.contactTitle : null,
           ),
-    marketRegion:
-      typeof body.marketRegion === 'string' && body.marketRegion.trim()
-        ? (body.marketRegion as ExtractedLead['marketRegion'])
-        : mapLocationToRegion(
-            typeof body.locationRaw === 'string' ? body.locationRaw : null,
-          ),
+    // Region is derived from the location on the server, never taken from
+    // the client — it feeds the market-fit score.
+    marketRegion: mapLocationToRegion(
+      typeof body.locationRaw === 'string' ? body.locationRaw : null,
+    ),
     signalType,
     signalEvidence,
     extractionConfidence:
@@ -167,7 +166,18 @@ export async function POST(request: Request) {
   }
 
   const legacyRulebook = await store.getRulebook()
-  const legacyScore = legacyRulebook ? computeScore(extracted, legacyRulebook) : null
+  // Score claims against the research the lead came from. No research means
+  // nothing can be verified — an omitted source must not buy signal/quote points.
+  const scoreSource =
+    typeof body.rawInput === 'string' && body.rawInput.trim()
+      ? body.rawInput
+      : canonical?.rawSource.rawInput ?? ''
+  const legacyScore = legacyRulebook
+    ? computeScore(extracted, legacyRulebook, {
+        sourceText: scoreSource,
+        signalOrigin: body.signalOrigin === 'AI_EXTRACTED' ? 'AI_EXTRACTED' : 'USER_ENTERED',
+      })
+    : null
 
   const canonicalScoreValue = canonical?.canonicalScore ?? null
   const finalVerdict: Verdict | null =

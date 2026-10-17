@@ -5,12 +5,13 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'motion/react'
 import { Search, GripVertical, Clock, User, PenLine, Inbox, Send, Reply, CheckCircle2, Snowflake, Target, Bell } from 'lucide-react'
 import { cn } from 'cn'
-import { ScoreRing } from '@/components/score-ring'
+import { LeadScoreRing } from '@/components/score-ring'
 import { signalById } from '@/lib/score/signals'
 import { EmptyState } from '@/components/ui/empty-state'
 import {
   PIPELINE_COLUMNS,
   TERMINAL_COLUMNS,
+  STAGE_EMPTY_MESSAGES,
   derivePipelineStage,
   filterLeads,
   sortLeads,
@@ -45,14 +46,7 @@ const COLUMN_ICONS: Record<PipelineStage, React.ReactNode> = {
   cold: <Snowflake className="size-3.5" />,
 }
 
-const EMPTY_MESSAGES: Record<PipelineStage, { title: string; hint: string }> = {
-  to_contact: { title: 'Nothing to contact', hint: 'New leads appear here' },
-  waiting: { title: 'No one waiting', hint: 'Sent messages will show here' },
-  follow_up_due: { title: 'No follow-ups due', hint: 'Waiting leads appear here after 5 days' },
-  needs_reply: { title: 'No replies yet', hint: 'Client responses land here' },
-  done: { title: 'Nothing closed', hint: 'Won or lost leads go here' },
-  cold: { title: 'No cold leads', hint: 'Unresponsive leads appear here' },
-}
+const EMPTY_MESSAGES = STAGE_EMPTY_MESSAGES
 
 function getInitials(name: string): string {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
@@ -341,7 +335,7 @@ function LeadCard({ lead, orgView, now, onDragStart, index }: LeadCardProps) {
           </div>
           <div className="shrink-0">
             {score !== null ? (
-              <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} size={32} />
+              <LeadScoreRing lead={lead} size={32} />
             ) : (
               <div className="flex size-8 items-center justify-center rounded-full bg-bone border border-line/60">
                 <span className="text-[9px] font-medium text-stone">{getInitials(lead.company)}</span>

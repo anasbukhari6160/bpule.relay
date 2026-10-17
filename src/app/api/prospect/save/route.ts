@@ -154,7 +154,7 @@ export async function POST(request: Request) {
             : null
 
     // the authority. Save must PERSIST the canonical result, not recompute.
-    const score = computeScore(extracted, rulebook)
+    const score = computeScore(extracted, rulebook, { sourceText: normalizedRawInput ?? '', signalOrigin: 'AI_EXTRACTED' })
     const verdict = verdictFromCanonical ?? score.verdict
 
     const v3Packet = canonical && typeof canonical === 'object'

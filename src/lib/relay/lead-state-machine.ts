@@ -2,6 +2,7 @@
 import type { LeadDetail } from '@/lib/store/types'
 import type { Message } from '@/lib/domain/types'
 import { followupDueInDays } from '@/lib/leads/followup'
+import { resolveConversationIntent } from '@/lib/conversation/intent'
 
 export type LeadAction =
   | 'SEND_CONNECTION'
@@ -27,6 +28,8 @@ export interface LeadActionResult {
   followupsRemaining: number
   /** True once the client has written at least once — a live two-way thread. */
   inConversation?: boolean
+  /** Why the lead is closed when it was the client, not the lead status. */
+  closedReason?: 'client_declined'
 }
 
 const MAX_FOLLOWUPS = 3
@@ -103,6 +106,30 @@ export function deriveNextLeadAction(lead: LeadDetail, now: number = Date.now())
   const followupCount = lead.followupCount ?? 0
   const followupsRemaining = Math.max(0, MAX_FOLLOWUPS - followupCount)
 
+  // 0. The client's latest explicit meaning wins: a rejection (even followed
+  // by "ok bye") closes the sales thread — no reply prompt, no follow-ups.
+  const clientTexts = [
+    ...(inboundFirst ? [lead.inboundMessage ?? ''] : []),
+    ...messages
+      .filter((m) => m.direction === 'inbound' && m.sentText && m.sentAt)
+      .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+      .map((m) => m.sentText ?? ''),
+  ]
+  const conversationIntent = resolveConversationIntent(clientTexts)
+  if (conversationIntent.declined) {
+    const said = (conversationIntent.decidingText ?? '').replace(/\s+/g, ' ').trim()
+    return {
+      action: 'CLOSED',
+      primaryLabel: 'Client declined',
+      reason: `They said "${said.length > 80 ? `${said.slice(0, 79)}…` : said}". Relay will not follow up. Mark the lead lost, or keep it for later.`,
+      requiresAction: false,
+      followupDue: false,
+      followupsRemaining: 0,
+      inConversation: true,
+      closedReason: 'client_declined',
+    }
+  }
+
   // 1. Client wrote after our last message → reply. Takes priority over
   // everything, including a connection that was never logged.
   const unanswered = lastInbound
@@ -178,7 +205,8 @@ export function deriveNextLeadAction(lead: LeadDetail, now: number = Date.now())
   if (lastOutbound?.sentAt) {
     const daysSince = (now - new Date(lastOutbound.sentAt).getTime()) / DAY_MS
     const dueIn = followupDueInDays(followupCount)
-    if (followupsRemaining > 0 && daysSince >= dueIn) {
+    // A client who asked to talk later is not chased on the normal schedule.
+    if (followupsRemaining > 0 && daysSince >= dueIn && !conversationIntent.deferred) {
       return {
         action: 'SEND_FOLLOWUP',
         primaryLabel: 'Send follow-up',
@@ -192,9 +220,11 @@ export function deriveNextLeadAction(lead: LeadDetail, now: number = Date.now())
     return {
       action: 'WAIT_REPLY',
       primaryLabel: clientWrote ? 'Waiting for client' : 'Waiting for reply',
-      reason: clientWrote
-        ? `You replied ${timeAgo(lastOutbound.sentAt, now)}.`
-        : `Last message sent ${timeAgo(lastOutbound.sentAt, now)}.`,
+      reason: conversationIntent.deferred
+        ? `They asked to talk later ("${(conversationIntent.decidingText ?? '').slice(0, 60)}"). No follow-up until then.`
+        : clientWrote
+          ? `You replied ${timeAgo(lastOutbound.sentAt, now)}.`
+          : `Last message sent ${timeAgo(lastOutbound.sentAt, now)}.`,
       requiresAction: false,
       followupDue: false,
       followupsRemaining,

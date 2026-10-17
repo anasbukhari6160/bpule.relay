@@ -4,6 +4,8 @@ export type SseHandlers<T extends { type: string } = { type: string }> = {
   onEvent: (event: T) => void
   onEnd?: () => void
   onError?: (message: string) => void
+  /** The caller renders errors itself — do not also show a toast. */
+  silent?: boolean
 }
 
 /**
@@ -23,7 +25,7 @@ export async function readSse<T extends { type: string }>(
     } catch {
       // Non-JSON error body; keep the generic message.
     }
-    notifyError(message)
+    if (!handlers.silent) notifyError(message)
     handlers.onError?.(message)
     throw new Error(message)
   }

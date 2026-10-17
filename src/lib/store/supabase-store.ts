@@ -243,7 +243,7 @@ function isMissingColumnError(err: unknown): boolean {
 }
 
 const LEAD_LIST_COLUMNS =
-  'id, organization_id, owner_rep_id, company, company_key, contact_name, contact_title, title_raw, location_raw, url, role_category, market_region, extraction_confidence, extraction_profile, signal_type, signal_evidence, verbatim_quote, score, verdict, status, play_id, tags, direction, source, inbound_message, inbound_raw, sender_profile_id, revenue_identity_id, canonical_score, score_version, scored_at, score_breakdown, remote_eligibility, connection_accepted_at, locked_until, locked_reason, archived, archived_at, decision_provider, decision_model, decision_run_id, selected_episode_id, profile_match_score, profile_match_version, best_profile_id, best_profile_match_score, intelligence_input_hash, fallback_reason, created_at'
+  'id, organization_id, owner_rep_id, company, company_key, contact_name, contact_title, title_raw, location_raw, url, role_category, market_region, extraction_confidence, extraction_profile, signal_type, signal_evidence, verbatim_quote, score, verdict, status, play_id, tags, direction, source, inbound_message, inbound_raw, sender_profile_id, revenue_identity_id, canonical_score, score_version, scored_at, score_breakdown, display_qualification:canonical_intelligence->>qualification, display_intelligence_version:canonical_intelligence->>intelligenceVersion, remote_eligibility, connection_accepted_at, locked_until, locked_reason, archived, archived_at, decision_provider, decision_model, decision_run_id, selected_episode_id, profile_match_score, profile_match_version, best_profile_id, best_profile_match_score, intelligence_input_hash, fallback_reason, created_at'
 
 function mapLead(r: Row): Lead {
   return {
@@ -280,6 +280,12 @@ function mapLead(r: Row): Lead {
     scoreVersion: (r.score_version as string) ?? null,
     scoredAt: (r.scored_at as string) ?? null,
     canonicalIntelligence: (r.canonical_intelligence as Record<string, unknown>) ?? null,
+    displayQualification: (r.display_qualification as string)
+      ?? ((r.canonical_intelligence as Record<string, unknown> | null)?.qualification as string)
+      ?? null,
+    displayIntelligenceVersion: (r.display_intelligence_version as string)
+      ?? ((r.canonical_intelligence as Record<string, unknown> | null)?.intelligenceVersion as string)
+      ?? null,
     rawSourceData: (r.raw_source_data as Record<string, unknown>) ?? null,
     scoreBreakdown: (r.score_breakdown as Record<string, unknown>) ?? null,
     remoteEligibility: (r.remote_eligibility as Record<string, unknown>) ?? null,

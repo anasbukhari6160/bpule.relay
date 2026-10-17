@@ -7,6 +7,18 @@ import type {
   Verdict,
 } from '@/lib/domain/types'
 import { mapLocationToRegion } from '@/lib/leads/targeting-pure'
+import { isVerified, verifyQuote, verifySignal, type ClaimOrigin } from '@/lib/evidence/provenance'
+
+export interface ScoreOptions {
+  /**
+   * The original research. When given, the signal and verbatim-quote rows
+   * only earn points for claims found in it — a dropdown choice or a typed
+   * quote is not evidence. Omitted = legacy behaviour (no source to check).
+   */
+  sourceText?: string | null
+  /** Who chose the signal type: the extractor or the user. */
+  signalOrigin?: ClaimOrigin
+}
 
 /**
  * Scout qualification rubric.
@@ -30,8 +42,14 @@ import { mapLocationToRegion } from '@/lib/leads/targeting-pure'
 export function computeScore(
   lead: ExtractedLead,
   rulebook: OrganizationRulebook,
+  options: ScoreOptions = {},
 ): ScoreResult {
   const signal = rulebook.signals.find((s) => s.id === lead.signalType) ?? null
+  const checkSource = options.sourceText !== undefined
+  const signalClaim = checkSource && signal ? verifySignal(signal.id, options.sourceText, options.signalOrigin ?? 'USER_ENTERED') : null
+  const signalSupported = !signalClaim || isVerified(signalClaim.status)
+  const quoteClaim = checkSource && lead.verbatimQuote ? verifyQuote(lead.verbatimQuote, options.sourceText) : null
+  const quoteSupported = !quoteClaim || isVerified(quoteClaim.status)
 
   const evidenceSpecific = evidenceIsSpecific(lead.signalEvidence)
   const region = mapLocationToRegion(lead.locationRaw ?? null)
@@ -41,11 +59,19 @@ export function computeScore(
     {
       category: 'signal',
       label: signal ? `${signal.short} (${signal.name})` : 'No signal',
-      points: signal ? signal.weight : 0,
+      points: signal && signalSupported ? signal.weight : 0,
       max: rulebook.maxSignalWeight,
-      note: signal
-        ? signal.description
-        : 'No recognized signal type was extracted.',
+      note: !signal
+        ? 'No recognized signal type was extracted.'
+        : signalClaim?.status === 'UNVERIFIABLE'
+          ? 'Add the original research to verify this signal. No points without a source.'
+          : !signalSupported
+            ? `"${signal.short}" is not supported by the research. No points until the source shows it.`
+            : signal.description,
+      ...(signalClaim ? {
+        verification: signalSupported ? 'VERIFIED' as const : signalClaim.status === 'UNVERIFIABLE' ? 'UNVERIFIABLE' as const : 'UNSUPPORTED' as const,
+        sourceQuote: signalClaim.sourceQuote,
+      } : {}),
     },
     {
       category: 'completeness',
@@ -92,11 +118,19 @@ export function computeScore(
     {
       category: 'completeness',
       label: 'Verbatim quote',
-      points: lead.verbatimQuote ? 1 : 0,
+      points: lead.verbatimQuote && quoteSupported ? 1 : 0,
       max: 1,
-      note: lead.verbatimQuote
-        ? 'A verbatim quote is on file.'
-        : 'No quotable line captured.',
+      note: !lead.verbatimQuote
+        ? 'No quotable line captured.'
+        : quoteClaim?.status === 'UNVERIFIABLE'
+          ? 'Add the original research to verify this quote. No points without a source.'
+          : !quoteSupported
+            ? 'Quote could not be found in the research. No verified-evidence credit.'
+            : quoteClaim ? 'Quote found in the research.' : 'A verbatim quote is on file.',
+      ...(quoteClaim ? {
+        verification: quoteSupported ? 'VERIFIED' as const : quoteClaim.status === 'UNVERIFIABLE' ? 'UNVERIFIABLE' as const : 'UNSUPPORTED' as const,
+        sourceQuote: quoteClaim.sourceQuote,
+      } : {}),
     },
   ]
 
@@ -116,6 +150,8 @@ export function computeScore(
   for (const note of lead.confidenceNotes ?? []) {
     gates.push(note)
   }
+  if (signal && !signalSupported) gates.push(`Selected signal "${signal.short}" is not supported by the research.`)
+  if (lead.verbatimQuote && !quoteSupported) gates.push('Verbatim quote could not be verified against the research.')
 
   return { total, verdict, baseVerdict, breakdown: items, gates }
 }

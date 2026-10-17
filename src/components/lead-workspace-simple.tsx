@@ -10,13 +10,13 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { ScoreRing } from '@/components/score-ring'
+import { LeadScoreRing } from '@/components/score-ring'
 import { cn } from 'cn'
 import type { LeadDetail } from '@/lib/store/types'
 import { computeRelationshipState } from '@/lib/relay/relationship-state'
 import { deriveNextLeadAction } from '@/lib/relay/lead-state-machine'
 import type { Message } from '@/lib/domain/types'
-import { displayScoreFromCanonical, normalizeScoreDimensions, scoreExplanation } from '@/lib/scoring/display-score'
+import { getLeadDisplayScore, normalizeScoreDimensions, scoreExplanation } from '@/lib/scoring/display-score'
 import { calendarDaysBetween, followupDueInDays } from '@/lib/leads/followup'
 import { formatRoleLine, stripEmployerFromTitle } from '@/lib/leads/role-line'
 import { ScoreBreakdown } from '@/components/score-breakdown'
@@ -126,6 +126,32 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     } finally { setGenerating(false) }
   }, [lead.id, lastInbound])
 
+  // "Send without note" logs a connection with no text. It must surface
+  // server refusals (daily ceiling, lock, ownership) instead of failing
+  // silently, and cannot be double-submitted.
+  const [loggingConnection, setLoggingConnection] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const sendWithoutNote = useCallback(async () => {
+    if (loggingConnection) return
+    setLoggingConnection(true)
+    setActionError(null)
+    setDraftText(''); setMode(null)
+    try {
+      const res = await fetch(`/api/leads/${lead.id}/contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'connection', sentText: '', sendWithoutNote: true, idempotencyKey: `${lead.id}:connection:no-note` }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error((data as { error?: string }).error || 'Could not log the connection request.')
+      setLeadVersion((v) => v + 1); router.refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not log the connection request.')
+    } finally {
+      setLoggingConnection(false)
+    }
+  }, [lead.id, loggingConnection, router])
+
   const logSend = useCallback(async (text: string, type: Mode) => {
     if (!text.trim() || !type) return
     setSending(true)
@@ -160,7 +186,8 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     setLeadVersion((v) => v + 1); router.refresh()
   }, [lead.id, router])
 
-  const visibleMessages = messages.filter((m) => m.sentText || m.direction === 'inbound').sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+  // A connection logged without a note has no text but still happened.
+  const visibleMessages = messages.filter((m) => m.sentText || m.direction === 'inbound' || (m.type === 'connection' && m.sentAt)).sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
 
   // canonicalIntelligence may arrive as a JSON string from the DB — parse it
   let canonicalObj: Record<string, unknown> | null = null
@@ -171,12 +198,9 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   const rawDimensions = Array.isArray(scoreBreakdown?.dimensions) ? scoreBreakdown.dimensions : []
   const dimensions = normalizeScoreDimensions(rawDimensions)
   const qualification = typeof canonicalObj?.qualification === 'string' ? canonicalObj.qualification : null
-  const intelligenceVersion = typeof canonicalObj?.intelligenceVersion === 'string' ? canonicalObj.intelligenceVersion : null
-  const displayScore = displayScoreFromCanonical({
-    intelligenceVersion,
-    qualification,
-    canonicalScore: lead.canonicalScore ?? null,
-  })
+  // Same policy as the pipeline and dashboard.
+  const leadScore = getLeadDisplayScore(lead)
+  const displayScore = leadScore.max === 10 ? leadScore.value : null
   const reasons = Array.isArray(scoreBreakdown?.reasons) ? scoreBreakdown.reasons.map(String) : []
   const watchOut = Array.isArray(scoreBreakdown?.watchOut) ? scoreBreakdown.watchOut.map(String) : []
   const missingInfo = Array.isArray(scoreBreakdown?.missingInfo) ? scoreBreakdown.missingInfo.map(String) : []
@@ -211,10 +235,10 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               </div>
             </div>
             <div className="mt-3 flex items-center gap-4">
-              <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} displayValue={displayScore} size={44} />
+              <LeadScoreRing lead={lead} size={44} />
               <div>
                 <div className="flex items-center gap-2">
-                   <span className="text-[13px] font-medium text-ink">{displayScore != null ? `${displayScore}/10` : lead.score != null ? `${lead.score}/12` : '—'}</span>
+                   <span className="text-[13px] font-medium text-ink">{leadScore.text}</span>
                   {(() => {
                     const q = (lead.canonicalIntelligence as Record<string, unknown>)?.qualification
                     if (!q) return null
@@ -363,17 +387,18 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
             <div className="px-5 py-4 space-y-3">
               {phase === 'connection_due' && !lead.connectionAcceptedAt && (
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button size="sm" onClick={() => generateDraft('connection')} className="w-full justify-center sm:flex-1">
+                  <Button size="sm" onClick={() => generateDraft('connection')} disabled={loggingConnection} className="w-full justify-center sm:flex-1">
                     <Send className="size-3.5" /> Generate connection note
                   </Button>
-                  <Button size="sm" variant="outline" className="w-full justify-center sm:w-auto" onClick={async () => {
-                    // BUG-22: send WITHOUT logging the generated note. Clear draftText
-                    // so the generated note is not displayed or persisted.
-                    setDraftText(''); setMode(null)
-                    await fetch(`/api/leads/${lead.id}/contact`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'connection', sentText: '', sendWithoutNote: true }) })
-                    setLeadVersion((v) => v + 1); router.refresh()
-                  }}>Send without note</Button>
+                  <Button size="sm" variant="outline" className="w-full justify-center sm:w-auto" loading={loggingConnection} disabled={loggingConnection} onClick={() => void sendWithoutNote()}>
+                    Send without note
+                  </Button>
                 </div>
+              )}
+              {actionError && (
+                <p role="alert" className="flex items-start gap-1.5 text-[12px] text-status-danger">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" /> {actionError}
+                </p>
               )}
               {hasUnansweredInbound && (
                 <Button size="sm" onClick={() => generateDraft('reply')} className="w-full justify-center">
@@ -454,7 +479,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                     <span className="capitalize">{msg.type}</span>
                     {msg.sentAt && <span>· {timeAgo(msg.sentAt)}</span>}
                   </div>
-                  <p className="text-[13px] text-ink whitespace-pre-wrap">{msg.sentText || '(empty)'}</p>
+                  <p className="text-[13px] text-ink whitespace-pre-wrap">{msg.sentText || (msg.type === 'connection' ? 'Connection request sent (no note).' : '(empty)')}</p>
                 </div>
               ))}
             </div>

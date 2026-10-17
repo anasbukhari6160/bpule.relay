@@ -35,6 +35,53 @@ export function displayScoreFromCanonical(input: DisplayScoreInput | null): numb
   return Math.round(input.canonicalScore / 10)
 }
 
+/** Version of the display policy below — bump when the mapping changes. */
+export const DISPLAY_SCORE_VERSION = 'display_v1'
+
+export interface LeadScoreSource {
+  canonicalScore?: number | null
+  /** Legacy 0-12 rubric score, used only when there is no canonical score. */
+  score?: number | null
+  displayQualification?: string | null
+  displayIntelligenceVersion?: string | null
+  canonicalIntelligence?: unknown
+}
+
+export interface LeadDisplayScore {
+  /** The number shown to the user, or null when the lead is not scored. */
+  value: number | null
+  max: 10 | 12
+  /** "5/10", "8/12" or "—". */
+  text: string
+  canonical: number | null
+}
+
+/**
+ * THE user-facing lead score. Pipeline, Lead Detail, dashboard and every
+ * other surface call this; none of them divide or round on their own.
+ * Canonical (0-100) leads use the qualification-band policy above; leads
+ * that predate canonical scoring show their legacy 0-12 rubric score.
+ */
+export function getLeadDisplayScore(lead: LeadScoreSource | null | undefined): LeadDisplayScore {
+  if (!lead) return { value: null, max: 10, text: '—', canonical: null }
+  let ci = lead.canonicalIntelligence as Record<string, unknown> | string | null | undefined
+  if (typeof ci === 'string') {
+    try { ci = JSON.parse(ci) as Record<string, unknown> } catch { ci = null }
+  }
+  const obj = (ci && typeof ci === 'object' ? ci : null) as Record<string, unknown> | null
+  const qualification = lead.displayQualification ?? (typeof obj?.qualification === 'string' ? obj.qualification : null)
+  const intelligenceVersion = lead.displayIntelligenceVersion ?? (typeof obj?.intelligenceVersion === 'string' ? obj.intelligenceVersion : null)
+  const canonical = typeof lead.canonicalScore === 'number' && Number.isFinite(lead.canonicalScore) ? lead.canonicalScore : null
+  if (canonical != null) {
+    const value = displayScoreFromCanonical({ canonicalScore: canonical, qualification, intelligenceVersion })
+    return { value, max: 10, text: value == null ? '—' : `${value}/10`, canonical }
+  }
+  if (typeof lead.score === 'number' && Number.isFinite(lead.score)) {
+    return { value: lead.score, max: 12, text: `${lead.score}/12`, canonical: null }
+  }
+  return { value: null, max: 10, text: '—', canonical: null }
+}
+
 export type DisplayEvidenceKind = 'quote' | 'signal' | 'inference'
 
 export interface DisplayEvidence {

@@ -8,7 +8,7 @@ import { initializeV3 } from '@/lib/intelligence-v3/index'
 import { extractEventsFromSource } from './event-extractor'
 import { buildV3ReuseKey, buildV3ReuseCacheKey } from './decision-reuse'
 import { cleanCompanyName } from '@/lib/leads/normalize'
-import { separateRoleFromEmployer } from '@/lib/intelligence-v2/extraction-pipeline'
+import { extractHiringOrganization, extractStatedLocation, isPlausibleCompanyName, looksLikeJobAd, separateRoleFromEmployer } from '@/lib/intelligence-v2/extraction-pipeline'
 import { deriveCommercialReading } from '@/lib/intelligence-v2/commercial-reading'
 import { isLinkedInChromeLine, nameFromViewProfileLabel } from '@/lib/prospect/paste-normalize'
 import { stripEmployerFromTitle } from '@/lib/leads/role-line'
@@ -142,8 +142,23 @@ function v3PacketToCanonical(
       verbatimQuote: q.quote,
     }))
 
+  // Last resort for the company: the organization the event extractor named
+  // for the selected episode, only when that exact name is in the source.
+  const selectedEpisode = packet.episodes.find((e) => e.id === packet.selectedEpisodeId)
+  const episodeOrg = selectedEpisode?.organizationName?.trim()
+  const rawInput = v2Canonical.rawSource?.rawInput ?? ''
+  const companyFromEpisode = !v2Canonical.intelligence.company.name
+    && episodeOrg && !/^unknown$/i.test(episodeOrg)
+    && rawInput.toLowerCase().includes(episodeOrg.toLowerCase())
+    ? episodeOrg
+    : null
+  const intelligence = companyFromEpisode
+    ? { ...v2Canonical.intelligence, company: { ...v2Canonical.intelligence.company, name: companyFromEpisode } }
+    : v2Canonical.intelligence
+
   return {
     ...v2Canonical,
+    intelligence,
     confidence: Math.round((packet.confidence ?? 0) * 100),
     evidenceLedger: evidenceLedger.length > 0 ? evidenceLedger : v2Canonical.evidenceLedger,
     intelligenceRunId: packet.decisionRunId,
@@ -419,10 +434,23 @@ export function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntel
     : null
 
   // Company: multi-strategy extraction, then reject a role line saved as the employer.
+  // Job ads name the hiring organization in the text; profile heuristics
+  // (headline "Role at Company", experience block) are for profiles.
+  const hiringOrg = extractHiringOrganization(rawText)
+  const profileCompany = extractCompanyFromProfile(rawText, lines, title, identityLines)
+  const plausibleProfileCompany = isPlausibleCompanyName(profileCompany) ? profileCompany : null
+  // A headline "Role at Company" names the current employer; a hiring line
+  // elsewhere in a profile must not replace it.
+  const headlineEmployer = title && /\s(?:at|@)\s/i.test(title) ? plausibleProfileCompany : null
   const extractedCompany = labeledField(lines, 'company', 'organization', 'employer')
-    ?? extractCompanyFromProfile(rawText, lines, title, identityLines)
+    ?? headlineEmployer
+    ?? (looksLikeJobAd(rawText) ? hiringOrg?.name ?? null : null)
+    ?? plausibleProfileCompany
+    ?? hiringOrg?.name
+    ?? null
   const identity = separateRoleFromEmployer(rawText, title, extractedCompany)
-  const companyName = identity.company
+  const companyName = identity.company ?? extractedCompany
+  const statedLocation = extractStatedLocation(rawText)
   const resolvedTitle = stripEmployerFromTitle(identity.title ?? title, companyName)
 
   // The opportunity text is the body, not the first 200 characters of the
@@ -451,7 +479,7 @@ export function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntel
     confidence: 50,
     qualification: 'maybe',
     intelligence: {
-      person: { fullName: name || null, firstName: name?.split(' ')[0] || null, title: resolvedTitle, seniority: null, location: null, linkedinUrl: null, otherUrls: [] },
+      person: { fullName: name || null, firstName: name?.split(' ')[0] || null, title: resolvedTitle, seniority: null, location: statedLocation?.value ?? null, linkedinUrl: null, otherUrls: [] },
       company: { name: companyName, domain: null, linkedinUrl: null, industry: null, size: null, sizeEvidence: null, product: null, stage: null, stageEvidence: null },
       opportunity: { signals: [], primarySignal: null, description: opportunityText, urgency: 'unknown' },
       job: { title: null, employmentType: 'unknown', workplaceType: 'UNKNOWN', allowedGeography: null, timezone: null, compensation: null, skills: [], seniority: 'unknown', source: null, postedDate: null },

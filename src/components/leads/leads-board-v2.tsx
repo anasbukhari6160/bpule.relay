@@ -9,8 +9,8 @@ import {
   AlertTriangle, Archive,
 } from 'lucide-react'
 import { cn } from 'cn'
-import { ScoreRing } from '@/components/score-ring'
-import { derivePipelineStage, type LeadRow, type PipelineStage } from './pipeline-utils'
+import { LeadScoreRing } from '@/components/score-ring'
+import { derivePipelineStage, resolvePipelineEmptyState, type LeadRow, type PipelineStage } from './pipeline-utils'
 
 /* ─── config ─── */
 const PAGE_SIZE = 50
@@ -267,12 +267,16 @@ export function LeadsBoardV2({ leads }: { leads: LeadRow[] }) {
         </div>
       )}
 
-      {filtered.length === 0 && (
-        <div className="py-16 text-center">
-          <Search className="mx-auto mb-3 size-8 text-stone/30" />
-          <p className="text-sm text-stone">No leads match your search.</p>
-        </div>
-      )}
+      {filtered.length === 0 && (() => {
+        const empty = resolvePipelineEmptyState({ stage: filter, query: search })
+        return (
+          <div className="py-16 text-center" role="status">
+            {empty.kind === 'search' && <Search className="mx-auto mb-3 size-8 text-stone/30" aria-hidden="true" />}
+            <p className="text-sm text-stone">{empty.title}</p>
+            {empty.hint && <p className="mt-1 text-xs text-stone/70">{empty.hint}</p>}
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -350,7 +354,7 @@ function LeadCard({ lead, index }: { lead: LeadRow; index: number }) {
 
         {/* Score + action */}
         <div className="flex items-center gap-3 shrink-0">
-          <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} size={38} />
+          <LeadScoreRing lead={lead} size={38} />
           <Link
             href={action.href}
             className="flex items-center gap-1.5 rounded-lg bg-orange px-3 py-1.5 text-xs font-medium text-on-accent transition-all duration-200 hover:bg-orange/90 hover:shadow-sm active:scale-[0.97]"

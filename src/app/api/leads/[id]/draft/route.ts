@@ -18,6 +18,7 @@ import {
   getNextStage,
 } from '@/lib/relay/conversation-engine'
 import { determineFollowup, buildFollowupPrompt } from '@/lib/relay/followup-engine'
+import { resolveConversationIntent } from '@/lib/conversation/intent'
 import {
   applyRevenueStrategyToOutreach,
   buildRevenueStrategy,
@@ -134,7 +135,8 @@ export async function POST(
     // Canonical Intelligence V2 is the source of truth once a lead has been
     // scored through it — see canonicalToLegacyScoreResult() for why we never
     // recompute a second, independent score here.
-    const score = canonicalToLegacyScoreResult(detail) ?? computeScore(extracted, rulebook!)
+    const score = canonicalToLegacyScoreResult(detail)
+      ?? computeScore(extracted, rulebook!, detail.rawInput ? { sourceText: detail.rawInput } : {})
 
     const tagMatches = await store.matchProofItems(detail.tags ?? [], 8, profile?.id ?? null)
     let matched = tagMatches
@@ -227,6 +229,21 @@ export async function POST(
             conversationStage: convStage,
             senderProfileId: profile.id,
           })
+          // The conversation's latest explicit meaning, not just this message:
+          // "ok bye" after "not interested" is still a rejection → graceful close.
+          const conversationIntent = resolveConversationIntent([
+            ...detail.messages
+              .filter((m) => m.direction === 'inbound' && m.sentText && m.sentAt && m.sentAt < (prospectReplyMsg?.sentAt ?? '9999'))
+              .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+              .map((m) => m.sentText ?? ''),
+            prospectReply,
+          ])
+          if (conversationIntent.declined) {
+            replyAnalysis.intent = 'not_interested'
+            replyAnalysis.sentiment = 'negative'
+            replyAnalysis.buyingSignal = false
+            replyAnalysis.nextBestAction = 'graceful_close'
+          }
           replyKnowledge = replyAnalysis.knowledge
           replyStrategy = buildReplyStrategy(replyAnalysis, {
             leadId: detail.id,

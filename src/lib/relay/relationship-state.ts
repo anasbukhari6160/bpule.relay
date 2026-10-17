@@ -79,7 +79,8 @@ function mapCanonicalToPresentation(
   lastOutbound: Message | null,
 ): RelationshipState {
   const connMsg = lead.messages
-    .filter((m) => m.type === 'connection' && m.sentText && m.sentAt)
+    // Presence = type + sent time; the note is optional.
+    .filter((m) => m.type === 'connection' && m.direction !== 'inbound' && m.sentAt)
     .sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0] ?? null
 
   switch (canonical.action) {

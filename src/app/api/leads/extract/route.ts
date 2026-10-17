@@ -1,3 +1,7 @@
+import { supportedSignals } from '@/lib/evidence/provenance'
+import { signalById } from '@/lib/score/signals'
+import { classifyRoleFromTitle, mapLocationToRegion } from '@/lib/leads/targeting-pure'
+import { DISPLAY_SCORE_VERSION } from '@/lib/scoring/display-score'
 import { hasProvider } from '@/lib/ai/config'
 import { scanForSecrets } from '@/lib/ai/secrets'
 import { sseStream } from '@/lib/sse/sse'
@@ -131,6 +135,18 @@ export async function POST(request: Request) {
         }
       }
 
+      const proposedSignal = supportedSignals(rawText)
+        .map((id) => signalById(id))
+        .filter((sig): sig is NonNullable<typeof sig> => sig !== null)
+        .sort((a, b) => b.weight - a.weight)[0]?.id ?? null
+      console.info('[leads/extract]', JSON.stringify({
+        companySource: canonical.intelligence.company.name ? 'extracted' : 'none',
+        locationSource: canonical.intelligence.person.location ? 'extracted' : 'none',
+        proposedSignal,
+        supportedSignalCount: supportedSignals(rawText).length,
+        scoreVersion: canonical.scoreVersion,
+        displayScoreVersion: DISPLAY_SCORE_VERSION,
+      }))
       const extracted: ExtractedLead = {
         name: canonical.intelligence.person.fullName,
         title: canonical.intelligence.person.title,
@@ -144,9 +160,12 @@ export async function POST(request: Request) {
           paraphrase: p.paraphrase,
           verbatimQuote: p.verbatimQuote,
         })),
-        roleCategory: 'other',
-        marketRegion: 'unknown',
-        signalType: 7,
+        roleCategory: classifyRoleFromTitle(canonical.intelligence.person.title),
+        marketRegion: mapLocationToRegion(canonical.intelligence.person.location),
+        // The strongest signal the research actually supports — not a fixed
+        // "Asking for help" (7). Unsupported → still 7 for the form, but it
+        // scores 0 until evidence backs it (see computeScore sourceText).
+        signalType: proposedSignal ?? 7,
         signalEvidence: deriveSignalEvidenceFallback(canonical, rawText),
         extractionConfidence: canonical.extractionCompleteness.score,
         confidenceNotes: canonical.scoreBreakdown.missingInfo,

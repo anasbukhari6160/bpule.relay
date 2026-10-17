@@ -1,5 +1,6 @@
 'use client'
 
+import { getLeadDisplayScore } from '@/lib/scoring/display-score'
 import { useState } from 'react'
 import Link from 'next/link'
 import {
@@ -28,8 +29,8 @@ interface BdDailyDeskProps {
   theirMove: RelayTodayAction[]
   repliesWaiting: number
   followUpsDue: number
-  referredLeads: Array<{ id: string; company: string; score: number | null; canonicalScore: number | null; referredAt: string | null; referrerName?: string | null; reason?: string | null }>
-  recentLeads: Array<{ id: string; company: string; score: number | null; canonicalScore: number | null; createdAt: string }>
+  referredLeads: Array<{ id: string; company: string; score: number | null; canonicalScore: number | null; displayQualification?: string | null; displayIntelligenceVersion?: string | null; referredAt: string | null; referrerName?: string | null; reason?: string | null }>
+  recentLeads: Array<{ id: string; company: string; score: number | null; canonicalScore: number | null; displayQualification?: string | null; displayIntelligenceVersion?: string | null; createdAt: string }>
   hasAnyWork: boolean
 }
 
@@ -450,10 +451,8 @@ export function BdDailyDesk({
                 className="flex items-center justify-between rounded-lg border border-line/60 bg-bone-raised/40 px-3 py-2 transition-colors hover:bg-bone"
               >
                 <span className="text-[12px] text-ink truncate">{lead.company}</span>
-                {lead.canonicalScore != null ? (
-                  <span className="shrink-0 text-[11px] font-mono text-stone">{Math.round(lead.canonicalScore / 10)}/10</span>
-                ) : lead.score != null ? (
-                  <span className="shrink-0 text-[11px] font-mono text-stone">{lead.score}/12</span>
+                {getLeadDisplayScore(lead).value != null ? (
+                  <span className="shrink-0 text-[11px] font-mono text-stone">{getLeadDisplayScore(lead).text}</span>
                 ) : null}
               </Link>
             ))}

@@ -131,3 +131,44 @@ export function truncate(text: string | null | undefined, max: number = 80): str
   if (text.length <= max) return text
   return text.slice(0, max).trimEnd() + '…'
 }
+
+const PIPELINE_STAGE_LABELS: Record<PipelineStage, string> = {
+  to_contact: 'To Contact',
+  needs_reply: 'Needs Reply',
+  follow_up_due: 'Follow-Up',
+  waiting: 'Waiting',
+  done: 'Done',
+  cold: 'Cold',
+}
+
+/** Empty-state copy per pipeline stage (no search involved). */
+export const STAGE_EMPTY_MESSAGES: Record<PipelineStage, { title: string; hint: string }> = {
+  to_contact: { title: 'No leads to contact.', hint: 'New leads appear here.' },
+  waiting: { title: 'No leads are waiting here.', hint: 'Leads you have messaged show here until they answer.' },
+  follow_up_due: { title: 'No follow-ups due.', hint: 'Leads come back here when a follow-up is due.' },
+  needs_reply: { title: 'No replies waiting for you.', hint: 'Client replies land here.' },
+  done: { title: 'No closed leads yet.', hint: 'Won and lost leads show here.' },
+  cold: { title: 'No cold leads.', hint: 'Unresponsive leads appear here.' },
+}
+
+export interface PipelineEmptyState {
+  kind: 'search' | 'stage' | 'all'
+  title: string
+  hint: string | null
+}
+
+/**
+ * The one place that decides what an empty pipeline view says. A search
+ * with no results is about the search; an empty stage is about the stage;
+ * the two must never borrow each other's copy.
+ */
+export function resolvePipelineEmptyState(input: { stage: PipelineStage | 'all'; query: string }): PipelineEmptyState {
+  const query = input.query.trim()
+  if (query) {
+    const where = input.stage === 'all' ? '' : ` in ${PIPELINE_STAGE_LABELS[input.stage]}`
+    return { kind: 'search', title: `No leads match "${query}"${where}.`, hint: 'Try a different name, company or title.' }
+  }
+  if (input.stage === 'all') return { kind: 'all', title: 'No leads yet.', hint: 'Create or import a lead to start your pipeline.' }
+  const copy = STAGE_EMPTY_MESSAGES[input.stage]
+  return { kind: 'stage', title: copy.title, hint: copy.hint }
+}

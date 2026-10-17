@@ -1,3 +1,4 @@
+import { resolveConversationIntent } from './intent'
 import type { LeadDetail } from '@/lib/store/types'
 import type { ComposeIntent, ConversationMemory, ConversationTurn, DealStage } from './types'
 
@@ -18,6 +19,8 @@ export function deriveDealStage(
   if (conversationStage === 'meeting') return 'call_booked'
 
   const clientTurns = thread.filter((t) => t.role === 'client')
+  // The client's latest explicit meaning: a rejection ends the deal.
+  if (resolveConversationIntent(clientTurns.map((t) => t.text)).declined) return 'lost'
   const myTurns = thread.filter((t) => t.role === 'me' && t.kind !== 'connection')
   const connection = thread.some((t) => t.kind === 'connection')
 

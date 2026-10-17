@@ -1,7 +1,7 @@
 import type { MarketRegion, RoleCategory } from '@/lib/domain/types'
 
 const CORE_REGIONS: Record<Exclude<MarketRegion, 'outside_core' | 'unknown'>, readonly string[]> = {
-  US: ['united states', 'usa', 'u.s.', 'california', 'new york', 'texas', 'florida', 'washington'],
+  US: ['united states', 'usa', 'u.s.', 'california', 'new york', 'texas', 'florida', 'washington', 'new mexico'],
   UK: ['united kingdom', 'uk', 'england', 'scotland', 'wales', 'london', 'manchester'],
   EU: ['germany', 'france', 'spain', 'italy', 'netherlands', 'belgium', 'sweden', 'denmark', 'europe'],
   CA: ['canada', 'toronto', 'vancouver', 'montreal', 'ontario', 'british columbia'],
@@ -41,11 +41,14 @@ export function mapLocationToRegion(locationRaw: string | null | undefined): Mar
   const location = norm(locationRaw ?? '')
   if (!location) return 'unknown'
 
-  for (const [region, markers] of Object.entries(CORE_REGIONS)) {
-    if (markers.some((m) => location.includes(m))) return region as MarketRegion
-  }
+  // Whole-word markers: substring matching put "Milwaukee" and "Ukraine" in
+  // the UK and "Jerusalem" in the US.
+  const has = (marker: string) => new RegExp(`(?<![a-z])${marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z])`).test(location)
 
-  if (OUTSIDE_MARKERS.some((m) => location.includes(m))) return 'outside_core'
+  for (const [region, markers] of Object.entries(CORE_REGIONS)) {
+    if (markers.some(has)) return region as MarketRegion
+  }
+  if (OUTSIDE_MARKERS.some(has)) return 'outside_core'
   return 'unknown'
 }
 

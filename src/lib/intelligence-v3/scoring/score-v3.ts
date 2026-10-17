@@ -576,14 +576,3 @@ function isHighPotentialBuilderEpisode(input: V3ScoreInput): boolean {
 }
 
 
-// Maps V3 0-100 score to a 0-10 display value using qualification bands
-// rather than blind division. V3 42 ("Maybe" / CONTACT_NOW) → 5/10 (medium),
-// not 4/10 (which reads as "very weak" and contradicts the action).
-export function v3ToDisplay(score: number, messageEligible?: boolean): number {
-  // show at least medium score so reps don't skip based on low buyer-intent score
-  if (score >= 80) return 9
-  if (score >= 60) return 7
-  if (score >= 40) return 5
-  if (score >= 20) return messageEligible ? 4 : 3
-  return messageEligible ? 3 : 1
-}

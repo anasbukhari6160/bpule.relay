@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Search, MessageSquare, Target, Lock } from 'lucide-react'
 import { cn } from 'cn'
 import { StatusBadge } from '@/components/ui/status-badge'
-import { ScoreRing } from '@/components/score-ring'
+import { LeadScoreRing } from '@/components/score-ring'
 import { signalById } from '@/lib/score/signals'
 import { getComparableLeadScore } from '@/lib/score/rubric'
 import { isLeadLocked, lockCountdownMs } from '@/lib/leads/lock'
@@ -239,7 +239,7 @@ export function LeadsBoard({ leads, orgView }: { leads: LeadRow[]; orgView: bool
                   <div className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-bone sm:px-5">
                     <div className="shrink-0">
                       {score !== null && score !== undefined ? (
-                        <ScoreRing score={lead.score} canonicalScore={lead.canonicalScore} size={36} />
+                        <LeadScoreRing lead={lead} size={36} />
                       ) : (
                         <div className="flex size-[36px] items-center justify-center rounded-full border border-dashed border-line">
                           <Target className="size-3.5 text-stone" />

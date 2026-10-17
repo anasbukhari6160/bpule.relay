@@ -44,7 +44,7 @@ export async function loadInbox(store: ScoutStore): Promise<InboxItem[]> {
     let bucket: InboxBucket | null = null
     if (action.action === 'SEND_REPLY') bucket = 'reply'
     else if (action.action === 'SEND_FOLLOWUP') bucket = 'followup'
-    else if (action.inConversation) bucket = 'active'
+    else if (action.inConversation && action.action !== 'CLOSED') bucket = 'active'
     if (!bucket) continue
 
     items.push({

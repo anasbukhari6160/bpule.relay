@@ -1,4 +1,5 @@
 
+import { mapLocationToRegion } from '@/lib/leads/targeting-pure'
 import type {
   ExtractedPerson,
   ExtractedCompany,
@@ -1252,11 +1253,115 @@ function extractTitle(lines: string[]): string | null {
     .trim()
 }
 
-function extractLocation(lines: string[], rawText: string): string | null {
-  const locationLine = lines.find((line) => /^location:\s*/i.test(line))
-  if (locationLine) {
-    return locationLine.replace(/^location:\s*/i, '').trim()
+const LABELED_LOCATION = /^(?:job\s+)?(?:location|based\s+in|located\s+in|work\s+location|office\s+location)\s*[:\-–]\s*(.+)$/i
+
+/**
+ * A location the source states: a labeled line ("Location: Austin, Texas,
+ * USA", "Based in: Lahore") or a bare "City, Region" line in the profile
+ * header. Never guessed from schools, company HQ, phone codes or prose.
+ */
+export function extractStatedLocation(rawText: string): { value: string; sourceLine: string; method: 'labeled' | 'header' } | null {
+  const all = splitLines(rawText)
+  for (const line of all) {
+    const m = line.replace(/^[📍•·\-\s]+/u, '').match(LABELED_LOCATION)
+    const value = m?.[1]?.replace(/[.;]+$/, '').trim()
+    if (value && value.length <= 80) return { value, sourceLine: line, method: 'labeled' }
   }
+  // Skip the name line; a header line only counts when it names a known
+  // geography — "React, Node, TypeScript" or "Google, Meta, Amazon" don't.
+  const header = identityBlockLines(all).slice(1, 6)
+  // "City, Region[, Country]": every part is 1-4 capitalized words (small
+  // connectors allowed). Prose like "We help companies in Germany, France."
+  // is a sentence, not a header location.
+  const PLACE_PART = /^(?:[\p{Lu}][\p{L}'’.-]*)(?:\s+(?:[\p{Lu}][\p{L}'’.-]*|of|de|la|upon|on|am|del))*$/u
+  const bare = header.find((line) => {
+    if (mapLocationToRegion(line) === 'unknown') return false
+    if (/[.!?]$/.test(line) || roleOnlyLine(line) || /\b(?:inc|ltd|llc|gmbh|corp|limited)\b/i.test(line)) return false
+    const parts = line.split(',').map((p) => p.trim())
+    return parts.length >= 2 && parts.length <= 3 && parts.every((p) => PLACE_PART.test(p) && p.split(/\s+/).length <= 4)
+  })
+  return bare ? { value: bare, sourceLine: bare, method: 'header' } : null
+}
+
+// Whitespace is required before the suffix, so "Collab" never reads as "Coll ab".
+const LEGAL_SUFFIX = /(?:\s*\((?:pvt|private|smc-pvt|smc|opc)\.?\))?\s+(?:pte\.?\s*ltd|pty\.?\s*ltd|sdn\.?\s*bhd|co\.?,?\s*ltd|ltd|limited(?!\s+(?:time|seats?|spots?|offers?|edition|availability|places?|slots?|stock|access|budget|period|number)\b)|llc|l\.l\.c\.|inc|incorporated|gmbh|corp|corporation|plc|s\.a\.|b\.v\.)(?![\p{L}])\.?/giu
+const NAME_WORD = /^(?:[\p{Lu}0-9&][\p{L}\p{N}&.'’-]*|\p{Ll}+\p{Lu}[\p{L}\p{N}.&'’-]*)$/u
+const NOT_A_NAME_WORD = /^(?:The|A|An|At|In|For|With|By|Our|We|I|Join|Hiring|Company|Client|Job|About|Apply|Today|Now|Urgent|New|Free|Only|Get|Book|Call)$/i
+const LABELED_COMPANY = /^(?:company(?:\s+name)?|organi[sz]ation|employer|hiring\s+(?:company|organi[sz]ation)|client)\s*[:\-–]\s*(.+)$/i
+const JOB_AD_MARKERS = /\b(?:hiring|we(?:'|’)?re\s+looking|vacanc(?:y|ies)|job\s+(?:opening|description|title|type)|responsibilities|requirements|qualifications|apply\s+(?:now|here|via|at|by)|send\s+(?:your\s+)?(?:cv|resume)|salary|positions?\s+available)\b/i
+
+/** The capitalized name ending right before a legal suffix match. */
+function nameBefore(line: string, suffixStart: number, suffix: string): string | null {
+  const words = line.slice(0, suffixStart).trim().split(/\s+/)
+  const name: string[] = []
+  for (let i = words.length - 1; i >= 0 && name.length < 6; i--) {
+    const w = words[i].replace(/^[("'“]+|[,:;"'”]+$/g, '')
+    if (!w || NOT_A_NAME_WORD.test(w) || !NAME_WORD.test(w)) break
+    name.unshift(w)
+  }
+  if (name.length === 0) return null
+  return `${name.join(' ')} ${suffix.trim()}`.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * The hiring organization a job advertisement or recruiter post names, in
+ * priority order: a labeled company field, the client a recruiter posts
+ * for, a registered legal name (Ltd, (Pvt) Ltd, LLC, Inc, GmbH…), then
+ * "X is hiring" / "join X". The person who published the ad is never the
+ * organization. Null when the text names none — Unknown is the honest answer.
+ */
+export function extractHiringOrganization(rawText: string): { name: string; sourceLine: string; method: string } | null {
+  const all = splitLines(rawText)
+  for (const line of all) {
+    const m = line.match(LABELED_COMPANY)
+    const value = m?.[1]?.trim()
+    if (value && value.length <= 80 && !/^(?:n\/?a|unknown|confidential)$/i.test(value)) return { name: value, sourceLine: line, method: 'labeled' }
+  }
+  for (const line of all) {
+    const m = line.match(/\b(?:for|on behalf of)\s+(?:our|a|the)\s+client[,:]?\s+([\p{Lu}][\p{L}\p{N}&.'’ -]{1,60}?)(?=[,.(]|\s+(?:is|who|a|an|in|based)\b|$)/u)
+    if (m?.[1]) return { name: m[1].trim(), sourceLine: line, method: 'client' }
+  }
+  // A registered name counts in the header or in a hiring sentence — not a
+  // past employer listed further down a profile.
+  const headerLines = new Set(all.slice(0, 5))
+  const HIRING_CUE = /\b(?:hiring|looking\s+for|seeking|recruiting|join|vacanc(?:y|ies)|careers?|opening|is\s+expanding|we(?:'|’)?re\s+growing)\b/i
+  for (const line of all) {
+    if (!headerLines.has(line) && !HIRING_CUE.test(line)) continue
+    for (const m of line.matchAll(LEGAL_SUFFIX)) {
+      const name = nameBefore(line, m.index ?? 0, m[0])
+      if (name) return { name, sourceLine: line, method: 'legal_name' }
+    }
+  }
+  for (const line of all) {
+    const hiring = line.match(/^(?:at\s+)?([\p{Lu}][\p{L}\p{N}&.'’-]*(?:\s+[\p{Lu}0-9&][\p{L}\p{N}&.'’-]*){0,4})\s+(?:is|are)\s+(?:hiring|looking\s+for|seeking|recruiting|expanding)\b/u)
+    if (hiring?.[1] && !NOT_A_NAME_WORD.test(hiring[1].split(/\s+/)[0])) return { name: hiring[1], sourceLine: line, method: 'is_hiring' }
+    const join = line.match(/\b[Jj]oin\s+(?:the\s+)?([\p{Lu}][\p{L}\p{N}&.'’-]*(?:\s+[\p{Lu}0-9&][\p{L}\p{N}&.'’-]*){0,4})(?=\s+(?:team|as|in|and)\b|[.!,]|$)/u)
+    if (join?.[1] && !/^(?:Our|Us|We)$/i.test(join[1])) return { name: join[1], sourceLine: line, method: 'join' }
+  }
+  return null
+}
+
+/**
+ * Whether a company candidate is a name, not a labeled field or a job-ad
+ * section line ("Requirements: React.", "Apply now.").
+ */
+export function isPlausibleCompanyName(candidate: string | null | undefined): boolean {
+  const c = (candidate ?? '').trim()
+  if (c.length < 2 || c.length > 80) return false
+  if (/^[\p{L} ]{2,30}:\s/u.test(c)) return false
+  if (/^(?:requirements?|responsibilities|qualifications|benefits|salary|apply|send|location|skills|experience|about|job|role|we|our|i|you)\b/i.test(c)) return false
+  if (/[.!?]$/.test(c) && !/\b(?:inc|ltd|co|corp|llc|l\.l\.c|s\.a|b\.v)\.$/i.test(c)) return false
+  return true
+}
+
+/** Whether the text reads as a job advertisement / hiring post. */
+export function looksLikeJobAd(rawText: string): boolean {
+  return JOB_AD_MARKERS.test(rawText)
+}
+
+function extractLocation(lines: string[], rawText: string): string | null {
+  const stated = extractStatedLocation(rawText)
+  if (stated?.method === 'labeled') return stated.value
 
   // Restrict to the header block so a prose line deep in a post
   // ("Germany, I would therefore think much broader than Berlin startups")
@@ -1278,7 +1383,8 @@ function extractLocation(lines: string[], rawText: string): string | null {
 // connector words are allowed between them.
 const EMPLOYER_WORD = String.raw`(?:[\p{Lu}0-9&][\p{L}\p{N}.&'’-]*|\p{Ll}+\p{Lu}[\p{L}\p{N}.&'’-]*)`
 const EMPLOYER_AT = new RegExp(
-  String.raw`\s+(?:[Aa][Tt]|@)\s+(${EMPLOYER_WORD}(?:\s+(?:${EMPLOYER_WORD}|of|and|the|for|de))*)\s*(?:[|·—,]|$)`,
+  // A parenthetical part of a legal name ("EGO (PVT) LTD"-style) stays in the name.
+  String.raw`\s+(?:[Aa][Tt]|@)\s+(${EMPLOYER_WORD}(?:\s+(?:${EMPLOYER_WORD}|of|and|the|for|de|\([\p{L}.\-]{2,14}\)))*)\s*(?:[|·—,]|$)`,
   'u',
 )
 const HEADER_LOCATION = /^[\p{L}][\p{L} .'-]+,\s*[\p{L}]/u
@@ -1388,6 +1494,12 @@ function extractCompany(lines: string[], title: string | null, rawText: string):
   const companyLine = lines.find((line) => /^company:\s*/i.test(line))
   if (companyLine) return companyLine.replace(/^company:\s*/i, '').trim()
 
+  // Job ads name the hiring organization; take it before profile heuristics.
+  if (looksLikeJobAd(rawText)) {
+    const hiringOrg = extractHiringOrganization(rawText)
+    if (hiringOrg) return hiringOrg.name
+  }
+
   // LinkedIn headline: "Role @ Company | Description" — most common format.
   // Pipe-separated: role+company is always the first segment.
   if (title) {
@@ -1442,7 +1554,7 @@ function extractCompany(lines: string[], title: string | null, rawText: string):
     return worksForMatch[1].trim()
   }
 
-  return null
+  return extractHiringOrganization(rawText)?.name ?? null
 }
 
 /**

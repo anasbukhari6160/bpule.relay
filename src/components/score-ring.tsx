@@ -1,3 +1,5 @@
+import { displayScoreFromCanonical, getLeadDisplayScore, type LeadScoreSource } from '@/lib/scoring/display-score'
+
 export function ScoreRing({
   score,
   canonicalScore,
@@ -37,7 +39,9 @@ export function ScoreRing({
   const fontSize = Math.max(size * 0.36, 11)
 
   // Canonical scores display as /10 (0-10 scale), legacy shows raw (0-12)
-  const shown = displayValue != null ? displayValue : (hasCanonical ? Math.round(canonicalScore / 10) : rawScore)
+  // Callers should pass displayValue (see LeadScoreRing); the fallback goes
+  // through the same policy function rather than its own rounding.
+  const shown = displayValue != null ? displayValue : (hasCanonical ? displayScoreFromCanonical({ canonicalScore }) : rawScore)
   const ariaLabel = label ?? (hasCanonical || displayValue != null ? `Opportunity score ${shown}/10` : `Legacy score ${shown}/12`)
 
   return (
@@ -75,4 +79,16 @@ export function ScoreRing({
       </div>
     </div>
   )
+}
+
+/**
+ * Score ring for a lead. Every lead surface uses this so the number comes
+ * from getLeadDisplayScore — the one display policy — never local math.
+ */
+export function LeadScoreRing({ lead, size }: { lead: LeadScoreSource; size?: number }) {
+  const display = getLeadDisplayScore(lead)
+  if (display.canonical != null) {
+    return <ScoreRing canonicalScore={display.canonical} displayValue={display.value} size={size} label={`Opportunity score ${display.text}`} />
+  }
+  return <ScoreRing score={display.value} size={size} label={display.value == null ? 'Not scored' : `Legacy score ${display.text}`} />
 }

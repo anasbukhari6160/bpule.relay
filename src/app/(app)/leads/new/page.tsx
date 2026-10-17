@@ -37,7 +37,8 @@ const DEFAULT_RULEBOOK: OrganizationRulebook = {
 import { classifyRoleFromTitle, mapLocationToRegion } from '@/lib/leads/targeting-pure'
 import { readSse } from '@/lib/sse/client'
 import { duplicateNotice } from '@/lib/ui/api-error-toast'
-import { notifyError } from '@/lib/ui/notify'
+import { pasteGuard } from '@/lib/prospect/paste-guard'
+import { validateLeadDraft } from '@/lib/leads/lead-validation'
 import { cn } from 'cn'
 import type { ExtractedLead, MarketRegion, RoleCategory, SignalId } from '@/lib/domain/types'
 
@@ -109,16 +110,6 @@ function verdictCall(verdict: 'send' | 'research_more' | 'skip'): string {
   return 'Not enough here yet. Skip unless you add more.'
 }
 
-function pasteGuard(raw: string): string | null {
-  if (!raw) return 'Paste some raw research first.'
-  if (/^https?:\/\/\S+\s*$/i.test(raw)) {
-    return 'That is just a URL with no surrounding text. Paste the profile or post text alongside it so there is something to extract.'
-  }
-  if (raw.length < 24) {
-    return 'That paste is too short to extract anything useful. Add a sentence or two of real research.'
-  }
-  return null
-}
 
 /** Which specific field a confidence note is actually about, so the rep's eye goes to the one field that needs a look instead of reading a wall of caveats. */
 function noteField(note: string): keyof FormState | null {
@@ -154,6 +145,11 @@ export default function NewLeadPage() {
   const [extracted, setExtracted] = useState(false)
   const [candidates, setCandidates] = useState<ExtractedLead[]>([])
   const [error, setError] = useState<string | null>(null)
+  // Field-level paste problem: shown once, inline, no request and no toast.
+  const [validationError, setValidationError] = useState<string | null>(null)
+  // Who chose the signal type — extraction or the rep. A rep's choice is
+  // allowed, but only scores when the research supports it.
+  const [signalOrigin, setSignalOrigin] = useState<'AI_EXTRACTED' | 'USER_ENTERED'>('USER_ENTERED')
   const [fieldErrors, setFieldErrors] = useState<{ company?: string; signalEvidence?: string }>({})
   const [blocked, setBlocked] = useState<{
     duplicateKind?: 'hard' | 'potential'
@@ -206,11 +202,24 @@ export default function NewLeadPage() {
     [extractedLead, form.rawInput],
   )
 
-  const score = useMemo(() => computeScore(extractedLead, activeRulebook), [extractedLead, activeRulebook])
+  const score = useMemo(
+    () => computeScore(extractedLead, activeRulebook, { sourceText: form.rawInput, signalOrigin }),
+    [extractedLead, activeRulebook, form.rawInput, signalOrigin],
+  )
+  const validation = useMemo(() => validateLeadDraft({
+    company: form.company,
+    signalEvidence: form.signalEvidence,
+    locationRaw: form.locationRaw,
+    fieldErrors,
+    confidenceNotes: form.confidenceNotes,
+    qualification,
+    score,
+  }), [form.company, form.signalEvidence, form.locationRaw, fieldErrors, form.confidenceNotes, qualification, score])
+  const signalRow = score.breakdown.find((row) => row.category === 'signal')
+  const quoteRow = score.breakdown.find((row) => row.label === 'Verbatim quote')
 
   const hasContent = Boolean(form.signalEvidence.trim() || form.company.trim())
   const canSaveLead = hasContent && qualification.qualificationEligibility
-  const weakFields = new Set(form.confidenceNotes.map(noteField).filter(Boolean))
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -219,7 +228,8 @@ export default function NewLeadPage() {
   function applyExtracted(ex: ExtractedLead) {
     setForm((f) => ({
       ...f,
-      company: ex.company?.trim() || f.company.trim() || f.company,
+      // "Unknown company" is the absence of a company, not a name to fill in.
+      company: (ex.company?.trim() && !/^unknown( company)?$/i.test(ex.company.trim()) ? ex.company.trim() : '') || f.company.trim() || f.company,
       contactName: ex.name?.trim() || f.contactName.trim() || f.contactName,
       contactTitle: f.contactTitle.trim() || ex.title?.trim() || f.contactTitle,
       titleRaw: f.titleRaw.trim() || ex.titleRaw?.trim() || ex.title?.trim() || f.titleRaw,
@@ -236,6 +246,7 @@ export default function NewLeadPage() {
       verbatimQuote: ex.verbatimQuote?.trim() ?? f.verbatimQuote,
       tags: ex.tags ?? [],
     }))
+    setSignalOrigin('AI_EXTRACTED')
     setExtracted(true)
   }
 
@@ -254,13 +265,13 @@ export default function NewLeadPage() {
   }
 
   async function extract() {
-    const guard = pasteGuard(form.rawInput.trim())
+    const guard = pasteGuard(form.rawInput, 'Paste some raw research first.')
     if (guard) {
-      setError(guard)
-      notifyError(guard, 'Check the paste')
+      setValidationError(guard)
       rawRef.current?.focus()
       return
     }
+    setValidationError(null)
     setExtracting(true)
     setError(null)
     setDemoMode(false)
@@ -283,13 +294,14 @@ export default function NewLeadPage() {
         | { type: 'done'; extracted: ExtractedLead; candidates?: ExtractedLead[]; demoMode: boolean }
         | { type: 'error'; message: string }
 
+      // One presenter for server errors: the banner. readSse stays silent.
       await readSse<ExtractEvent>(res, {
+        silent: true,
         onEvent(event) {
           if (event.type === 'status') return
 
           if (event.type === 'error') {
             setError(event.message)
-            notifyError(event.message)
             return
           }
 
@@ -302,9 +314,7 @@ export default function NewLeadPage() {
         },
       })
     } catch (err) {
-      if (!error) {
-        setError(err instanceof Error ? err.message : 'Extraction failed.')
-      }
+      setError(err instanceof Error ? err.message : 'Extraction failed.')
     } finally {
       setExtracting(false)
     }
@@ -315,7 +325,6 @@ export default function NewLeadPage() {
     if (!qualification.qualificationEligibility) {
       const message = 'NOT ENOUGH INFORMATION. Add richer person, company, and opportunity context before saving this lead.'
       setError(message)
-      notifyError(message, 'Not enough to save')
       return
     }
     const companyOk = validateField('company')
@@ -344,6 +353,7 @@ export default function NewLeadPage() {
           confidenceNotes: form.confidenceNotes,
           url: form.url.trim() || null,
           signalType: form.signalType,
+          signalOrigin,
           signalEvidence: form.signalEvidence.trim(),
           verbatimQuote: form.verbatimQuote.trim() || null,
           tags: form.tags,
@@ -368,7 +378,6 @@ export default function NewLeadPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save lead.'
       setError(message)
-      notifyError(message, 'Lead was not created')
     } finally {
       saveInFlightRef.current = false
       setSaving(false)
@@ -462,7 +471,12 @@ export default function NewLeadPage() {
               id="raw-input"
               ref={rawRef}
               value={form.rawInput}
-              onChange={(e) => set('rawInput', e.target.value)}
+              error={Boolean(validationError)}
+              aria-describedby={validationError ? 'raw-input-error' : undefined}
+              onChange={(e) => {
+                set('rawInput', e.target.value)
+                if (validationError) setValidationError(null)
+              }}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                   e.preventDefault()
@@ -473,8 +487,15 @@ export default function NewLeadPage() {
               rows={12}
               className="mt-3 max-h-[28rem] overflow-y-auto font-mono text-[13px]"
             />
+            {validationError ? (
+              <p id="raw-input-error" role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs text-status-danger">
+                <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+                {validationError}
+              </p>
+            ) : null}
             <div className="mt-3 flex items-center justify-between gap-3">
-              <span className="text-xs text-slate">Cmd / Ctrl + Enter</span>
+              <span className="hidden text-xs text-slate sm:inline">Cmd / Ctrl + Enter</span>
+              <span className="sm:hidden" aria-hidden="true" />
               <Button variant="orange" onClick={() => void extract()} loading={extracting}>
                 <Wand2 className="size-4" aria-hidden="true" />
                 {extracting ? 'Reading it' : extracted ? 'Re-extract' : 'Extract'}
@@ -645,11 +666,18 @@ export default function NewLeadPage() {
                   </Alert>
                 ) : null}
 
-                <p className="mt-4 text-xs text-slate">
-                  {weakFields.size > 0
-                    ? `${weakFields.size} field${weakFields.size === 1 ? '' : 's'} flagged below — worth a second look before saving.`
-                    : 'Nothing flagged. Every field checked out.'}
-                </p>
+                <div className="mt-4 text-xs" role="status">
+                  <p className={cn(validation.ok ? 'text-slate' : 'font-medium text-status-warning')}>{validation.summary}</p>
+                  {!validation.ok || validation.warnings.length > 0 ? (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate">
+                      {validation.missingRequiredFields.map((f) => <li key={`m-${f}`}>Missing: {f}</li>)}
+                      {validation.formatIssues.map((f) => <li key={`f-${f}`}>{f}</li>)}
+                      {validation.unsupportedEvidence.map((f) => <li key={`u-${f}`}>{f}</li>)}
+                      {validation.qualificationBlockers.length > 0 ? <li key="q">Not qualified yet: {validation.qualificationBlockers.join(' ')}</li> : null}
+                      {validation.warnings.map((f) => <li key={`w-${f}`}>{f}</li>)}
+                    </ul>
+                  ) : null}
+                </div>
               </div>
 
               {/* Who */}
@@ -761,7 +789,10 @@ export default function NewLeadPage() {
                     <Select
                       id="signal"
                       value={form.signalType}
-                      onChange={(e) => set('signalType', Number(e.target.value) as SignalId)}
+                      onChange={(e) => {
+                        set('signalType', Number(e.target.value) as SignalId)
+                        setSignalOrigin('USER_ENTERED')
+                      }}
                     >
                       {SIGNALS.map((s) => (
                         <option key={s.id} value={s.id}>
@@ -769,6 +800,16 @@ export default function NewLeadPage() {
                         </option>
                       ))}
                     </Select>
+                    {signalRow?.verification === 'UNSUPPORTED' || signalRow?.verification === 'UNVERIFIABLE' ? (
+                      <span className="flex items-start gap-1 text-xs text-status-warning" data-testid="signal-unverified">
+                        <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                        {signalRow.note}
+                      </span>
+                    ) : signalRow?.verification === 'VERIFIED' && signalRow.sourceQuote ? (
+                      <span className="text-xs text-slate" data-testid="signal-verified">
+                        Supported by the research: “{signalRow.sourceQuote.length > 140 ? `${signalRow.sourceQuote.slice(0, 139)}…` : signalRow.sourceQuote}”
+                      </span>
+                    ) : null}
                   </div>
                   <div className="grid gap-1.5 sm:col-span-2">
                     <Label htmlFor="evidence">Signal evidence</Label>
@@ -800,6 +841,12 @@ export default function NewLeadPage() {
                       placeholder="A short exact line, if you have one — this is what makes a draft feel personal."
                     />
                     <FieldFlag notes={form.confidenceNotes} field="verbatimQuote" />
+                    {quoteRow?.verification === 'UNSUPPORTED' || quoteRow?.verification === 'UNVERIFIABLE' ? (
+                      <span className="mt-1 flex items-start gap-1 text-xs text-status-warning" data-testid="quote-unverified">
+                        <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                        {quoteRow.note}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </div>

@@ -1,3 +1,4 @@
+import { classifyClientMessage } from '@/lib/conversation/intent'
 import type { ConversationStage, Message, OutreachStrategy } from '@/lib/domain/types'
 import {
   emptyConversationKnowledge,
@@ -92,8 +93,19 @@ export function analyzeReply(replyText: string, _context: ReplyContext): ReplyAn
   const questionMatches = replyText.match(/[^.!?]+\?/g) ?? []
   analysis.questions = questionMatches.map((q) => q.trim())
 
+  // Canonical safeguards first: rejections, stop requests, deferrals and
+  // goodbyes are decided before any positive pattern can match inside them.
+  const canonical = classifyClientMessage(replyText)
+
   // Detect intent
-  if (/\b(not interested|not a fit|no thanks|pass|not looking)\b/i.test(lower)) {
+  if (canonical.class === 'NEGATIVE') {
+    analysis.intent = 'not_interested'
+    analysis.sentiment = 'negative'
+    analysis.nextBestAction = 'graceful_close'
+  } else if (canonical.class === 'CLOSED') {
+    analysis.intent = 'unclear'
+    analysis.nextBestAction = 'acknowledge_and_hold'
+  } else if (/\b(not interested|not a fit|no thanks|pass|not looking)\b/i.test(lower)) {
     analysis.intent = 'not_interested'
     analysis.sentiment = 'negative'
     analysis.nextBestAction = 'graceful_close'
@@ -133,9 +145,14 @@ export function analyzeReply(replyText: string, _context: ReplyContext): ReplyAn
     analysis.nextBestAction = 'answer_question'
   }
 
-  // Detect buying signals
-  if (/\b(interested|let's do it|next step|move forward|sounds good|works for me)\b/i.test(lower)) {
+  // Detect buying signals — never inside a rejection, deferral or goodbye
+  // ("not interested" contains "interested").
+  if (canonical.class !== 'NEGATIVE' && canonical.class !== 'DEFERRED' && canonical.class !== 'CLOSED'
+    && /\b(interested|let's do it|next step|move forward|sounds good|works for me)\b/i.test(lower)) {
     analysis.buyingSignal = true
+  }
+  if (canonical.class === 'NEGATIVE' || canonical.class === 'DEFERRED' || canonical.class === 'CLOSED') {
+    analysis.buyingSignal = false
   }
 
   // Detect objections
@@ -148,6 +165,7 @@ export function analyzeReply(replyText: string, _context: ReplyContext): ReplyAn
   for (const { pattern, objection } of objectionPatterns) {
     if (pattern.test(lower)) analysis.objections.push(objection)
   }
+  analysis.objections = [...new Set(analysis.objections)]
 
   analysis.knowledge = extractConversationFacts(replyText, analysis)
   return analysis

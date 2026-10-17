@@ -15,6 +15,7 @@
  */
 
 import { detectCommercialRequest } from '@/lib/intelligence-v3/source-facts'
+import { detectFunding, parseHiringCount } from '@/lib/evidence/provenance'
 
 export interface ExtractedSignals {
   company: CompanySignals
@@ -36,7 +37,14 @@ export interface CompanySignals {
   growthSignals: string[]
   hasPhysicalProduct: boolean
   isHiring: boolean
+  /**
+   * Number of open roles the source explicitly states ("hiring 3
+   * developers", "10 open roles"); 0 when no count is stated. Never derived
+   * from how often hiring words appear.
+   */
   hiringCount: number
+  /** The source line stating the count, when there is one. */
+  hiringCountQuote: string | null
 }
 
 export interface PersonSignals {
@@ -119,11 +127,6 @@ const HIRING_PATTERNS = [
 const HIRING_URGENCY = [
   /\b(immediately|asap|urgent|right now|this week|starting now|ramping up)\b/i,
   /\b(this quarter|next quarter|this month|coming weeks|soon)\b/i,
-]
-
-const FUNDING_PATTERNS = [
-  /\b(raised|funding|series [abc]|seed round|angel|venture|investment|investors|backed by)\b/i,
-  /\b(million|billion|raised \$|funding round|capital raise)\b/i,
 ]
 
 const GROWTH_PATTERNS = [
@@ -214,10 +217,12 @@ function extractCompanySignals(text: string, lines: string[], lower: string): Co
     }
   }
 
-  const fundingMentioned = FUNDING_PATTERNS.some((p) => p.test(text))
+  // A funding EVENT, not vocabulary like "million users" or "venture into".
+  const fundingMentioned = detectFunding(text) !== null
   const fundingStage = extractFundingStage(text)
   // BUG-07: extract the actual matched words, not the regex source string
   // (RegExp.source leaks raw regex like /\b(growing|scaling)\b/i into the UI).
+  const hiringCount = parseHiringCount(text)
   const growthSignals = GROWTH_PATTERNS.flatMap((p) => {
     const m = text.match(p)
     return m ? [m[0]] : []
@@ -234,7 +239,8 @@ function extractCompanySignals(text: string, lines: string[], lower: string): Co
     growthSignals,
     hasPhysicalProduct: /\b(product|platform|app|saas|software|tool|service)\b/i.test(text),
     isHiring: HIRING_PATTERNS.some((p) => p.test(text)),
-    hiringCount: countHiringRoles(text),
+    hiringCount: hiringCount?.value ?? 0,
+    hiringCountQuote: hiringCount?.sourceQuote ?? null,
   }
 }
 
@@ -262,15 +268,6 @@ function extractIndustry(text: string): string | null {
   return null
 }
 
-function countHiringRoles(text: string): number {
-  // Lines asking for an external provider are a vendor search, not open roles.
-  const external = detectCommercialRequest(text).externalServiceRequest?.line
-  const roleText = external
-    ? text.split('\n').filter((line) => line.trim() !== external && !/\b(?:agenc(?:y|ies)|vendors?|outsourc\w*)\b/i.test(line)).join('\n')
-    : text
-  const matches = roleText.match(/\b(hiring|recruiting|looking for|seeking|open role|position)\b/gi)
-  return matches ? Math.min(matches.length, 10) : 0
-}
 
 
 function extractPersonSignals(text: string, lines: string[], lower: string): PersonSignals {

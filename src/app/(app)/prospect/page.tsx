@@ -31,7 +31,7 @@ import { duplicateNotice } from '@/lib/ui/api-error-toast'
 import { scoreExplanation } from '@/lib/scoring/display-score'
 import { ScoreBreakdown } from '@/components/score-breakdown'
 import { formatRoleLine } from '@/lib/leads/role-line'
-import { notifyError } from '@/lib/ui/notify'
+import { pasteGuard } from '@/lib/prospect/paste-guard'
 import { trackEvent } from '@/lib/analytics/tracker'
 
 type AnalyzeEvent =
@@ -128,16 +128,6 @@ function prospectCanBeSaved(
   return false
 }
 
-function pasteGuard(raw: string): string | null {
-  if (!raw.trim()) return 'Paste some profile text first.'
-  if (/^https?:\/\/\S+\s*$/i.test(raw.trim())) {
-    return 'That is just a URL. Paste the profile text alongside it.'
-  }
-  if (raw.trim().length < 24) {
-    return 'That paste is too short. Add more profile text.'
-  }
-  return null
-}
 
 export default function ProspectCheckPage() {
   const router = useRouter()
@@ -247,7 +237,9 @@ export default function ProspectCheckPage() {
         signal: abortRef.current.signal,
       })
 
+      // One presenter for server errors: the banner. readSse stays silent.
       await readSse<AnalyzeEvent>(res, {
+        silent: true,
         onEvent(event) {
           if (event.type === 'status') {
             setStatus(event.message)
@@ -255,7 +247,6 @@ export default function ProspectCheckPage() {
           }
           if (event.type === 'error') {
             setError(event.message)
-            notifyError(event.message)
             return
           }
           if (event.type === 'done') {
@@ -329,7 +320,6 @@ export default function ProspectCheckPage() {
     if (!prospectCanBeSaved(result)) {
       const message = 'Lead was not created: not enough context to save a reliable lead.'
       setError(message)
-      notifyError(message, 'Not enough to save')
       return
     }
     saveInFlightRef.current = true
@@ -391,7 +381,6 @@ export default function ProspectCheckPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save lead.'
       setError(message)
-      notifyError(message, 'Lead was not created')
     } finally {
       saveInFlightRef.current = false
       setSaving(false)

@@ -1,3 +1,4 @@
+import { resolveConversationIntent } from '@/lib/conversation/intent'
 import type { Lead, Message, OutreachStrategy } from '@/lib/domain/types'
 import { calendarDaysBetween, followupDueInDays } from '@/lib/leads/followup'
 
@@ -79,6 +80,25 @@ export function determineFollowup(context: FollowupContext): FollowupStrategy {
       waitReason: waiting
         ? 'Waiting for acceptance. A follow-up opens after they accept and the first message is due.'
         : 'Send the first message. Follow-up starts after that message, on the 3/6/6 calendar-day schedule.',
+    }
+  }
+
+  // A client who declined is never followed up, however the thread ended.
+  const conversation = resolveConversationIntent(
+    priorMessages
+      .filter((m) => m.direction === 'inbound' && m.sentText && m.sentAt)
+      .sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+      .map((m) => m.sentText ?? ''),
+  )
+  if (conversation.declined) {
+    return {
+      shouldFollowUp: false,
+      reason: 'The client declined.',
+      approach: 'none',
+      tone: 'none',
+      ctaApproach: 'none',
+      valueAdd: null,
+      waitReason: 'The client said they are not interested. Relay does not follow up after a rejection.',
     }
   }
 

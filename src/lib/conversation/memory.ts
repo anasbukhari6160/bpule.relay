@@ -1,5 +1,6 @@
 import { generate as runtimeGenerate } from '@/lib/ai/runtime'
 import { analyzeReply } from '@/lib/relay/conversation-engine'
+import { classifyClientMessage, resolveConversationIntent } from './intent'
 import type { LeadDetail } from '@/lib/store/types'
 import {
   emptyMemory,
@@ -111,7 +112,8 @@ export function normalizeIntent(raw: unknown): ClientTurnAnalysis['intent'] {
   const v = String(raw ?? '').toLowerCase().trim()
   if ((ANALYSIS_INTENTS as string[]).includes(v)) return v as ClientTurnAnalysis['intent']
   if (/auto|out_of_office|ooo/.test(v)) return 'auto_reply'
-  if (/not_?interested|declin|reject|no_thanks|unsubscribe/.test(v)) return 'not_interested'
+  // Negations before positives: "not interested" must never fall into /interest/.
+  if (/not[_ -]?(?:really[_ -]?)?interest|uninterest|disinterest|no[_ -]?interest|declin|reject|refus|no[_ -]?thanks|unsubscribe|not[_ -]?a[_ -]?fit|negative|stop/.test(v)) return 'not_interested'
   if (/not_?now|later|timing|busy|postpone/.test(v)) return 'not_now'
   if (/meet|call|schedul|book|demo|talk/.test(v)) return 'meeting_request'
   if (/pric|cost|budget|quote|rate/.test(v)) return 'pricing'
@@ -132,9 +134,9 @@ function deterministicAnalysis(lead: LeadDetail, turn: ConversationTurn): RawAna
     conversationStage: 'replied',
     senderProfileId: null,
   })
-  const auto = /out of office|auto.?(reply|response)|i am currently away|on vacation|on leave/i.test(turn.text)
-  const intent: ClientTurnAnalysis['intent'] = auto
-    ? 'auto_reply'
+  const canonical = classifyClientMessage(turn.text)
+  const intent: ClientTurnAnalysis['intent'] = canonical.explicit
+    ? canonical.intent
     : r.intent === 'unclear' ? 'neutral' : r.intent
   return {
     intent,
@@ -176,7 +178,10 @@ async function analyzeClientTurn(lead: LeadDetail, thread: ConversationTurn[], t
     return {
       ...a,
       intent: normalizeIntent(a.intent),
-      sentiment: a.sentiment === 'positive' || a.sentiment === 'negative' ? a.sentiment : 'neutral',
+      sentiment: (() => {
+        const v = String(a.sentiment ?? '').toLowerCase()
+        return v === 'positive' || v === 'negative' ? v : 'neutral'
+      })(),
       summary: typeof a.summary === 'string' && a.summary.trim() ? a.summary : clip(turn.text, 160),
       questions: Array.isArray(a.questions) ? a.questions.map(String) : [],
       buyingSignals: Array.isArray(a.buyingSignals) ? a.buyingSignals.map(String) : [],
@@ -186,6 +191,25 @@ async function analyzeClientTurn(lead: LeadDetail, thread: ConversationTurn[], t
   } catch {
     return deterministicAnalysis(lead, turn)
   }
+}
+
+/**
+ * Explicit client meaning beats the model, and the whole conversation beats
+ * the latest message: "ok bye" after "not interested" is still a rejection.
+ */
+function applyIntentSafeguards(analysis: RawAnalysis, thread: ConversationTurn[], latest: ConversationTurn): RawAnalysis {
+  const conversation = resolveConversationIntent(thread.filter((t) => t.role === 'client').map((t) => t.text))
+  if (conversation.declined) {
+    return { ...analysis, intent: 'not_interested', sentiment: 'negative', buyingSignals: [] }
+  }
+  if (conversation.deferred) {
+    return { ...analysis, intent: 'not_now', buyingSignals: [] }
+  }
+  const canonical = classifyClientMessage(latest.text)
+  if (canonical.explicit && canonical.intent !== analysis.intent && (canonical.class !== 'NEUTRAL' || canonical.intent === 'auto_reply')) {
+    return { ...analysis, intent: canonical.intent }
+  }
+  return analysis
 }
 
 async function foldIntoSummary(previous: string, turns: ConversationTurn[]): Promise<string> {
@@ -244,8 +268,12 @@ export async function refreshMemory(
   const latestClient = [...thread].reverse().find((t) => t.role === 'client') ?? null
   const latestIsClient = thread.at(-1)?.role === 'client'
   if (latestClient && prev.lastClientAnalysis?.turnId !== latestClient.id) {
-    const analysis = await analyzeClientTurn(lead, thread, latestClient)
+    const analysis = applyIntentSafeguards(await analyzeClientTurn(lead, thread, latestClient), thread, latestClient)
     memory.facts = mergeFacts(prev.facts, analysis, latestIsClient)
+    if (analysis.intent === 'not_interested' || analysis.intent === 'not_now') {
+      // A declined or deferred thread has no live buying signals.
+      memory.facts = { ...memory.facts, buyingSignals: [] }
+    }
     memory.lastClientAnalysis = {
       turnId: latestClient.id,
       intent: analysis.intent,

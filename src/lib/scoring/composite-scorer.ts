@@ -189,12 +189,19 @@ function scoreCompanyQuality(input: CompositeScoreInput): CompositeDimension {
   }
 
   // Hiring velocity
-  if (signals.company.hiringCount >= 3) {
+  // Quantified credit only for a count the source states; generic hiring
+  // earns generic credit and never shows an invented number.
+  // Quantified credit also needs the text to be a hiring post.
+  const statedHiring = signals.company.hiringCount > 0 && signals.intent.hiring
+  if (statedHiring && signals.company.hiringCount >= 3) {
     score += 15
-    evidence.push(`Hiring ${signals.company.hiringCount}+ roles`)
-  } else if (signals.company.hiringCount > 0) {
+    evidence.push(`Hiring ${signals.company.hiringCount} roles (stated in source)`)
+  } else if (statedHiring) {
     score += 8
-    evidence.push(`Hiring ${signals.company.hiringCount} role(s)`)
+    evidence.push(`Hiring ${signals.company.hiringCount} role${signals.company.hiringCount === 1 ? '' : 's'} (stated in source)`)
+  } else if (signals.company.isHiring && signals.intent.hiring) {
+    score += 8
+    evidence.push('Hiring (no role count stated)')
   }
 
   // Industry fit

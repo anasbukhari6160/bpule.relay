@@ -97,6 +97,13 @@ export interface Lead {
   scoreVersion?: string | null
   scoredAt?: string | null
   canonicalIntelligence?: Record<string, unknown> | null
+  /**
+   * canonicalIntelligence.qualification / .intelligenceVersion, loaded even
+   * on list queries (which skip the full blob) so every surface can apply
+   * the same display-score policy.
+   */
+  displayQualification?: string | null
+  displayIntelligenceVersion?: string | null
   rawSourceData?: Record<string, unknown> | null
   scoreBreakdown?: Record<string, unknown> | null
   remoteEligibility?: Record<string, unknown> | null
@@ -373,6 +380,10 @@ export interface ScoreBreakdownItem {
   points: number
   max: number
   note: string
+  /** Set when the row's claim was checked against the original research. */
+  verification?: 'VERIFIED' | 'UNSUPPORTED' | 'UNVERIFIABLE'
+  /** The source line that supports the row, when verified. */
+  sourceQuote?: string | null
 }
 
 export interface ScoreResult {

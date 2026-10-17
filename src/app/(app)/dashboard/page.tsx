@@ -262,6 +262,8 @@ async function loadRepWorkspaceData(repId: string): Promise<RepWorkspaceData> {
       company: l.company,
       score: l.score,
       canonicalScore: l.canonicalScore ?? null,
+      displayQualification: l.displayQualification ?? null,
+      displayIntelligenceVersion: l.displayIntelligenceVersion ?? null,
       referredAt: l.referralAt ?? null,
     })),
     recentLeads: recentLeads.map(l => ({
@@ -269,6 +271,8 @@ async function loadRepWorkspaceData(repId: string): Promise<RepWorkspaceData> {
       company: l.company,
       score: l.score,
       canonicalScore: l.canonicalScore ?? null,
+      displayQualification: l.displayQualification ?? null,
+      displayIntelligenceVersion: l.displayIntelligenceVersion ?? null,
       createdAt: l.createdAt,
     })),
     upworkJobs,
