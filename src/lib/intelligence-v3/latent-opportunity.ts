@@ -139,6 +139,16 @@ function evaluateDecisionAuthority(intel: CanonicalProspectIntelligence['intelli
   // Manager
   if (/\b(manager)\b/.test(title)) return 0.5
 
+  // Affiliations: a founder/CEO role at any affiliation boosts authority
+  const affiliations = intel.person.affiliations || []
+  const affiliationText = affiliations.map(a => `${a.role || ''} ${a.organizationName || ''}`).join(' ').toLowerCase()
+  if (/\b(ceo|founder|co-founder|coowner|owner|president)\b/.test(affiliationText)) return 0.7
+  if (/\b(cto|cfo|chief)\b/.test(affiliationText)) return 0.6
+  if (/\b(vp|vice president|director|head of)\b/.test(affiliationText)) return 0.5
+  // Multiple affiliations = multiple ventures = higher authority than IC
+  if (affiliations.length >= 3) return 0.4
+  if (affiliations.length >= 2) return 0.35
+
   // Text-based signals
   if (/\b(ceo|founder|co-founder)\b/.test(text)) return 0.8
   if (/\b(cto|cfo|chief)\b/.test(text)) return 0.7

@@ -163,8 +163,10 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
   }
 
   if (!bestEpisode && episodes.length > 0) {
-    bestEpisode = episodes[0]
-    bestScore = episodeScores[0]?.score ?? 0
+    const open = episodes.filter((e) => e.status !== 'CLOSED')
+    const fallback = open.length > 0 ? open[0] : episodes[0]
+    bestEpisode = fallback
+    bestScore = episodeScores.find((e) => e.episodeId === fallback.id)?.score ?? 0
   }
 
   // Score the selected episode with full context
@@ -219,8 +221,9 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     !['OTHER', 'SERVICE_OFFERING', 'MARKET_COMMENTARY'].includes(bestEpisode.anchorEvent.eventType)
   )
 
+  const allClosed = episodes.length > 0 && episodes.every((e) => e.status === 'CLOSED')
   let latentAssessment = null
-  if (!hasMeaningfulEpisode && commercialPotential) {
+  if (!hasMeaningfulEpisode && commercialPotential && !allClosed) {
     latentAssessment = await assessLatentOpportunity(input.v2Canonical!, input.rawText)
     const latentScore = computeLatentScore(latentAssessment)
     const latentAction = latentActionFromPotential(latentAssessment.overallPotential, latentAssessment.confidence)

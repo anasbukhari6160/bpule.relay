@@ -33,23 +33,65 @@ export interface StatedTimeline extends SourceLine {
 const NEGATION_BEFORE = /\b(?:no|not|without|never)\s+(?:an?\s+|any\s+)?$/i
 
 const EXTERNAL_PROVIDER =
-  /\b(?:agenc(?:y|ies)|vendors?|outsourc\w*|external\s+(?:software\s+|development\s+|engineering\s+|dev\s+)?(?:team|partner|agency|provider|company|firm)s?|(?:development|software|engineering|technology)\s+partners?|staff\s+augmentation|dev(?:elopment)?\s+shops?|software\s+(?:house|consultancy|firm)s?|consultanc(?:y|ies)|contractors?|freelancers?)\b/i
+  /\b(?:agenc(?:y|ies)|vendors?|outsourc\w*|external\s+(?:software\s+|development\s+|engineering\s+|dev\s+)?(?:team|partner|agency|provider|company|firm)s?|(?:development|software|engineering|technology)\s+partners?|staff\s+augmentation|dev(?:elopment)?\s+shops?|software\s+(?:house|consultancy|firm)s?|consultanc(?:y|ies)|contractors?|freelancers?|developers?)\b/i
 
 const REQUEST_CONTEXT =
-  /\b(?:looking\s+for|seeking|searching\s+for|need(?:s|ed)?|hire|hiring|engage|want(?:s|ed)?\s+to\s+(?:hire|work\s+with|engage)|invit(?:e|ing)|request(?:ing)?\s+(?:proposals?|quotes?)|rfp|should\s+(?:contact|reach|submit|send|apply)|send\s+(?:us\s+)?(?:a\s+)?(?:proposal|quote)|submit\s+(?:a\s+)?(?:proposal|quote))\b/i
+  /\b(?:looking\s+for|seeking|searching\s+for|need(?:s|ed)?(?:\s+a\s+(?:developer|agency|contractor|vendor|freelancer))?|hire|hiring|engage|want(?:s|ed)?\s+to\s+(?:hire|work\s+with|engage)|invit(?:e|ing)|request(?:ing)?\s+(?:proposals?|quotes?)|rfp|should\s+(?:contact|reach|submit|send|apply)|send\s+(?:us\s+)?(?:a\s+)?(?:proposal|quote)|submit\s+(?:a\s+)?(?:proposal|quote))\b/i
+
+/**
+ * Explicit request for a developer/provider to help with a product/project.
+ * "Looking for a developer to help scale our product" is a buyer request.
+ * Excludes internal hiring: "hiring a developer to join our internal team".
+ */
+const DEVELOPER_REQUEST =
+  /\b(?:looking\s+for|seeking|need(?:s|ed)?|want(?:s|ed)?\s+(?:to\s+)?(?:hire|work\s+with|engage))\s+(?:a\s+)?(?:developer|dev|engineer|programmer)\b/i
+
+/** Internal hiring context that overrides developer request classification. */
+const INTERNAL_HIRING_CONTEXT =
+  /\b(?:join\s+(?:our|the|my)\s+(?:internal\s+)?(?:team|company|startup|firm|crew)|as\s+(?:a\s+)?(?:full[- ]time|permanent|in[- ]?house))\b/i
 
 const EMPLOYMENT_HIRING: RegExp[] = [
-  /\b(?:we(?:'|’)?re|we\s+are|now|currently|is)\s+hiring\b/i,
+  /\b(?:we(?:'|')?re|we\s+are|now|currently|is)\s+hiring\b/i,
   /\bhiring\s+(?:a|an|for|our|multiple|several|\d+)\b/i,
   /\bjoin\s+our\s+(?:\w+\s+){0,3}team\b/i,
-  /\bfull[- ]time\b/i,
-  /\bpermanent\s+(?:role|position|hire|contract)\b/i,
   /\b(?:submit|send|share|attach)\s+(?:your|their|a|an)?\s*(?:cv|resume|résumé)\b/i,
   /\b(?:interested|qualified|suitable)\s+candidates\b/i,
   /\bopen\s+(?:role|position|vacanc(?:y|ies))\b/i,
   /\bjob\s+(?:opening|vacancy|description)\b/i,
   /\bapply\s+(?:now|here|via|through|on)\b/i,
+  /\bcontractors?\s+needed\b/i,
 ]
+
+/**
+ * Service offering patterns: a person/company offering their services to
+ * others who might be hiring. "If you're hiring for X, let's connect" is a
+ * service offering — NOT a buyer request, NOT a hiring event.
+ */
+const SERVICE_OFFERING =
+  /\b(?:if\s+you(?:'|’)?re\s+(?:hiring|looking|seeking|need)|if\s+you\s+(?:hiring|looking|seeking|need)|hiring\?|looking\?|need\?)\b.*\b(?:let(?:|')s\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome)|i\s+(?:can|may)|message\s+(?:me|us))\b/i
+
+/**
+ * Customer discovery patterns: asking for feedback on a product, talking to
+ * users/founders. NOT an external help request.
+ */
+const CUSTOMER_DISCOVERY =
+  /\b(?:feedback\s+(?:on\s+)?(?:my|our|this|the)\s+(?:product|app|platform|feature|idea|mvp|prototype|saas)|talking\s+(?:to|with)\s+(?:founders|users|customers|people)|customer\s+discovery|interviewing\s+(?:founders|users|customers)|research\s+(?:with|on)\s+(?:founders|users|customers)|would\s+love\s+(?:your\s+)?feedback|i(?:|')d\s+love\s+(?:your\s+)?feedback)\b/i
+
+/**
+ * Job-seeking patterns: the person themselves is looking for opportunities.
+ * "I'm open to contract/full-time opportunities" is CANDIDATE, not HIRING.
+ */
+const JOB_SEEKING =
+  /\b(?:(?:i(?:|')m|i\s+am)\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+(?:new\s+)?(?:contract|full[- ]time|part[- ]time|permanent|freelance|work|employment|opportunities|roles|positions|challenges|gigs|projects)|open\s+to\s+(?:new\s+)?(?:work|opportunities|roles|positions|contract|freelance)|available\s+for\s+(?:hire|work|contract|freelance|projects)|looking\s+for\s+(?:my\s+)?(?:next\s+(?:role|position|opportunity|challenge|gig)))\b/i
+
+/**
+ * Employment metadata rows like "Tencyle · Full-time", "CEO · Full-time",
+ * "VP Engineering · Full-time" describe a person's employment status — they
+ * are NOT hiring events. Guard: a line matching hiring patterns must also
+ * contain a hiring verb, not just a position/employment-type word.
+ */
+const HIRING_VERB = /\b(?:hiring|recruiting|join|submit|apply|looking\s+for|seeking|need\s+(?:a|an|our)|open\s+(?:role|position)|job\s+(?:opening|vacancy))\b/i
+const EMPLOYMENT_METADATA = /·.*\b(?:full[- ]time|part[- ]time|permanent|contract)\b|·\s*\b(?:ceo|cto|cfo|vp|director|manager|engineer|developer|founder|lead|head)\b.*\b(?:full[- ]time|part[- ]time|permanent|contract)\b/i
 
 function lines(text: string): string[] {
   return text.split('\n').map((l) => l.trim()).filter(Boolean)
@@ -70,16 +112,60 @@ function firstAffirmedMatch(line: string, re: RegExp): RegExpExecArray | null {
 }
 
 function isExternalServiceLine(line: string): boolean {
+  if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return true
   const provider = firstAffirmedMatch(line, EXTERNAL_PROVIDER)
   if (!provider) return false
-  // The request verb must sit in the same sentence as the provider noun.
   return REQUEST_CONTEXT.test(line)
+}
+
+/**
+ * Recruiter header patterns: the person is recruiting for clients, not buying.
+ * "Looking for developers for multiple clients" from a recruiter is not a
+ * buyer request — the recruiter is the intermediary.
+ */
+const RECRUITER_HEADER =
+  /\b(?:technical\s+recruiter|tech\s+recruiter|it\s+recruiter|recruiter|rekruter(?:ka)?|talent\s+(?:acquisition|partner|specialist)|sourcer|headhunter|hiring\s+manager)\b/i
+const RECRUITER_CTX = /\b(?:for\s+(?:my|our|multiple)\s+clients?|at\s+(?:my|our|multiple)\s+clients?|(?:my|our)\s+clients?\s+(?:is|are|needs?|wants?))\b/i
+
+/**
+ * Classify a single line of source text.
+ * Priority: service_offering > customer_discovery > job_seeking > recruiter > external_request > employment_hiring
+ */
+export type LineClassification = 'service_offering' | 'customer_discovery' | 'job_seeking' | 'recruiter' | 'external_request' | 'employment_hiring' | 'neutral'
+
+export function classifyLine(line: string): LineClassification {
+  if (SERVICE_OFFERING.test(line)) return 'service_offering'
+  if (CUSTOMER_DISCOVERY.test(line)) return 'customer_discovery'
+  if (JOB_SEEKING.test(line)) return 'job_seeking'
+  if (RECRUITER_CTX.test(line)) return 'recruiter'
+  if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return 'external_request'
+  if (EMPLOYMENT_HIRING.some((re) => firstAffirmedMatch(line, re))) return 'employment_hiring'
+  if (EMPLOYMENT_METADATA.test(line) && !HIRING_VERB.test(line)) return 'neutral'
+  if (isExternalServiceLine(line)) return 'external_request'
+  return 'neutral'
+}
+
+export function isRecruiterProfile(rawText: string): boolean {
+  const header = lines(rawText).slice(0, 8).join('\n')
+  return RECRUITER_HEADER.test(header)
 }
 
 export function detectCommercialRequest(rawText: string): CommercialRequestFacts {
   const all = lines(rawText)
-  const external = all.find(isExternalServiceLine) ?? null
-  const employment = all.find((line) => EMPLOYMENT_HIRING.some((re) => firstAffirmedMatch(line, re))) ?? null
+  let external: string | null = null
+  let employment: string | null = null
+
+  for (const line of all) {
+    const classification = classifyLine(line)
+    if (classification === 'recruiter') continue
+    if (classification === 'service_offering') continue
+    if (classification === 'customer_discovery') continue
+    if (classification === 'job_seeking') continue
+    if (classification === 'external_request' && !external) external = line
+    if (classification === 'employment_hiring' && !employment) employment = line
+    if (external && employment) break
+  }
+
   return {
     externalServiceRequest: external ? { line: external } : null,
     employmentHiring: employment ? { line: employment } : null,

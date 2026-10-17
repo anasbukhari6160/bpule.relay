@@ -255,9 +255,9 @@ function extractIndustry(text: string): string | null {
   const industries: Array<{ pattern: RegExp; name: string }> = [
     { pattern: /\b(healthcare|health|medical|pharma|biotech|clinical)\b/i, name: 'healthcare' },
     { pattern: /\b(fintech|finance|banking|insurance|payments|trading)\b/i, name: 'fintech' },
+    { pattern: /\b(cybersecurity|security|infosec)\b/i, name: 'cybersecurity' },
     { pattern: /\b(edtech|education|e-learning|training)\b/i, name: 'edtech' },
     { pattern: /\b(logistics|supply chain|shipping|freight|transportation)\b/i, name: 'logistics' },
-    { pattern: /\b(cybersecurity|security|infosec)\b/i, name: 'cybersecurity' },
     { pattern: /\b(ecommerce|e-commerce|retail|dtc|shopify)\b/i, name: 'ecommerce' },
     { pattern: /\b(real estate|proptech|construction)\b/i, name: 'proptech' },
     { pattern: /\b(media|entertainment|gaming|streaming)\b/i, name: 'media' },
@@ -320,7 +320,7 @@ function extractTenure(text: string): number | null {
 
 function extractIntentSignals(text: string, lower: string): IntentSignals {
   const explicitAsk = ASK_PATTERNS.some((p) => p.test(text))
-  const askingForHelp = /\b(help me|need help|anyone who knows|recommendation|advice on)\b/i.test(text)
+  const askingForHelp = /\b(help me|need\s+\w*\s*help|anyone who knows|recommendation|advice on)\b/i.test(text)
   const commercial = detectCommercialRequest(text)
   // "Looking for an agency" is a vendor search, not hiring. Generic
   // looking-for wording only counts as hiring when no external provider is
@@ -454,7 +454,13 @@ function extractTimingSignals(text: string, lower: string): TimingSignals {
 function extractAccessSignals(text: string, lower: string): AccessSignals {
   const isFirstDegree = /\b1st\b/.test(text) || /·\s*1st/.test(text)
   const mutualMatch = text.match(/(\d+)\s*mutual/i)
-  const mutualConnections = mutualMatch ? parseInt(mutualMatch[1]) : null
+  const namedMutualMatch = text.match(/(\w+(?:\s+)?\w+)\s*,\s*(\w+(?:\s+)?\w+)\s+and\s+(\d+)\s+other\s+mutual/i)
+    ?? text.match(/(\w+(?:\s+)?\w+)\s+and\s+(\w+(?:\s+)?\w+)\s+and\s+(\d+)\s+other\s+mutual/i)
+  const mutualConnections = namedMutualMatch
+    ? 2 + parseInt(namedMutualMatch[3])
+    : mutualMatch
+      ? parseInt(mutualMatch[1])
+      : null
 
   return {
     isFirstDegree,

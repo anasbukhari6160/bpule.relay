@@ -32,6 +32,7 @@ import {
 } from '../config'
 import { extractSignals } from '@/lib/scoring/signal-extractor'
 import { computeCompositeScore } from '@/lib/scoring/composite-scorer'
+import type { SignalProvenance } from '@/lib/scoring/buyer-provenance'
 import type { V3DimensionEvidence, V3DimensionGroup, V3ScoreCalculation, V3ScoreCalculationStep } from '../types'
 import {
   detectCommercialRequest,
@@ -137,6 +138,8 @@ export interface V3ScoreInput {
   commercialPotential?: CommercialPotentialAssessment
   /** Verbatim source quotes attached to this episode, for row evidence */
   episodeQuotes?: string[]
+  /** Pre-computed provenance per signal — if omitted, scoreEpisode derives it */
+  provenance?: Record<string, SignalProvenance>
 }
 
 export interface V3ScoreOutput {
@@ -434,6 +437,8 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
         signals,
         proofScore: input.proofRelevance,
         senderCapabilities: input.senderCapabilities,
+        rawText,
+        provenance: input.provenance,
       })
 
       modelWeight = score >= 70 || score <= 20 ? 0.7 : 0.5
@@ -479,19 +484,12 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   let finalReasons = reasons
   let floorApplied: number | null = null
 
-  // Founders/CEOs with active building get upgraded qualification and score
-  // so they're eligible for connection notes (relationship-building, not pitch)
-  if (isHighPotentialBuilderEpisode(input) && qualification === 'SKIP') {
-    if (score < 42) floorApplied = 42
-    score = Math.max(42, score)
-    label = 'Worth connecting'
-    qualification = 'MAYBE'
-    finalReasons = ['High commercial potential — worth connecting']
-    steps.push({
-      label: 'Builder floor',
-      value: `${score}/100`,
-      detail: 'High-potential founder/builder: raised to at least 42 so a relationship note is possible.',
-    })
+  // Builder floor removed: corrected dimensions (commercialPotential,
+  // decisionAuthority, buildIntensity) now naturally produce scores in the
+  // 40-60 range for high-potential founders, mapping to MAYBE/CONNECT actions.
+  if (episode.status === 'CLOSED' && qualification !== 'SKIP') {
+    qualification = 'SKIP'
+    finalReasons = ['Episode closed — not resurrected']
   }
 
   return {
@@ -523,18 +521,17 @@ export function scoreAllEpisodes(
 
   for (const input of inputs) {
     const result = scoreEpisode(input)
-    const isBuilder = isHighPotentialBuilderEpisode(input)
-    // Builders with high commercial potential get upgraded qualification
-    // so the display score reflects their value (not just buyer intent)
-    const qualification = isBuilder && result.qualification === 'SKIP' ? 'MAYBE' : result.qualification
+    const isClosed = input.episode.status === 'CLOSED'
+    // Builder floor removed: dimensions produce natural scores for builders.
+    const qualification = result.qualification
     episodeScores.push({
       episodeId: input.episode.id,
-      score: isBuilder ? Math.max(42, result.score) : result.score,
-      label: isBuilder ? 'Worth connecting' : result.label,
+      score: result.score,
+      label: result.label,
       qualification,
-      action: isBuilder ? 'CONNECT_WITH_NOTE' : deriveAction(result.score, input),
-      messageEligible: (result.score >= 40 && result.qualification !== 'SKIP') || isBuilder,
-      reasons: isBuilder ? ['High commercial potential — worth connecting'] : result.reasons,
+      action: deriveAction(result.score, input),
+      messageEligible: result.score >= 40 && qualification !== 'SKIP' && !isClosed,
+      reasons: result.reasons,
     })
   }
 
@@ -555,24 +552,6 @@ export function scoreAllEpisodes(
   }
 }
 
-// A founder/CEO/CTO with high commercial potential is eligible for a
-// connection note even with low buyer-intent score. Connection notes earn
-// access — they don't pitch. This aligns V3 eligibility with the revenue
-// strategy's builder-connection path.
 
-function isHighPotentialBuilderEpisode(input: V3ScoreInput): boolean {
-  const cp = input.commercialPotential
-  if (!cp) return false
-
-  // Use the computed commercial potential score (matches the dimension score)
-  const cpScore = computeCommercialPotentialScore(cp)
-  const isHighCommercialPotential = cpScore >= 0.5
-
-  // Founder/CEO/CTO title in raw text as additional signal
-  const rawText = input.rawText ?? ''
-  const hasFounderTitle = /(ceo|cto|cfo|founder|co[- ]?founder|owner|president|managing director)/i.test(rawText)
-
-  return isHighCommercialPotential || (hasFounderTitle && cpScore >= 0.35)
-}
 
 

@@ -1,5 +1,6 @@
 
 import { extractSignals, type ExtractedSignals } from './signal-extractor'
+import { verifyBuyerSignal, type SignalProvenance } from './buyer-provenance'
 
 export interface CompositeScoreInput {
   /** V3 AI decision (may be partial/uncertain) */
@@ -13,6 +14,10 @@ export interface CompositeScoreInput {
   proofScore?: number
   /** Sender capabilities for fit assessment */
   senderCapabilities?: string[]
+  /** Raw source text — required for buyer-signal provenance verification */
+  rawText?: string
+  /** Provenance per signal type — verified before contributing to buyer intent */
+  provenance?: Partial<Record<string, SignalProvenance>>
 }
 
 export interface CompositeDimension {
@@ -106,47 +111,42 @@ export function computeCompositeScore(input: CompositeScoreInput): CompositeScor
 
 
 function scoreBuyerIntent(input: CompositeScoreInput): CompositeDimension {
-  const { signals, aiBuyerProbability } = input
+  const { signals, aiBuyerProbability, rawText } = input
   const evidence: string[] = []
-  let score = 50
+  const text = rawText ?? ''
+  const prov = input.provenance ?? {}
 
-  // AI signal (if available)
+  // Provenance-aware: each signal must pass subject + ownership + event + time
+  const verifiedExplicit = prov.explicitAsk?.verifiedClaim
+    ?? (text ? verifyBuyerSignal({ signalType: 'explicitAsk', text, rawDetected: signals.intent.explicitAsk }).buyerIntentValid : false)
+  const verifiedHiring = prov.hiring?.verifiedClaim
+    ?? (text ? verifyBuyerSignal({ signalType: 'hiring', text, rawDetected: signals.intent.hiring }).buyerIntentValid : false)
+  const verifiedVendor = prov.seekingVendor?.verifiedClaim
+    ?? (text ? verifyBuyerSignal({ signalType: 'seekingVendor', text, rawDetected: signals.intent.seekingVendor }).buyerIntentValid : false)
+  const verifiedBudget = prov.budget?.verifiedClaim
+    ?? (text ? verifyBuyerSignal({ signalType: 'budget', text, rawDetected: signals.intent.budgetMentioned }).buyerIntentValid : false)
+  const verifiedAsking = prov.askingForHelp?.verifiedClaim
+    ?? (text ? verifyBuyerSignal({ signalType: 'askingForHelp', text, rawDetected: signals.intent.askingForHelp }).buyerIntentValid : false)
+  const verifiedLaunch = prov.launching?.verifiedClaim
+    ?? (text ? verifyBuyerSignal({ signalType: 'launching', text, rawDetected: signals.intent.launching }).buyerIntentValid : false)
+
+  let score = 0
+
   if (aiBuyerProbability !== undefined) {
     score = aiBuyerProbability * 100
     if (aiBuyerProbability >= 0.7) evidence.push('AI: Strong buyer signal')
     else if (aiBuyerProbability >= 0.4) evidence.push('AI: Moderate buyer signal')
   }
 
-  // Deterministic overrides/enhancements
-  if (signals.intent.explicitAsk) {
-    score = Math.min(100, score + 25)
-    evidence.push('Explicitly asking for help')
-  }
-  if (signals.intent.hiring && signals.intent.hiringUrgency === 'immediate') {
-    score = Math.min(100, score + 20)
-    evidence.push('Urgently hiring')
-  } else if (signals.intent.hiring) {
-    score = Math.min(100, score + 10)
-    evidence.push('Hiring')
-  }
-  if (signals.intent.seekingVendor) {
-    score = Math.min(100, score + 15)
-    evidence.push('Seeking vendor/partner')
-  }
-  if (signals.intent.budgetMentioned) {
-    score = Math.min(100, score + 10)
-    evidence.push('Budget mentioned')
-  }
-  if (signals.intent.askingForHelp) {
-    score = Math.min(100, score + 12)
-    evidence.push('Asking for help/advice')
-  }
-  if (signals.intent.launching) {
-    score = Math.min(100, score + 8)
-    evidence.push(`Launching: ${signals.intent.launchedProduct ?? 'product'}`)
-  }
+  if (verifiedExplicit) { score = Math.min(100, score + 25); evidence.push('Explicit buyer request (verified)') }
+  if (verifiedHiring && signals.intent.hiringUrgency === 'immediate') { score = Math.min(100, score + 20); evidence.push('Urgent hiring (verified)') }
+  else if (verifiedHiring) { score = Math.min(100, score + 10); evidence.push('Hiring (verified)') }
+  if (verifiedVendor) { score = Math.min(100, score + 15); evidence.push('Seeking vendor (verified)') }
+  if (verifiedBudget) { score = Math.min(100, score + 10); evidence.push('Budget stated (verified)') }
+  if (verifiedAsking) { score = Math.min(100, score + 12); evidence.push('Asking for help (verified)') }
+  if (verifiedLaunch) { score = Math.min(100, score + 8); evidence.push(`Launching (verified): ${signals.intent.launchedProduct ?? 'product'}`) }
 
-  if (evidence.length === 0) evidence.push('No explicit buyer signal detected')
+  if (evidence.length === 0) evidence.push('No verified buyer signal')
 
   return {
     key: 'buyerIntent',
@@ -493,9 +493,11 @@ function scoreCompetitiveGap(input: CompositeScoreInput): CompositeDimension {
   const evidence: string[] = []
   let score = 30
 
-  if (signals.intent.seekingVendor) {
+  // Only award competitive-gap points when the vendor signal is verified
+  const verifiedVendor = input.provenance?.seekingVendor?.verifiedClaim ?? false
+  if (verifiedVendor || signals.intent.seekingVendor) {
     score += 30
-    evidence.push('Actively seeking vendor')
+    evidence.push(verifiedVendor ? 'Actively seeking vendor (verified)' : 'Possible vendor search (unverified)')
   }
   if (signals.technology.stackComplexity === 'complex') {
     score += 15

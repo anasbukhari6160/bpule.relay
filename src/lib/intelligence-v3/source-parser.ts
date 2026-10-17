@@ -182,6 +182,18 @@ function parseEventLine(
 ): SourceEvent | null {
   const lower = line.toLowerCase()
 
+  // Service offering / candidate / customer discovery lines are not hiring events
+  if (/\b(?:if\s+you(?:'|')?re\s+(?:hiring|looking|seeking|need)|hiring\?|looking\?|need\?)\b/i.test(line) &&
+      /\b(?:let(?:|')s\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome)|message\s+(?:me|us))\b/i.test(line)) {
+    return null
+  }
+  if (/\b(?:(?:i(?:|')?m|i\s+am)\s+(?:open\s+to|looking\s+for|seeking|available\s+for)|open\s+to\s+(?:new\s+)?(?:work|opportunities|roles|contract|freelance)|available\s+for\s+(?:hire|work|contract|freelance|projects))\b/i.test(line)) {
+    return null
+  }
+  if (/\b(?:feedback\s+(?:on\s+)?(?:my|our|this|the)\s+(?:product|app|platform|feature|idea|mvp|prototype|saas)|talking\s+(?:to|with)\s+(?:founders|users|customers)|customer\s+discovery|would\s+love\s+(?:your\s+)?feedback|i(?:|')d\s+love\s+(?:your\s+)?feedback)\b/i.test(line)) {
+    return null
+  }
+
   // Hiring signals
   const hiringSignals = [
     'hiring', 'looking for', 'seeking', 'need a ', 'want to hire',
@@ -223,12 +235,15 @@ function parseEventLine(
   const contactRoute = emailMatch ? emailMatch[0] : null
 
   let eventType: SourceEvent['eventType'] = 'HIRING'
-  if (lower.includes('freelance') || lower.includes('contractor') || lower.includes('contract')) {
+  if (lower.includes('outsourc') || lower.includes('agency') || lower.includes('vendor')) {
+    eventType = 'AGENCY_REQUEST'
+  } else if (lower.includes('freelance') || lower.includes('contractor') || lower.includes('contract')) {
+    eventType = 'FREELANCE_REQUEST'
+  } else if (/\b(?:looking\s+for|seeking|need(?:s|ed)?)\s+(?:a\s+)?(?:developer|dev|engineer|programmer)\b/i.test(line) &&
+             /\b(?:help|build|scale|create|develop|design)\b/.test(line)) {
     eventType = 'FREELANCE_REQUEST'
   } else if (lower.includes('partner') || lower.includes('partnership') || lower.includes('collaborate')) {
     eventType = 'PROJECT_REQUEST'
-  } else if (lower.includes('outsourc') || lower.includes('agency') || lower.includes('vendor')) {
-    eventType = 'AGENCY_REQUEST'
   } else if (lower.includes('funding') || lower.includes('raised') || lower.includes('series') || lower.includes('seed')) {
     eventType = 'FUNDING'
   } else if (lower.includes('launch') || lower.includes('releasing') || lower.includes('beta') || lower.includes('early access')) {
