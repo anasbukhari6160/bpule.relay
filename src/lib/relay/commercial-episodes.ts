@@ -67,8 +67,8 @@ const LEGAL_SUFFIXES = ['inc', 'inc.', 'ltd', 'ltd.', 'llc', 'gmbh', 'corp', 'co
  * "Co-Founder & COO @ Docyrus, Inc." → "Docyrus, Inc."
  */
 export function extractCompanyFromHeadline(headline: string): string | null {
-  // Match @ Company or "at Company"
-  const atMatch = headline.match(/[@at]\s+([A-Z][A-Za-z0-9._&\-\s,]+?)(?:\s*[|·—]|$)/i)
+  // Match @ Company or "at Company" — include commas, parentheses, and uppercase words
+  const atMatch = headline.match(/[@at]\s+([A-Za-z0-9._&\-\s,()]+?)(?:\s*[|·—]|$)/i)
   if (atMatch) {
     return cleanCompanyName(atMatch[1])
   }

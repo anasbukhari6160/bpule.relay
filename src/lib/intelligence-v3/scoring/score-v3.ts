@@ -197,16 +197,16 @@ export function isCandidateSeeking(text: string): boolean {
   const lower = text.toLowerCase()
 
   // Direct candidate indicators
-  if (/i'?m\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+(?:new\s+)?(?:contract|full[- ]time|part[- ]time|freelance|work|opportunities|roles|positions|challenges)/i.test(lower)) {
+  if (/i'?m\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+.{0,30}?(?:contract|full[- ]time|part[- ]time|freelance|work|opportunities|roles|positions|gigs|projects)/i.test(lower)) {
     return true
   }
   if (/if\s+you(?:'|')?re\s+(?:hiring|looking|seeking)\b[^.]*(?:let'?s?\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome))/i.test(lower)) {
     return true
   }
-  if (/please\s+(?:keep|save)\s+my\s+(?:profile|resume|cv|info)/i.test(lower)) {
+  if (/i\s+(?:am|m)\s+(?:open|available|interested)\s+to\s+(?:new\s+)?(?:opportunities|work|roles|projects)/i.test(lower)) {
     return true
   }
-  if (/i\s+(?:am|m)\s+(?:open|available|interested)\s+to\s+(?:new\s+)?(?:opportunities|work|roles|projects)/i.test(lower)) {
+  if (/looking\s+for\s+(?:my\s+)?(?:next\s+(?:role|position|opportunity|gig|project))/i.test(lower)) {
     return true
   }
 

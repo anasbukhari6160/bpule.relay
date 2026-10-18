@@ -396,7 +396,8 @@ export function computeExecutionResult(params: ComputeExecutionParams): Executio
   const warnings = computeFunnelWarnings(completions, params.eligible, config)
   const sla = computeSLAHealth(params.pending, config)
   const outcomes = computeOutcomes(params.outcomeData)
-  const state = determinePerformanceState(score, warnings, params.eligible)
+  const hasOpenTargets = params.targets.some((t) => t.target > 0)
+  const state = determinePerformanceState(score, warnings, params.eligible, hasOpenTargets)
 
   const primaryWarning = warnings[0] ?? null
   const primaryBottleneck = primaryWarning ? primaryWarning.stage : null
