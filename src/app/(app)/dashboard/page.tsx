@@ -263,7 +263,37 @@ async function loadRepWorkspaceData(repId: string): Promise<RepWorkspaceData> {
     messagesByLead: relayData.messagesByLead,
   })
 
-  const actions: RelayTodayAction[] = rankedActions.slice(0, 10).map(nbaToRelayAction(nbaToActionKind, workspace))
+  // Apply live conversation override — active conversations supersede cold prospect score
+  const { evaluateLiveOpportunity, getEffectiveAction } = await import('@/lib/relay/live-opportunity')
+  const actions: RelayTodayAction[] = rankedActions.slice(0, 10).map((nba) => {
+    const action = nbaToRelayAction(nbaToActionKind, workspace)(nba)
+
+    // Check if this lead has an active live conversation that should override
+    const leadId = action.id.replace(/^(reply-|followup-|highfit-|opportunity-|connection-dm-)/, '')
+    const messages = (relayData.messagesByLead.get(leadId) ?? []).map(m => ({
+      direction: m.direction ?? 'outbound',
+      sentText: m.sentText,
+      sentAt: m.sentAt,
+    }))
+    const lead = dash.mine?.queue.find(l => l.id === leadId)
+
+    if (lead && messages.length > 0) {
+      const liveState = evaluateLiveOpportunity({
+        leadId,
+        messages,
+        initialAction: action.humanAction,
+        initialScore: lead.canonicalScore ?? lead.score ?? 0,
+      })
+
+      if (liveState.supersedesInitialScore && liveState.liveAction === 'REPLY_NOW') {
+        action.priority = 'urgent'
+        action.humanAction = 'REPLY_NOW'
+        action.whatHappened = liveState.reason
+      }
+    }
+
+    return action
+  })
 
   // Log recommendations for observability (non-blocking)
   if (actions.length > 0 && user.organization?.id) {

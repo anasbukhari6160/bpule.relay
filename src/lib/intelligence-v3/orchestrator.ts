@@ -15,6 +15,7 @@ import {
   markOrganizationAsServiceProvider,
 } from './graph/evidence-graph'
 import { buildEpisodes, eventNeedOwner } from './graph/episode-builder'
+import { buildCommercialEpisodesFromV2, convertCommercialEpisodeToV3 } from '@/lib/relay/commercial-episodes'
 import {
   getDecisionRegistry,
   type V3ProviderContext,
@@ -82,7 +83,17 @@ export async function runV3Decision(
   // Phase 2: Build opportunity episodes
   options.onStatus?.('Building opportunity episodes...')
   const t2 = Date.now()
-  const episodes = buildEpisodes(graph, { referenceDate: refDate })
+  let episodes = buildEpisodes(graph, { referenceDate: refDate })
+
+  // Fallback: if no buyer episodes exist, try commercial-potential from profile structure
+  if (episodes.length === 0) {
+    const commercialEpisodes = buildCommercialEpisodesFromV2(v2Intelligence)
+    episodes = commercialEpisodes.map(ce => convertCommercialEpisodeToV3(ce, graph))
+    if (episodes.length > 0) {
+      options.onStatus?.(`Created ${episodes.length} commercial-potential episode(s) from profile`)
+    }
+  }
+
   const episodeBuildMs = Date.now() - t2
 
   if (episodes.length === 0) {
