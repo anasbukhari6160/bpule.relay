@@ -31,6 +31,70 @@ const COMMERCIAL_ACTIONS: CanonicalAction[] = [
   'LEAD_WON',
 ]
 
+// ── Config Validation ────────────────────────────────────────────────────────
+
+const VALID_ACTIONS = new Set<string>([
+  'CONNECTION_SENT', 'FIRST_DM_SENT', 'FOLLOWUP_SENT', 'REPLY_SENT',
+  'MEETING_BOOKED', 'LEAD_WON', 'UPWORK_APPLIED', 'UPWORK_REPLY',
+  'UPWORK_INTERVIEW', 'UPWORK_WON',
+])
+
+export interface ConfigValidationResult {
+  valid: boolean
+  errors: string[]
+  sanitized: Record<CanonicalAction, number>
+}
+
+export function validatePerformanceConfig(input: {
+  weights?: Record<string, unknown>
+  capRatio?: unknown
+  funnelBalanceThreshold?: unknown
+  slaThresholdsMs?: Record<string, unknown>
+}): ConfigValidationResult {
+  const errors: string[] = []
+  const sanitized: Record<CanonicalAction, number> = { ...DEFAULT_WEIGHTS }
+
+  if (input.weights && typeof input.weights === 'object') {
+    let hasValidWeight = false
+    let hasPositiveWeight = false
+    for (const [key, val] of Object.entries(input.weights)) {
+      if (!VALID_ACTIONS.has(key)) {
+        continue // skip unknown actions silently
+      }
+      if (typeof val !== 'number' || Number.isNaN(val)) {
+        errors.push(`Weight for "${key}" is not a valid number`)
+        continue
+      }
+      if (val < 0) {
+        errors.push(`Weight for "${key}" is negative (${val})`)
+        continue
+      }
+      sanitized[key as CanonicalAction] = val
+      hasValidWeight = true
+      if (val > 0) hasPositiveWeight = true
+    }
+    if (!hasValidWeight) {
+      errors.push('All weights are invalid — using defaults')
+    } else if (!hasPositiveWeight) {
+      errors.push('All weights are zero — at least one must be positive')
+    }
+  }
+
+  if (input.capRatio !== undefined) {
+    const cap = Number(input.capRatio)
+    if (Number.isNaN(cap) || cap < 1 || cap > 5) {
+      errors.push(`capRatio must be 1–5, got ${cap}`)
+    }
+  }
+
+  const valid = errors.length === 0 && Object.values(sanitized).some((v) => v > 0)
+  return {
+    valid,
+    errors,
+    sanitized: valid ? sanitized : { ...DEFAULT_WEIGHTS },
+  }
+}
+
 // ── Default Weights ─────────────────────────────────────────────────────────
 
 export const DEFAULT_WEIGHTS: Record<CanonicalAction, number> = {

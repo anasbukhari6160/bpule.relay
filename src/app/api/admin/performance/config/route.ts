@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { validatePerformanceConfig } from '@/lib/performance/execution-score'
 
 export const maxDuration = 15
 
@@ -58,8 +59,17 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({}))
-  const weights = body.weights ?? {}
   const sla = body.sla ?? {}
+
+  // Validate weights — reject invalid, fall back to defaults
+  const validation = validatePerformanceConfig({
+    weights: body.weights,
+    capRatio: sla.capRatio,
+  })
+
+  if (!validation.valid && validation.errors.length > 0) {
+    return NextResponse.json({ error: validation.errors.join('; ') }, { status: 400 })
+  }
 
   const slaConfig = {
     replyUrgentMs: (sla.replyUrgentHours ?? 2) * 3600000,
@@ -73,11 +83,11 @@ export async function POST(req: NextRequest) {
   const { error } = await store
     .from('organization_rulebooks')
     .update({
-      performance_weights: weights,
+      performance_weights: validation.sanitized,
       sla_config: slaConfig,
     })
     .eq('organization_id', rep.organization_id)
 
   if (error) return NextResponse.json({ error: 'Save failed.' }, { status: 500 })
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, warnings: validation.errors })
 }
