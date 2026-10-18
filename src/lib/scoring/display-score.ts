@@ -30,6 +30,7 @@ export function displayScoreFromCanonical(input: DisplayScoreInput | null): numb
     if (input.qualification === 'strong') return 9
     if (input.qualification === 'worth_pursuing') return 7
     if (input.qualification === 'maybe') return 5
+    if (input.qualification === 'low') return 3
     if (input.qualification === 'skip') return 2
   }
   return Math.round(input.canonicalScore / 10)

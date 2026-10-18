@@ -215,6 +215,7 @@ export type V3Qualification =
   | 'STRONG'
   | 'WORTH_PURSUING'
   | 'MAYBE'
+  | 'LOW'
   | 'SKIP'
   | 'INELIGIBLE'
 
@@ -371,11 +372,11 @@ export const V3_SCORE_LABELS: Array<{
   label: string
   qualification: V3Qualification
 }> = [
-  { min: 80, max: 100, label: 'Strong opportunity', qualification: 'STRONG' },
-  { min: 60, max: 79, label: 'Worth pursuing', qualification: 'WORTH_PURSUING' },
-  { min: 40, max: 59, label: 'Maybe — needs more signal', qualification: 'MAYBE' },
-  { min: 20, max: 39, label: 'Weak fit', qualification: 'SKIP' },
-  { min: 0, max: 19, label: 'Not a fit', qualification: 'SKIP' },
+  { min: 75, max: 100, label: 'Strong opportunity', qualification: 'STRONG' },
+  { min: 55, max: 74, label: 'Worth pursuing', qualification: 'WORTH_PURSUING' },
+  { min: 35, max: 54, label: 'Maybe — needs more signal', qualification: 'MAYBE' },
+  { min: 15, max: 34, label: 'Weak fit', qualification: 'LOW' },
+  { min: 0, max: 14, label: 'Not a fit', qualification: 'SKIP' },
 ]
 
 export function v3ScoreLabel(score: number): { label: string; qualification: V3Qualification } {

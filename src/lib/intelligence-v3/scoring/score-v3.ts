@@ -115,10 +115,10 @@ function deriveAction(score: number, input: V3ScoreInput): V3EpisodeScore['actio
 }
 
 function getScoreLabel(score: number): { label: string; qualification: V3ScoreOutput['qualification'] } {
-  if (score >= 80) return { label: 'Strong opportunity', qualification: 'STRONG' }
-  if (score >= 60) return { label: 'Worth pursuing', qualification: 'WORTH_PURSUING' }
-  if (score >= 40) return { label: 'Maybe — needs more signal', qualification: 'MAYBE' }
-  if (score >= 20) return { label: 'Weak fit', qualification: 'SKIP' }
+  if (score >= 75) return { label: 'Strong opportunity', qualification: 'STRONG' }
+  if (score >= 55) return { label: 'Worth pursuing', qualification: 'WORTH_PURSUING' }
+  if (score >= 35) return { label: 'Maybe — needs more signal', qualification: 'MAYBE' }
+  if (score >= 15) return { label: 'Weak fit', qualification: 'LOW' }
   return { label: 'Not a fit', qualification: 'SKIP' }
 }
 
@@ -146,7 +146,7 @@ export interface V3ScoreOutput {
   /** Final 0-100 score */
   score: number
   label: string
-  qualification: 'STRONG' | 'WORTH_PURSUING' | 'MAYBE' | 'SKIP' | 'INELIGIBLE'
+  qualification: 'STRONG' | 'WORTH_PURSUING' | 'MAYBE' | 'LOW' | 'SKIP' | 'INELIGIBLE'
   reasons: string[]
   watchOut: string[]
   /** Per-dimension breakdown */

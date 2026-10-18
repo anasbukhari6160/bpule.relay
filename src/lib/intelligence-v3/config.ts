@@ -74,16 +74,16 @@ export const RELATIONSHIP_CONTEXT: Record<string, {
   PARTNER: { multiplier: 0.7, allowsBuyerEpisodes: true, messageBias: -0.1 },
   CANDIDATE: { multiplier: 0.6, allowsBuyerEpisodes: true, messageBias: -0.1 },
   MIXED: { multiplier: 0.8, allowsBuyerEpisodes: true, messageBias: -0.05 },
-  UNKNOWN: { multiplier: 0.7, allowsBuyerEpisodes: true, messageBias: -0.05 },
+  UNKNOWN: { multiplier: 0.85, allowsBuyerEpisodes: true, messageBias: -0.02 },
 }
 
 
 export const EPISODE_STATUS_SCORES: Record<string, number> = {
   CURRENT: 1.0,
-  AGING: 0.7,
-  STALE: 0.3,
+  AGING: 0.8,
+  STALE: 0.4,
   CLOSED: 0.0,
-  UNKNOWN: 0.5,
+  UNKNOWN: 0.65,
 }
 
 
@@ -107,9 +107,9 @@ export const ACTION_THRESHOLDS = {
   /** Score >= this → CONNECT_WITHOUT_NOTE or OBSERVE */
   CONNECT_MIN: 35,
   /** Score >= this → OBSERVE */
-  OBSERVE_MIN: 20,
+  OBSERVE_MIN: 15,
   /** Below this → SKIP */
-  SKIP_MAX: 19,
+  SKIP_MAX: 14,
 } as const
 
 

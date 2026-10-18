@@ -172,6 +172,7 @@ function validateOrganization(
 function assignTiming(event: ExtractedEvent, posts: SourceSegment[], eventIndex: number): ExtractedEvent {
   const evidenceLower = event.evidenceQuote?.toLowerCase() || ''
 
+  // Try precise matching first
   for (const post of posts) {
     const postLower = post.text.toLowerCase()
     if (evidenceLower && postLower.includes(evidenceLower.slice(0, 40))) {
@@ -182,8 +183,15 @@ function assignTiming(event: ExtractedEvent, posts: SourceSegment[], eventIndex:
     }
   }
 
+  // Fall back to index-based matching
   if (posts[eventIndex]) {
     return { ...event, ageDays: posts[eventIndex].ageDays }
+  }
+
+  // Last resort: assign the most recent post's age to avoid UNKNOWN status
+  const datedPosts = posts.filter(p => p.ageDays != null).sort((a, b) => (a.ageDays ?? 999) - (b.ageDays ?? 999))
+  if (datedPosts.length > 0) {
+    return { ...event, ageDays: datedPosts[0].ageDays }
   }
 
   return event
