@@ -1,3 +1,5 @@
+import { classifyClientMessage, type IntentClass } from '@/lib/conversation/intent'
+
 export type ObjectionCategory =
   | 'PRICE'
   | 'TIMING'
@@ -10,19 +12,12 @@ export type ObjectionCategory =
   | 'AUTHORITY'
   | 'OTHER'
 
-export interface ObjectionRecord {
-  leadId: string
-  category: ObjectionCategory
-  rawText: string
-  detectedAt: string
-  resolved: boolean
-  resolvedAt: string | null
-  resolvedBy: string | null // proof/sender that resolved it
-}
-
 export interface ReplyIntelligence {
-  intent: string
   primaryIntent: string
+  canonicalClass: IntentClass
+  classification: string
+  recommendedAction: string
+  riskFlags: string[]
   secondaryDimensions: {
     urgency: 'immediate' | 'soon' | 'none'
     commercialValue: 'high' | 'medium' | 'low'
@@ -33,17 +28,37 @@ export interface ReplyIntelligence {
     pricingIntent: boolean
     timelineIntent: boolean
   }
-  classification: string
-  recommendedAction: string
-  riskFlags: string[]
-  evidence: string[]
 }
 
 /**
- * Deterministic reply intelligence extraction.
- * Uses obvious pattern matching first — no AI needed for clear cases.
+ * Reply Intelligence — uses canonical intent classifier as primary source.
+ * Adds secondary dimensions (urgency, objections, requested info) on top.
+ * NEVER contradicts lifecycle state — canonical class is truth.
  */
 export function extractReplyIntelligence(rawText: string): ReplyIntelligence {
+  // 1. Use canonical classifier as ground truth
+  const canonical = classifyClientMessage(rawText)
+
+  // 2. Extract secondary dimensions deterministically
+  const dimensions = extractDimensions(rawText)
+
+  // 3. Map canonical class to action — guaranteed agreement with lifecycle
+  const { classification, recommendedAction, riskFlags } = mapCanonicalToAction(
+    canonical,
+    dimensions,
+  )
+
+  return {
+    primaryIntent: canonical.intent,
+    canonicalClass: canonical.class,
+    classification,
+    recommendedAction,
+    riskFlags,
+    secondaryDimensions: dimensions,
+  }
+}
+
+function extractDimensions(rawText: string): ReplyIntelligence['secondaryDimensions'] {
   const text = rawText.toLowerCase()
   const dimensions: ReplyIntelligence['secondaryDimensions'] = {
     urgency: 'none',
@@ -56,35 +71,35 @@ export function extractReplyIntelligence(rawText: string): ReplyIntelligence {
     timelineIntent: false,
   }
 
-  // Urgency detection
+  // Urgency
   if (/asap|urgent|immediately|right now|today|tomorrow|this week/.test(text)) {
     dimensions.urgency = 'immediate'
   } else if (/soon|next week|this month|in the coming/.test(text)) {
     dimensions.urgency = 'soon'
   }
 
-  // Question detection
+  // Question
   if (/\?/.test(text) || /can you|could you|do you|would you|what|how|when|where/.test(text)) {
     dimensions.questionDetected = true
   }
 
-  // Meeting intent
+  // Meeting
   if (/call|meet|meeting|chat|talk|zoom|calendar|schedule|book/.test(text)) {
     dimensions.meetingIntent = true
   }
 
-  // Pricing intent
+  // Pricing
   if (/price|rate|cost|budget|quote|pricing|how much|package|proposal/.test(text)) {
     dimensions.pricingIntent = true
     dimensions.requestedInfo.push('pricing')
   }
 
-  // Timeline intent
+  // Timeline
   if (/timeline|deadline|when|start|launch date|launching|release/.test(text)) {
     dimensions.timelineIntent = true
   }
 
-  // Requested information extraction
+  // Requested info
   if (/example|portfolio|case study|work|past project|reference|demo/.test(text)) {
     dimensions.requestedInfo.push('proof/work examples')
   }
@@ -98,10 +113,9 @@ export function extractReplyIntelligence(rawText: string): ReplyIntelligence {
     dimensions.requestedInfo.push('team')
   }
 
-  // Objection detection
+  // Objection
   if (/too expensive|out of budget|can't afford|not in budget|costly|overpriced/.test(text)) {
     dimensions.objectionType = 'PRICE'
-    dimensions.commercialValue = 'medium'
   } else if (/not the right time|too busy|later|not now|maybe next/.test(text)) {
     dimensions.objectionType = 'TIMING'
   } else if (/prove|track record|reference|portfolio|show me|evidence/.test(text)) {
@@ -120,112 +134,92 @@ export function extractReplyIntelligence(rawText: string): ReplyIntelligence {
     dimensions.objectionType = 'AUTHORITY'
   }
 
-  // Commercial value assessment
+  // Commercial value
   if (dimensions.meetingIntent || dimensions.pricingIntent) {
     dimensions.commercialValue = 'high'
   } else if (dimensions.objectionType || dimensions.requestedInfo.length > 1) {
     dimensions.commercialValue = 'medium'
   }
 
-  // Determine primary intent and classification
-  const { primaryIntent, classification, recommendedAction, riskFlags } = classifyReply(text, dimensions)
-
-  return {
-    intent: primaryIntent,
-    primaryIntent,
-    secondaryDimensions: dimensions,
-    classification,
-    recommendedAction,
-    riskFlags,
-    evidence: [],
-  }
+  return dimensions
 }
 
-function classifyReply(
-  text: string,
+function mapCanonicalToAction(
+  canonical: { class: IntentClass; intent: string; explicit: boolean },
   dimensions: ReplyIntelligence['secondaryDimensions'],
-): {
-  primaryIntent: string
-  classification: string
-  recommendedAction: string
-  riskFlags: string[]
-} {
+): { classification: string; recommendedAction: string; riskFlags: string[] } {
   const riskFlags: string[] = []
 
-  // Closed/rejection
-  if (/not interested|no thanks|unsubscribe|remove me|stop|passed|going with someone else|decided to/.test(text)) {
-    return {
-      primaryIntent: 'REJECTION',
-      classification: 'CLOSED',
-      recommendedAction: 'Close or archive',
-      riskFlags: ['Do not follow up'],
-    }
-  }
+  switch (canonical.class) {
+    case 'NEGATIVE':
+      return {
+        classification: 'CLOSED',
+        recommendedAction: 'Close or archive — do not follow up',
+        riskFlags: ['Do not follow up'],
+      }
 
-  // Deferral
-  if (/not now|later|maybe next|too busy right now|reach back|in a few months/.test(text)) {
-    return {
-      primaryIntent: 'DEFERRAL',
-      classification: 'DEFERRED',
-      recommendedAction: 'Stay warm — no follow-up until they re-engage',
-      riskFlags: ['Do not pitch now'],
-    }
-  }
+    case 'DEFERRED':
+      return {
+        classification: 'DEFERRED',
+        recommendedAction: 'Stay warm — no follow-up until they re-engage',
+        riskFlags: ['Do not pitch now'],
+      }
 
-  // Meeting accepted
-  if (/sounds good|let's do it|works for me|yes|sure|great|book it|send the invite|calendar/.test(text)) {
-    return {
-      primaryIntent: 'MEETING_ACCEPT',
-      classification: 'INTERESTED',
-      recommendedAction: 'Send calendar link immediately',
-      riskFlags: [],
-    }
-  }
+    case 'CLOSED':
+      return {
+        classification: 'CLOSED',
+        recommendedAction: 'Close or archive',
+        riskFlags: ['Conversation is closed'],
+      }
 
-  // Buying question
-  if (dimensions.pricingIntent && dimensions.questionDetected) {
-    return {
-      primaryIntent: 'BUYING_QUESTION',
-      classification: 'BUYING_INTENT',
-      recommendedAction: 'Reply now — answer pricing + propose next step',
-      riskFlags: [],
-    }
-  }
+    case 'POSITIVE':
+      if (dimensions.meetingIntent) {
+        return {
+          classification: 'MEETING_ACCEPT',
+          recommendedAction: 'Send calendar link immediately',
+          riskFlags: [],
+        }
+      }
+      if (dimensions.objectionType) {
+        return {
+          classification: 'OBJECTION',
+          recommendedAction: `Address ${dimensions.objectionType.toLowerCase()} objection`,
+          riskFlags: [`${dimensions.objectionType} objection detected`],
+        }
+      }
+      return {
+        classification: 'INTERESTED',
+        recommendedAction: dimensions.commercialValue === 'high' ? 'Reply now' : 'Continue conversation',
+        riskFlags: [],
+      }
 
-  // Question with requested info
-  if (dimensions.questionDetected && dimensions.requestedInfo.length > 0) {
-    return {
-      primaryIntent: 'INFORMATION_REQUEST',
-      classification: dimensions.commercialValue === 'high' ? 'BUYING_INTENT' : 'QUESTION',
-      recommendedAction: 'Reply now — provide requested information',
-      riskFlags: [],
-    }
-  }
+    case 'QUESTION':
+      if (dimensions.pricingIntent) {
+        return {
+          classification: 'BUYING_INTENT',
+          recommendedAction: 'Reply now — answer pricing + propose next step',
+          riskFlags: [],
+        }
+      }
+      return {
+        classification: 'QUESTION',
+        recommendedAction: 'Reply now — provide requested information',
+        riskFlags: [],
+      }
 
-  // Objection
-  if (dimensions.objectionType) {
-    return {
-      primaryIntent: 'OBJECTION',
-      classification: 'OBJECTION',
-      recommendedAction: `Address ${dimensions.objectionType.toLowerCase()} objection`,
-      riskFlags: [`${dimensions.objectionType} objection detected`],
-    }
-  }
-
-  // Neutral/positive engagement
-  if (/thanks|thank you|got it|received|noted|ok|understood/.test(text)) {
-    return {
-      primaryIntent: 'ACKNOWLEDGMENT',
-      classification: 'NEUTRAL',
-      recommendedAction: 'Continue the conversation when ready',
-      riskFlags: [],
-    }
-  }
-
-  return {
-    primaryIntent: 'ENGAGEMENT',
-    classification: dimensions.commercialValue === 'high' ? 'BUYING_INTENT' : 'QUESTION',
-    recommendedAction: dimensions.commercialValue === 'high' ? 'Reply now' : 'Review',
-    riskFlags: [],
+    case 'NEUTRAL':
+    default:
+      if (dimensions.questionDetected) {
+        return {
+          classification: 'QUESTION',
+          recommendedAction: 'Reply to question',
+          riskFlags: [],
+        }
+      }
+      return {
+        classification: 'NEUTRAL',
+        recommendedAction: 'Continue the conversation when ready',
+        riskFlags: [],
+      }
   }
 }

@@ -8,6 +8,12 @@ export interface TodaysIntelligence {
   leadsWentStale: number
   leadsToReassign: number
   intelligenceFallbacks: number
+  // Drillable IDs — every count links to exact underlying records
+  newHighValueSignalLeadIds: string[]
+  repliesNeedingActionLeadIds: string[]
+  opportunitiesStrongerLeadIds: string[]
+  staleLeadIds: string[]
+  reassignCandidateLeadIds: string[]
   notableEvents: Array<{
     type: 'signal' | 'reply' | 'stale' | 'fallback'
     title: string
@@ -106,6 +112,12 @@ export function generateTodaysIntelligence(params: {
     leadsWentStale: staleHighValue.length,
     leadsToReassign: reassignCandidates.length,
     intelligenceFallbacks: fallbacks.length,
+    // Drillable IDs — every count links to exact underlying records
+    newHighValueSignalLeadIds: todaySignals.map(s => s.leadId),
+    repliesNeedingActionLeadIds: repliesNeeding.map(m => m.leadId),
+    opportunitiesStrongerLeadIds: strongerToday.map(e => (e.metadata as any)?.leadId).filter(Boolean) as string[],
+    staleLeadIds: staleHighValue.map(l => l.id),
+    reassignCandidateLeadIds: reassignCandidates.map(l => l.id),
     notableEvents: notableEvents.slice(0, 5),
   }
 }

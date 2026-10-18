@@ -13,6 +13,7 @@ import { createServiceSupabase } from '@/lib/supabase/service'
 import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { diffSignalSnapshots, buildSignalSnapshot, qualifiesForWatching } from '@/lib/relay/signal-watch'
 import { emitAction } from '@/lib/action-ledger'
+import { persistSignalEvent } from '@/lib/relay/signal-events-store'
 
 export const maxDuration = 60
 
@@ -98,7 +99,7 @@ export async function POST(req: NextRequest) {
           .eq('id', lead.id)
       }
 
-      // Emit notable signal events to action ledger
+      // Emit notable signal events to action ledger AND persist to signal_events
       for (const event of signalEvents) {
         if (event.severity === 'urgent' || event.severity === 'notable') {
           await emitAction({
@@ -113,6 +114,24 @@ export async function POST(req: NextRequest) {
               currentScore: event.newValue,
             },
             idempotencyKey: `signal-${event.type}-${lead.id}-${event.createdAt.slice(0, 10)}`,
+          })
+
+          // Persist to signal_events for queryable history
+          await persistSignalEvent(store, {
+            id: event.id,
+            organizationId: rep.organization_id,
+            leadId: event.leadId,
+            signalType: event.type,
+            severity: event.severity,
+            previousValue: event.previousValue,
+            newValue: event.newValue,
+            evidence: event.evidence,
+            confidence: event.confidence,
+            source: event.source,
+            verified: event.verified,
+            actor: event.actor,
+            organization: event.organization,
+            detectedAt: event.createdAt,
           })
         }
       }

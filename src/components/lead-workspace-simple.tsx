@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { LeadScoreRing } from '@/components/score-ring'
 import { cn } from 'cn'
+import Link from 'next/link'
 import type { LeadDetail } from '@/lib/store/types'
 import { computeRelationshipState } from '@/lib/relay/relationship-state'
 import { deriveNextLeadAction } from '@/lib/relay/lead-state-machine'
@@ -234,6 +235,11 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                 <h1 className="text-[18px] font-medium text-ink truncate">{lead.contactName ?? 'Unnamed prospect'}</h1>
                 <p className="text-[13px] text-graphite truncate flex items-center gap-1">
                   <Building2 className="size-3 shrink-0" /><span className="truncate">{formatRoleLine(lead.contactTitle, lead.company)}</span>
+                  {lead.companyKey && (
+                    <Link href={`/account?companyKey=${encodeURIComponent(lead.companyKey)}`} className="ml-1 text-[10px] text-cobalt hover:underline shrink-0">
+                      Account 360 →
+                    </Link>
+                  )}
                 </p>
               </div>
             </div>

@@ -1,4 +1,14 @@
-import type { ObjectionCategory, ObjectionRecord } from './reply-intelligence'
+import type { ObjectionCategory } from './reply-intelligence'
+
+export interface ObjectionRecord {
+  leadId: string
+  category: ObjectionCategory
+  rawText: string
+  detectedAt: string
+  resolved: boolean
+  resolvedAt: string | null
+  resolvedBy: string | null
+}
 
 export interface ObjectionSummary {
   category: ObjectionCategory

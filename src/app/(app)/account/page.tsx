@@ -22,16 +22,14 @@ export default async function AccountPage({
   const { company, companyKey } = await searchParams
   const store = await createScoutStore()
 
-  // Find leads by company
+  // Find leads by company — ONLY use companyKey for exact dedup
   const allLeads = await store.listOwnedLeads()
   const companyLeads = companyKey
     ? allLeads.filter(l => l.companyKey === companyKey)
-    : company
-      ? allLeads.filter(l => l.company?.toLowerCase().includes(company.toLowerCase()))
-      : []
+    : []
 
-  if (companyLeads.length === 0 && !company && !companyKey) {
-    // Show empty state — user needs to search
+  if (companyLeads.length === 0 && !companyKey) {
+    // Empty state — user needs to search by companyKey (from lead detail link)
     return (
       <div className="space-y-6 pb-8">
         <header className="space-y-1.5">
@@ -39,13 +37,13 @@ export default async function AccountPage({
           <h1 className="text-display text-[28px] font-light tracking-[-0.02em] text-ink">Company Intelligence</h1>
         </header>
         <div className="rounded-lg border border-dashed border-line bg-bone-raised/40 p-8 text-center">
-          <p className="text-[14px] text-graphite">Search for a company to see its Account 360.</p>
+          <p className="text-[14px] text-graphite">No company selected. Open any lead and click the company link to view Account 360.</p>
         </div>
       </div>
     )
   }
 
-  const companyName = companyLeads[0]?.company ?? company ?? 'Unknown'
+  const companyName = companyLeads[0]?.company ?? 'Unknown'
 
   // Fetch messages for all company leads
   const leadIds = companyLeads.map(l => l.id)

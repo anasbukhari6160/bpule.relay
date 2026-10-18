@@ -109,6 +109,11 @@ export interface CommandCenterData {
     leadsWentStale: number
     leadsToReassign: number
     intelligenceFallbacks: number
+    newHighValueSignalLeadIds: string[]
+    repliesNeedingActionLeadIds: string[]
+    opportunitiesStrongerLeadIds: string[]
+    staleLeadIds: string[]
+    reassignCandidateLeadIds: string[]
     notableEvents: Array<{ type: string; title: string; detail: string }>
   }
 }
