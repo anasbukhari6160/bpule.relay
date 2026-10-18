@@ -5,12 +5,15 @@ import { motion } from 'motion/react'
 import {
   Send, Reply, Bell, Clock, CheckCircle2,
   TrendingUp, Flame, AlertTriangle, ChevronRight,
-  Users, Target, Zap,
+  Users, Target, Zap, Calendar,
 } from 'lucide-react'
 import { cn } from 'cn'
 import type { RepWorkspaceData } from '@/components/rep/rep-workspace'
 import type { RelayTodayAction } from '@/components/relay-today-workspace'
 import { computeDailyProgress } from '@/lib/performance/daily-progress'
+import { ContributionHeatmap } from '@/components/performance/contribution-heatmap'
+import { useEffect, useState } from 'react'
+import type { DailyActivity, ActivitySummary } from '@/lib/performance/activity-model'
 
 /* ─── helpers ─── */
 function timeAgo(iso: string | null): string {
@@ -204,6 +207,9 @@ export function RepDashboard({ data }: { data: RepWorkspaceData }) {
         })}
       </div>
 
+      {/* Activity heatmap — GitHub-style contribution calendar */}
+      <ActivityHeatmapSection />
+
       {/* Notifications */}
       {(notifications?.length ?? 0) > 0 && (
         <div className="space-y-2">
@@ -218,6 +224,89 @@ export function RepDashboard({ data }: { data: RepWorkspaceData }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Activity heatmap section — fetches rep's historical activity
+ * and renders a GitHub-style contribution calendar.
+ */
+function ActivityHeatmapSection() {
+  const [activity, setActivity] = useState<DailyActivity[] | null>(null)
+  const [summary, setSummary] = useState<ActivitySummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/performance/activity?range=12w')
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { daily: DailyActivity[]; summary: ActivitySummary } | null) => {
+        if (data) {
+          setActivity(data.daily)
+          setSummary(data.summary)
+        }
+        setLoading(false)
+      })
+      .catch(() => { setError(true); setLoading(false) })
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-line bg-bone-raised/20 p-5">
+        <div className="animate-pulse space-y-3">
+          <div className="h-3 w-32 rounded bg-bone" />
+          <div className="h-[80px] rounded bg-bone/60" />
+        </div>
+      </div>
+    )
+  }
+
+  if (error || !activity || !summary) {
+    return null // Silent fail — heatmap is supplementary
+  }
+
+  if (summary.totalActions === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-line bg-bone-raised/20 p-5 text-center">
+        <Calendar className="mx-auto size-6 text-stone" />
+        <p className="mt-2 text-[13px] text-graphite">No activity yet</p>
+        <p className="mt-1 text-[11px] text-stone">Your work history will appear here as you analyze leads, send outreach, follow up and reply.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-2xl border border-line bg-bone-raised/20 p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Calendar className="size-4 text-orange" />
+          <h3 className="text-sm font-medium text-ink">Your Consistency</h3>
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-stone">
+          <span className="flex items-center gap-1"><Flame className="size-3 text-orange" />{summary.currentStreak}d streak</span>
+          <span className="flex items-center gap-1"><Target className="size-3 text-cobalt" />{summary.activeDays}/{summary.totalDays} days</span>
+        </div>
+      </div>
+
+      <ContributionHeatmap daily={activity} />
+
+      {/* Summary stats */}
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <MiniStat label="Connections" value={summary.breakdown.connections} />
+        <MiniStat label="DMs" value={summary.breakdown.firstDMs} />
+        <MiniStat label="Replies" value={summary.breakdown.replies} />
+        <MiniStat label="Wins" value={summary.breakdown.wins} highlight />
+      </div>
+    </div>
+  )
+}
+
+function MiniStat({ label, value, highlight }: { label: string; value: number; highlight?: boolean }) {
+  return (
+    <div className="rounded-md border border-line/60 bg-bone-raised/40 px-3 py-2 text-center">
+      <p className={cn('text-[14px] font-medium', highlight && value > 0 ? 'text-status-success' : 'text-ink')}>{value}</p>
+      <p className="text-[9px] text-stone">{label}</p>
     </div>
   )
 }

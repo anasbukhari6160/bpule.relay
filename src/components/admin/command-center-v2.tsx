@@ -26,6 +26,7 @@ import {
 import { cn } from 'cn'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { EventsDrilldown } from '@/components/admin/events-drilldown'
+import { ContributionHeatmap } from '@/components/performance/contribution-heatmap'
 
 import { formatMinutesAgo } from '@/lib/ui/time'
 import type { CommandCenterData, TeamRow, ExceptionItem, OpportunityFeedItem, TeamMemberStatus, ExceptionSeverity, RepQueueSnapshot } from '@/lib/admin/command-center-v2'
@@ -189,6 +190,9 @@ export function CommandCenterV2({ orgId }: { orgId: string }) {
               <TodaysIntelligenceSection intelligence={data.todaysIntelligence} />
             )}
 
+            {/* Team Consistency */}
+            <TeamConsistencySection orgId={orgId} date={date} />
+
             {/* Daily Brief */}
             <DailyBriefSection brief={data.brief} date={date} onDrilldown={(action) => setDrilldown({ action, repId: null })} />
 
@@ -324,6 +328,118 @@ function SinceYesterdaySection({ diff }: { diff: NonNullable<CommandCenterData['
     </motion.section>
   )
 }
+
+function TeamConsistencySection({ orgId, date }: { orgId: string; date: string }) {
+  const [reps, setReps] = useState<Array<{
+    repId: string
+    repName: string
+    activeDays: number
+    totalDays: number
+    currentStreak: number
+    totalActions: number
+    connections: number
+    replies: number
+    wins: number
+    heatmap: DailyActivity[]
+  }> | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetchReps().then(() => setLoading(false))
+  }, [orgId, date])
+
+  async function fetchReps() {
+    // Fetch team members
+    const teamRes = await fetch(`/api/admin/command-center-v2?date=${date}`)
+    if (!teamRes.ok) { setLoading(false); return }
+    const teamData = await teamRes.json()
+    const teamMembers: TeamRow[] = teamData.team ?? []
+
+    // Fetch activity for each rep
+    const activityResults = await Promise.all(
+      teamMembers.map(async (rep): Promise<{
+        repId: string
+        repName: string
+        activeDays: number
+        totalDays: number
+        currentStreak: number
+        totalActions: number
+        connections: number
+        replies: number
+        wins: number
+        heatmap: DailyActivity[]
+      } | null> => {
+        const res = await fetch(`/api/admin/performance/activity?repId=${rep.repId}&range=12w`)
+        if (!res.ok) return null
+        const data = await res.json()
+        return {
+          repId: rep.repId,
+          repName: rep.repName,
+          activeDays: data.summary?.activeDays ?? 0,
+          totalDays: data.summary?.totalDays ?? 0,
+          currentStreak: data.summary?.currentStreak ?? 0,
+          totalActions: data.summary?.totalActions ?? 0,
+          connections: data.summary?.breakdown?.connections ?? 0,
+          replies: data.summary?.breakdown?.replies ?? 0,
+          wins: data.summary?.breakdown?.wins ?? 0,
+          heatmap: data.daily ?? [],
+        }
+      })
+    )
+    setReps(activityResults.filter(Boolean) as NonNullable<typeof activityResults[number]>[])
+  }
+
+  if (loading) {
+    return (
+      <section className="rounded-lg border border-line bg-bone-raised p-5">
+        <div className="animate-pulse space-y-3">
+          <div className="h-3 w-32 rounded bg-bone" />
+          <div className="h-[60px] rounded bg-bone/60" />
+        </div>
+      </section>
+    )
+  }
+
+  if (!reps || reps.length === 0) return null
+
+  return (
+    <section className="rounded-lg border border-line bg-bone-raised">
+      <div className="flex items-center justify-between border-b border-line px-5 py-3">
+        <div className="flex items-center gap-2">
+          <Calendar className="size-4 text-orange" />
+          <p className="text-mono-medium text-[10px] uppercase tracking-[0.12em] text-stone">
+            Team Consistency
+          </p>
+        </div>
+      </div>
+      <div className="divide-y divide-line/60">
+        {reps.map(rep => (
+          <div key={rep.repId} className="flex items-center gap-4 px-5 py-3">
+            {/* Mini heatmap */}
+            <div className="hidden sm:block">
+              <ContributionHeatmap daily={rep.heatmap} />
+            </div>
+            {/* Rep info */}
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-medium text-ink">{rep.repName}</p>
+              <p className="text-[11px] text-stone">
+                {rep.activeDays}/{rep.totalDays} days · {rep.currentStreak}d streak
+              </p>
+            </div>
+            {/* Stats */}
+            <div className="flex items-center gap-3 text-[11px] text-graphite">
+              <span>{rep.connections} conn</span>
+              <span>{rep.replies} rep</span>
+              {rep.wins > 0 && <span className="text-status-success">{rep.wins} win{rep.wins > 1 ? 's' : ''}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+import type { DailyActivity } from '@/lib/performance/activity-model'
 
 function TodaysIntelligenceSection({ intelligence }: {
   intelligence: {
