@@ -78,12 +78,29 @@ export interface SinceYesterday {
   wins: number
 }
 
+export interface RepQueueSnapshot {
+  repId: string
+  repName: string
+  topActions: {
+    action: string
+    company: string
+    reason: string
+    urgency: string
+    leadId: string | null
+  }[]
+  pendingReplies: number
+  overdueFollowups: number
+  untouchedReferrals: number
+  staleLeads: number
+}
+
 export interface CommandCenterData {
   brief: DailyBrief
   sinceYesterday: SinceYesterday | null
   team: TeamRow[]
   exceptions: ExceptionItem[]
   opportunities: OpportunityFeedItem[]
+  repQueueSnapshots?: RepQueueSnapshot[]
 }
 
 
@@ -580,4 +597,113 @@ function formatMinutes(min: number): string {
   if (min < 60) return `${min}m`
   if (min < 1440) return `${Math.floor(min / 60)}h ${min % 60}m`
   return `${Math.floor(min / 1440)}d`
+}
+
+/**
+ * Load a per-rep ranked work queue snapshot for admin visibility.
+ * Extends Command Center — does NOT create a new dashboard.
+ * Returns top 5 actions per rep, plus exception counts.
+ */
+export async function loadRepQueueSnapshot(
+  orgId: string,
+  repId: string,
+  repName: string,
+  date: string,
+): Promise<RepQueueSnapshot> {
+  const client = getClient()
+  const now = Date.now()
+
+  const { data: leads } = await client
+    .from('leads')
+    .select(`
+      id, company, contact_name, status, canonical_score,
+      sender_profile_id, created_at,
+      conversation_states (stage, last_reply_at, last_sent_at, next_followup_at)
+    `)
+    .eq('organization_id', orgId)
+    .eq('owner_rep_id', repId)
+    .eq('archived', false)
+    .limit(100)
+
+  const actions: RepQueueSnapshot['topActions'] = []
+  let pendingReplies = 0
+  let overdueFollowups = 0
+  let untouchedReferrals = 0
+  let staleLeads = 0
+
+  for (const lead of leads || []) {
+    const cs = (lead.conversation_states as unknown as {
+      stage: string
+      last_reply_at: string | null
+      last_sent_at: string | null
+      next_followup_at: string | null
+    }[] | null)?.[0]
+
+    // Reply waiting
+    if (cs?.last_reply_at && cs?.last_sent_at && cs.last_reply_at > cs.last_sent_at) {
+      pendingReplies++
+      const mins = Math.floor((now - new Date(cs.last_reply_at).getTime()) / 60000)
+      actions.push({
+        action: 'Reply',
+        company: (lead.company as string) || 'Unknown',
+        reason: `Client replied ${formatMinutes(mins)} ago`,
+        urgency: mins > 480 ? 'urgent' : 'high',
+        leadId: lead.id as string,
+      })
+    }
+
+    // Follow-up overdue
+    if (cs?.next_followup_at && new Date(cs.next_followup_at).getTime() <= now) {
+      const overdueMin = Math.floor((now - new Date(cs.next_followup_at).getTime()) / 60000)
+      if (overdueMin > 60) {
+        overdueFollowups++
+        actions.push({
+          action: 'Follow up',
+          company: (lead.company as string) || 'Unknown',
+          reason: `Due ${formatMinutes(overdueMin)} ago`,
+          urgency: overdueMin > 2880 ? 'urgent' : 'medium',
+          leadId: lead.id as string,
+        })
+      }
+    }
+
+    // Stale lead
+    const days = Math.floor((now - new Date(lead.created_at as string).getTime()) / 86400000)
+    if (days >= 14 && ['new', 'contacted'].includes(lead.status as string)) {
+      staleLeads++
+      actions.push({
+        action: 'Decide',
+        company: (lead.company as string) || 'Unknown',
+        reason: `Untouched for ${days} days`,
+        urgency: days >= 30 ? 'urgent' : 'low',
+        leadId: lead.id as string,
+      })
+    }
+
+    // High-value untouched
+    const score = (lead.canonical_score as number) || 0
+    if (lead.status === 'new' && score >= 70) {
+      actions.push({
+        action: 'Contact',
+        company: (lead.company as string) || 'Unknown',
+        reason: `Score ${score}/100 — strong match`,
+        urgency: 'medium',
+        leadId: lead.id as string,
+      })
+    }
+  }
+
+  // Sort: urgent first, then high, then by urgency order
+  const urgencyOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
+  actions.sort((a, b) => (urgencyOrder[a.urgency] ?? 4) - (urgencyOrder[b.urgency] ?? 4))
+
+  return {
+    repId,
+    repName,
+    topActions: actions.slice(0, 5),
+    pendingReplies,
+    overdueFollowups,
+    untouchedReferrals,
+    staleLeads,
+  }
 }

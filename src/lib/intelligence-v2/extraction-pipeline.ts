@@ -1,5 +1,5 @@
 
-import { mapLocationToRegion } from '@/lib/leads/targeting-pure'
+import { isKnownPlaceName, looksLikePlace } from '@/lib/leads/targeting-pure'
 import type {
   ExtractedPerson,
   ExtractedCompany,
@@ -1275,10 +1275,10 @@ export function extractStatedLocation(rawText: string): { value: string; sourceL
   // is a sentence, not a header location.
   const PLACE_PART = /^(?:[\p{Lu}][\p{L}'’.-]*)(?:\s+(?:[\p{Lu}][\p{L}'’.-]*|of|de|la|upon|on|am|del))*$/u
   const bare = header.find((line) => {
-    if (mapLocationToRegion(line) === 'unknown') return false
+    if (!looksLikePlace(line)) return false
     if (/[.!?]$/.test(line) || roleOnlyLine(line) || /\b(?:inc|ltd|llc|gmbh|corp|limited)\b/i.test(line)) return false
     const parts = line.split(',').map((p) => p.trim())
-    return parts.length >= 2 && parts.length <= 3 && parts.every((p) => PLACE_PART.test(p) && p.split(/\s+/).length <= 4)
+    return parts.every((p) => PLACE_PART.test(p) && p.split(/\s+/).length <= 4)
   })
   return bare ? { value: bare, sourceLine: bare, method: 'header' } : null
 }
@@ -1351,6 +1351,8 @@ export function isPlausibleCompanyName(candidate: string | null | undefined): bo
   if (/^[\p{L} ]{2,30}:\s/u.test(c)) return false
   if (/^(?:requirements?|responsibilities|qualifications|benefits|salary|apply|send|location|skills|experience|about|job|role|we|our|i|you)\b/i.test(c)) return false
   if (/[.!?]$/.test(c) && !/\b(?:inc|ltd|co|corp|llc|l\.l\.c|s\.a|b\.v)\.$/i.test(c)) return false
+  // "Lahore, Pakistan" is where they are, not who they work for.
+  if (looksLikePlace(c) || isKnownPlaceName(c)) return false
   return true
 }
 

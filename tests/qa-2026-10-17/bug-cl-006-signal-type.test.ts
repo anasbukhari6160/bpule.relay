@@ -1,6 +1,6 @@
 /** BUG-CL-006 — a selected signal scores only when the research supports it. */
 import { describe, expect, it } from 'vitest'
-import { verifySignal, supportedSignals } from '@/lib/evidence/provenance'
+import { verifySignal, supportedSignals, findSignalSupport } from '@/lib/evidence/provenance'
 import { computeScore } from '@/lib/score/rubric'
 import { RULEBOOK as DEFAULT_RULEBOOK } from './helpers'
 import type { ExtractedLead, SignalId } from '@/lib/domain/types'
@@ -56,5 +56,26 @@ describe('BUG-CL-006 unsupported signal type', () => {
     const before = AGENCY_BRIEF
     signalRow(3, AGENCY_BRIEF)
     expect(AGENCY_BRIEF).toBe(before)
+  })
+})
+
+// Fourth review: past work, a consultant's clients and a negated need are not signals.
+describe('BUG-CL-006 signal subject and time', () => {
+  it.each([
+    [5, 'Led migration of our monolith to microservices.'],
+    [5, 'I help companies migrate legacy PHP 5 apps. My clients are frustrated with slow releases.'],
+    [6, 'I help companies migrate legacy PHP 5 apps. My clients are frustrated with slow releases.'],
+    [7, 'I never need outside help.'],
+    [7, "We don't need an agency right now."],
+  ] as const)('signal %i not supported by: %s', (id, text) => {
+    expect(findSignalSupport(id, text)).toBeNull()
+  })
+
+  it.each([
+    [5, 'Our app still runs on a PHP 5 monolith and we need to migrate.'],
+    [6, 'Our release cycle is too slow and we keep missing our deadlines.'],
+    [7, 'We need outside help to ship our mobile app.'],
+  ] as const)('control: signal %i supported by: %s', (id, text) => {
+    expect(findSignalSupport(id, text)).not.toBeNull()
   })
 })

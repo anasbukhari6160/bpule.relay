@@ -114,7 +114,10 @@ const HIRING_COUNT_PATTERNS = [
   new RegExp(String.raw`\b${NUM}\+?\s+(?:open|new|available|vacant|unfilled)\s+(?:[\w.+#-]+\s+){0,2}?(?:roles?|positions?|openings?|jobs)\b|\b${NUM}\+?\s+(?:openings?|vacancies)\b`, 'i'),
 ]
 // Lines describing past work or someone else's numbers are not current openings.
-const PAST_OR_OTHER_CONTEXT = /\b(?:experience|years?|placed|held|have\s+held|shipped|led|managed|hired|contributors?|top\s+\d+|ranked)\b/i
+const PAST_OR_OTHER_CONTEXT = /\b(?:placed|filled|held|have\s+held|shipped|led|managed|hired|contributors?|top\s+\d+|ranked)\b/i
+// "5 years experience hiring 3 people" is a recruiter's track record; "hiring
+// 3 engineers with 5+ years of experience" is an opening. Only the former is skipped.
+const HIRING_AS_EXPERIENCE = /\b(?:experience|years?)\s+(?:of\s+|in\s+)?(?:hiring|recruiting)\b/i
 
 export interface HiringCountClaim extends EvidenceClaim<number> {
   kind: 'hiring_count'
@@ -128,7 +131,7 @@ export interface HiringCountClaim extends EvidenceClaim<number> {
  */
 export function parseHiringCount(source: string | null | undefined): HiringCountClaim | null {
   for (const line of lines(source ?? '')) {
-    if (PAST_OR_OTHER_CONTEXT.test(line)) continue
+    if (PAST_OR_OTHER_CONTEXT.test(line) || HIRING_AS_EXPERIENCE.test(line)) continue
     for (const re of HIRING_COUNT_PATTERNS) {
       const m = line.match(re)
       if (!m) continue
@@ -147,9 +150,19 @@ export function parseHiringCount(source: string | null | undefined): HiringCount
 // of legacy CRMs", "fixed bugs") is the author's experience, not a current need.
 const SELF_REFERENCE = /\b(?:our|we|we're|we’re|we are|my|i'm|i’m|i am|us)\b/i
 
+// "Led migration of our monolith", "Rebuilt our checkout" — the author's track record.
+const PAST_ACHIEVEMENT = /^\s*(?:[-•*·▪►✓✔]\s*)?(?:led|built|migrated|shipped|delivered|managed|drove|spearheaded|implemented|designed|developed|launched|created|oversaw|rebuilt|rewrote|modernized|modernised|helped|architected|owned|scaled|reduced|cut|improved|replaced)\b|\b(?:i|we)\s+(?:led|migrated|rebuilt|rewrote|modernized|modernised|helped|delivered|shipped)\b/i
+// A consultant describing clients' problems is selling, not buying.
+const CLIENTS_AS_SUBJECT = /\b(?:my|our)\s+(?:clients?|customers'?\s+teams?)\b|\b(?:i|we)\s+help\s+(?:companies|clients|businesses|teams|startups|brands|founders|organi[sz]ations)\b/i
+
 function firstSelfLine(source: string, re: RegExp): string | null {
-  return lines(source).find((l) => re.test(l) && SELF_REFERENCE.test(l)) ?? null
+  return lines(source).find((l) => re.test(l) && SELF_REFERENCE.test(l) && !PAST_ACHIEVEMENT.test(l) && !CLIENTS_AS_SUBJECT.test(l)) ?? null
 }
+
+const ASKING_FOR_HELP = /\b(?:looking\s+for\s+(?:an?\s+)?(?:\w+\s+){0,2}?(?:agency|agencies|dev\s+shop|development\s+partner|technical\s+(?:co-?founder|partner)|freelancer|contractor|consultant)|need\s+(?:help|outside\s+help|an?\s+(?:agency|developer|engineer)|someone\s+to\s+build)|recommend\s+(?:an?\s+)?(?:agency|developer|dev\s+shop)|anyone\s+know\s+(?:an?\s+)?(?:good\s+)?(?:developer|agency|dev\s+shop))\b/i
+
+// "I never need outside help" / "we don't need an agency" is not a request.
+const NOT_NEEDED = /\b(?:never|don'?t|do\s+not|doesn'?t|does\s+not|won'?t|no\s+longer|not)\s+(?:really\s+|actually\s+)?(?:need|looking\s+for|want)\b/i
 
 const SIGNAL_DETECTORS: Record<SignalId, (source: string) => string | null> = {
   // Hiring ramp: explicit, current hiring language.
@@ -165,8 +178,10 @@ const SIGNAL_DETECTORS: Record<SignalId, (source: string) => string | null> = {
   // Recorded pain: delivery speed / quality / cost complaints about themselves.
   6: (s) => firstSelfLine(s, /\b(?:missed\s+(?:our\s+)?deadlines?|behind\s+schedule|backlog\s+(?:is\s+)?(?:growing|killing|piling|keeps)|keeps?\s+(?:growing|slipping)|slow\s+(?:releases?|delivery|shipping)|release\s+cycle\s+is\s+(?:killing|too\s+slow)|too\s+expensive|cost\s+overrun|frustrat\w+\s+with|struggl\w+\s+(?:to|with)\s+(?:ship|deliver|keep\s+up|scale|hire|find)|can'?t\s+ship)/i),
   // Asking for help: an explicit request for outside help (not a recruiter's job post).
-  7: (s) => detectCommercialRequest(s).externalServiceRequest?.line
-    ?? firstLineMatching(s, /\b(?:looking\s+for\s+(?:an?\s+)?(?:\w+\s+){0,2}?(?:agency|agencies|dev\s+shop|development\s+partner|technical\s+(?:co-?founder|partner)|freelancer|contractor|consultant)|need\s+(?:help|outside\s+help|an?\s+(?:agency|developer|engineer)|someone\s+to\s+build)|recommend\s+(?:an?\s+)?(?:agency|developer|dev\s+shop)|anyone\s+know\s+(?:an?\s+)?(?:good\s+)?(?:developer|agency|dev\s+shop))\b/i),
+  7: (s) => [
+    detectCommercialRequest(s).externalServiceRequest?.line ?? null,
+    ...lines(s).filter((l) => ASKING_FOR_HELP.test(l)),
+  ].find((l): l is string => Boolean(l) && !NOT_NEEDED.test(l!)) ?? null,
 }
 
 export type SignalVerification = 'AI_EXTRACTED_VERIFIED' | 'USER_SELECTED_VERIFIED' | 'USER_SELECTED_UNVERIFIED' | 'UNVERIFIABLE'

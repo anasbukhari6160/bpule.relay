@@ -54,3 +54,24 @@ BlueRiver Holdings Ltd
     expect(extractHiringOrganization('Collab with us. Remote role.')).toBeNull()
   })
 })
+
+// Fourth review: a header city never becomes the company; a job-ad banner is not a person.
+describe('BUG-CL-002 header precedence', () => {
+  it.each([
+    ['Ali Khan\nFounder | Kestrel Digital (Pvt) Ltd\nLahore, Pakistan\nWe build fintech apps for banks across the region and beyond.', 'Kestrel Digital (Pvt) Ltd'],
+    ['Sara Malik\nCEO | Brightpath Solutions Pvt Ltd\nKarachi, Pakistan\nHelping retailers grow online with better software every day.', 'Brightpath Solutions Pvt Ltd'],
+  ])('profile header: %s → %s', (raw, expected) => {
+    expect(company(raw)).toBe(expected)
+  })
+
+  it('a job-ad banner is never the contact name', () => {
+    const ad = `We're Hiring!
+NORTHWIND SOFTLABS (PVT) LTD is looking for a Senior Laravel Developer.
+Location: Lahore, Pakistan`
+    expect(buildMinimalV2Canonical(ad).intelligence.person.name ?? '').not.toMatch(/hiring/i)
+  })
+
+  it('a location is never a plausible company', () => {
+    expect(company('Jordan Lee\nLahore, Pakistan\nWe build apps.')).not.toBe('Lahore, Pakistan')
+  })
+})

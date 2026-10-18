@@ -15,7 +15,6 @@ import {
   Handshake,
   AlertCircle,
   Link2,
-  ClipboardList,
   ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -23,6 +22,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from 'cn'
 import { readSse } from '@/lib/sse/client'
 import type { RelayTodayAction } from '@/components/relay-today-workspace'
+import { UnifiedInbox, deriveInboxItems } from '@/components/inbox/unified-inbox'
+import { IntelligentEmptyState, repHomeEmptyState } from '@/components/ui/intelligent-empty-state'
 
 interface BdDailyDeskProps {
   yourMove: RelayTodayAction[]
@@ -213,31 +214,22 @@ export function BdDailyDesk({
         )}
       </section>
 
-      {/* Empty state for new reps */}
+      {/* Unified inbox — replies from all channels */}
+      {replyActions.length > 0 && (
+        <UnifiedInbox items={deriveInboxItems(replyActions)} />
+      )}
+
+      {/* Intelligent empty state */}
       {!hasAnyWork && yourMove.length === 0 && referredLeads.length === 0 && (
-        <section className="rounded-lg border border-dashed border-line bg-bone-raised/40 p-6 text-center">
-          <ClipboardList className="mx-auto size-8 text-stone" />
-          <p className="mt-3 text-[14px] font-medium text-ink">Nothing needs your attention yet</p>
-          <p className="mt-1 max-w-xs mx-auto text-[13px] text-graphite">
-            Start by analyzing a prospect. Paste a LinkedIn profile above and Relay will extract, score, and recommend next steps.
-          </p>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            <Link
-              href="/prospect"
-              className="inline-flex items-center gap-2 rounded-md bg-orange px-3 py-2 text-[12px] font-medium text-on-accent hover:bg-orange-dark"
-            >
-              <UserPlus className="size-3.5" />
-              Extract a profile
-            </Link>
-            <Link
-              href="/upwork/new"
-              className="inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-[12px] font-medium text-ink hover:bg-bone"
-            >
-              <Briefcase className="size-3.5" />
-              Paste Upwork job
-            </Link>
-          </div>
-        </section>
+        <IntelligentEmptyState
+          conditions={repHomeEmptyState({
+            hasReplies: replyActions.length > 0,
+            hasFollowUps: followupActions.length > 0,
+            hasProspects: otherActions.length > 0,
+            hasUpworkJobs: false,
+            hasReferrals: referredLeads.length > 0,
+          })}
+        />
       )}
 
       {/* Quick action tiles */}

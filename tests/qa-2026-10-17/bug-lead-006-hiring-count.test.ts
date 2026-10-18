@@ -51,3 +51,32 @@ describe('BUG-LEAD-006 unsupported hiring count', () => {
     expect(extractSignals('We raised a $4M seed round led by Acme Ventures.').company.fundingMentioned).toBe(true)
   })
 })
+
+// Fourth review: real counts on lines that mention years/experience; a stated
+// opening earns hiring credit; someone else's hiring earns none.
+describe('BUG-LEAD-006 stated counts in context', () => {
+  function companyEvidenceWithSource(text: string): string[] {
+    const c = computeCompositeScore({ signals: extractSignals(text), rawText: text })
+    return c.dimensions.find((d) => d.key === 'companyQuality')!.evidence
+  }
+
+  it.each([
+    ['We are hiring 5 engineers this year', 5],
+    ['Hiring 4 developers. Experience with React required.', 4],
+    ['We are hiring 3 engineers with 5+ years of experience', 3],
+    ['We have 6 open positions', 6],
+    ['5 years experience hiring 3 people', null],
+    ['Filled 150+ roles for clients', null],
+  ])('%s → %s', (text, value) => {
+    expect(parseHiringCount(text)?.value ?? null).toBe(value)
+  })
+
+  it('a stated opening of our own earns hiring credit', () => {
+    expect(companyEvidenceWithSource('Northwind Apps\nWe have 6 open positions on the mobile team.').join(' ')).toMatch(/Hiring 6 roles \(stated in source\)/)
+  })
+
+  it("someone else's hiring earns no hiring credit", () => {
+    const evidence = companyEvidenceWithSource('Reposted from @founder:\nVia @founder: They are hiring 3 engineers for their fintech app.').join(' ')
+    expect(evidence).not.toMatch(/Hiring \d+ roles?/)
+  })
+})

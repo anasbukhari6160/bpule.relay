@@ -48,8 +48,32 @@ describe('BUG-CL-004 location extraction', () => {
 
   it('control: no location guessed from schools/HQ/prose; word-boundary regions', () => {
     expect(extractStatedLocation('Jo Park\nCTO at Acme\nStudied at University of London\nWe help companies in Germany, France.')).toBeNull()
-    expect(mapLocationToRegion('Milwaukee, Wisconsin')).toBe('unknown')
-    expect(mapLocationToRegion('Kyiv, Ukraine')).toBe('unknown')
+    // Milwaukee is not the UK; Wisconsin is a US state.
+    expect(mapLocationToRegion('Milwaukee, Wisconsin')).toBe('US')
+    // Ukraine is not the UK; it is outside the core markets.
+    expect(mapLocationToRegion('Kyiv, Ukraine')).toBe('outside_core')
     expect(mapLocationToRegion('Jerusalem')).toBe('unknown')
+  })
+})
+
+// Fourth review: metro areas and US states are places; lists of countries and team names are not.
+describe('BUG-CL-004 header location shapes', () => {
+  it.each([
+    ['Dana Fox\nCTO at Lumen Apps\nSan Francisco Bay Area', 'San Francisco Bay Area', 'US'],
+    ['Dana Fox\nCTO at Lumen Apps\nGreater London Area', 'Greater London Area', 'UK'],
+    ['Dana Fox\nCTO at Lumen Apps\nAtlanta, Georgia', 'Atlanta, Georgia', 'US'],
+    ['Dana Fox\nCTO at Lumen Apps\nLondon, Ontario, Canada', 'London, Ontario, Canada', 'CA'],
+    ['Dana Fox\nCTO at Lumen Apps\nTbilisi, Georgia', 'Tbilisi, Georgia', 'outside_core'],
+  ])('%s → %s', (raw, value, region) => {
+    expect(extractStatedLocation(raw)?.value).toBe(value)
+    expect(mapLocationToRegion(value)).toBe(region)
+  })
+
+  it.each([
+    'Dana Fox\nSports fan\nWashington Commanders, Texas Rangers',
+    'Dana Fox\nDelivery lead\nIndia, Germany, UK',
+    'Dana Fox\nCTO at Lumen Apps\nReact, Node, TypeScript',
+  ])('not a location: %s', (raw) => {
+    expect(extractStatedLocation(raw)).toBeNull()
   })
 })

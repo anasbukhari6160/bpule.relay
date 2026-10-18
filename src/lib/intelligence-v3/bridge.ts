@@ -406,6 +406,8 @@ export function splitIdentityAndBody(lines: string[]): { identity: string[]; bod
   return { identity, body }
 }
 
+const NOT_A_PERSON = /\b(?:hiring|we(?:'|’)?re|we\s+are|join|apply|vacanc(?:y|ies)|openings?|jobs?|careers?|urgent(?:ly)?|now|looking\s+for|position|opportunity)\b/i
+
 function pickPersonName(identityLines: string[], allLines: string[]): string | null {
   const labeled = labeledField(allLines, 'name')
   if (labeled) return labeled
@@ -417,7 +419,9 @@ function pickPersonName(identityLines: string[], allLines: string[]): string | n
   if (named) return named
   const first = identityLines.find((l) => !isLinkedInChromeLine(l))
   const candidate = first?.split(/\s+·\s+/)[0]?.split(/\s+at\s+/)[0]?.trim() ?? ''
-  return candidate && !ROLE_WORDS.test(candidate) && candidate.split(/\s+/).length <= 5 ? candidate : null
+  // A job-ad banner ("We're Hiring!", "Join our team") is not a person.
+  if (!candidate || /[!?:]/.test(candidate) || !/^[\p{Lu}]/u.test(candidate) || NOT_A_PERSON.test(candidate)) return null
+  return !ROLE_WORDS.test(candidate) && candidate.split(/\s+/).length <= 5 ? candidate : null
 }
 
 export function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence {
@@ -445,6 +449,9 @@ export function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntel
   const extractedCompany = labeledField(lines, 'company', 'organization', 'employer')
     ?? headlineEmployer
     ?? (looksLikeJobAd(rawText) ? hiringOrg?.name ?? null : null)
+    // A registered name in the header ("Founder | Kestrel Digital (Pvt) Ltd")
+    // is stated outright; the profile heuristics are a guess.
+    ?? (hiringOrg?.method === 'legal_name' ? hiringOrg.name : null)
     ?? plausibleProfileCompany
     ?? hiringOrg?.name
     ?? null

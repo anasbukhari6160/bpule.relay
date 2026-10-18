@@ -35,7 +35,7 @@ function normalize(text: string): string {
 
 const AUTO_REPLY = /\b(out of (?:the )?office|ooo\b|auto(?:matic)?[- ]?(?:reply|response)|i am currently away|i'?m currently away|on (?:annual )?leave|on vacation|limited (?:email )?access)/
 
-const STOP = /\b(stop (?:messaging|contacting|emailing|sending|reaching out)|please stop|remove me|take me off|unsubscribe|don'?t (?:contact|message|email|dm) me|do not (?:contact|message|email|dm)|leave me alone|this is spam)\b/
+const STOP = /\b(stop (?:messaging|contacting|emailing|sending|reaching out|writing)|please stop|(?:can|could|would|will) you (?:please )?(?:stop\b(?!\s+(?:by|in|over)\b)|quit|not (?:message|contact|email|dm|write|reach out)|leave (?:me|us) alone)|remove me|take me off|unsubscribe|(?:don'?t|do not|never) (?:contact|message|email|dm|write to|reach out to) (?:me|us)|do not (?:contact|message|email|dm)|not (?:message|contact|email|dm|write to)(?: (?:me|us))? again|leave me alone|this is spam|block(?:ing)? you|report(?:ing)? you)\b/
 
 // "not interested" with at most one softening adverb — "not sure if
 // interested" is uncertainty, not a rejection, and "never been more
@@ -57,24 +57,52 @@ const MEETING = /\b(book|schedule|(?:a |quick )?call|call me|meeting|zoom|meet u
 const POSITIVE = /\b(interested|sounds (?:good|great|interesting)|let'?s (?:do it|go|proceed|move forward|connect)|keen|happy to|would love to|yes,? please|go ahead|move forward|works for me|tell me more|more info|open to|send (?:me |over |us )?(?:the |your )?(?:details|more|info|information|proposal|jd|job description|portfolio|deck|rates?|case stud(?:y|ies)|examples?)|share (?:your |the )?(?:portfolio|details|rates?|case stud(?:y|ies)|examples?|jd))\b/
 // Ready to buy — these outrank any "don't need"/"not interested in…" wording
 // around them: "We don't need more slides, when can you start?" is a yes.
-const COMMIT = /\b(?:send (?:me |us |over |across )*(?:a |an |the |your )?(?:proposal|contract|agreement|sow|statement of work|invoice|estimate|nda)|(?:ready|want|like|happy) to (?:sign|start|begin|proceed|kick ?off|move ahead)|where do (?:i|we) sign|sign (?:the|a|an) (?:contract|agreement|sow|nda|proposal)|(?:when|how soon) (?:can|could|would) (?:you|we) (?:start|begin|kick ?off)|(?:can|could) (?:we|you) (?:start|begin|kick ?off)|kick ?off (?:next|this|on|tomorrow)|start (?:next|this) (?:week|month|monday)|you(?:'re| are) hired|next steps?)\b/
-// A question about doing the work ("when can you…", "can we…") reopens even
-// inside the rejecting sentence; "why do you ask?" does not.
-const BUYING_QUESTION = /\b(?:when|how soon|can (?:we|you)|could (?:we|you)|would you be able to)\b[^?]*\?/
+const WEEKDAY = String.raw`(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)`
+const COMMIT = new RegExp(String.raw`\b(?:send (?:me |us |over |across )*(?:a |an |the |your )?(?:proposal|contract|agreement|sow|statement of work|invoice|estimate|nda)|(?:ready|want|like|happy) to (?:sign|start|begin|proceed|kick ?off|move ahead)|where do (?:i|we) sign|sign (?:the|a|an) (?:contract|agreement|sow|nda|proposal)|(?:when|how soon) (?:can|could|would) (?:you|we) (?:start|begin|kick ?off)|(?:can|could) (?:we|you) (?:start|begin|kick ?off)|let'?s (?:kick ?off|start|begin|get started)|kick ?off (?:next|this|on|tomorrow|${WEEKDAY})|start (?:next|this|on) (?:week|month|${WEEKDAY})|you(?:'re| are) hired|what(?:'s| is| are) (?:the )?next steps?|next steps\?|(?:we'?d|we would|i'?d|i would) (?:take|go (?:with|for)|book|sign|be up for)|(?<!(?:n't|not|never|no longer)\s(?:\w+\s)?)(?:need|want|looking for) (?:someone|somebody|an? (?:team|developer|dev|agency|partner|freelancer|contractor|builder|designer|engineer)) to (?:build|develop|design|fix|make|ship|create|help|do|take))\b`)
+// A question about doing the work ("when can you start?", "could you build…?")
+// reopens even inside the rejecting sentence; "why do you ask?" or "when did
+// you get my number?" does not.
+const BUYING_QUESTION = /\b(?:(?:when|how soon) (?:can|could|would|will) (?:you|we)|(?:can|could|would) (?:we|you) (?:please )?(?:start|begin|do|build|help|handle|deliver|send|share|meet|talk|chat|jump|hop|schedule|set up|take on|quote|estimate|make|fix|design)|would you be able to)\b[^?]*\?/
+
+// "We'll do it ourselves / in-house" is a no, however keen it sounds.
+const SELF_SERVE_CLAUSE = /[^,.;!?]*\b(?:ourselves|myself|in[- ]house|internally|on our own|by ourselves)\b[^,.;!?]*/g
 
 const CONTRAST = /\b(?:but|however|though|although|that said|instead)\b/
 
 // Politeness that softens a "no" without changing it: "Not interested, but
 // thanks for asking" is still a rejection. A for-clause never crosses
 // punctuation, so "thanks for the details, send pricing" keeps its request.
-const COURTESY = /\b(?:(?:many |a lot of )?thanks?(?: you)?(?: (?:so much|a lot|anyway|again|though|very much))?(?: for [^,.!?;]{0,40})?|(?:i |we |really )*appreciate(?:d)? (?:it|that|you|the [^,.!?;]{0,30}|your [^,.!?;]{0,30})|(?:good|best of) luck(?: with [^,.!?;]{0,40})?|all the best|best wishes|(?:i |we )?wish you (?:luck|well|the best|all the best|success)(?: [^,.!?;]{0,30})?|have a (?:good|nice|great|lovely) (?:day|week|weekend|one)|cheers|take care|no worries|no hard feelings|(?:i'?m |we'?re )?sorry|kind regards|regards|(?:happy to )?(?:keep|stay) in touch|keep (?:it )?up the good work|nice (?:offer|of you|try)|hope you understand)\b/g
+const COURTESY = /\b(?:(?:many |a lot of )?thanks?(?: you)?(?: (?:so much|a lot|anyway|again|though|very much))?(?: for [^,.!?;]{0,40})?|(?:i |we |really )*appreciate(?:d)? (?:it|that|you|the [^,.!?;]{0,30}|your [^,.!?;]{0,30})|(?:good|best of) luck(?: with [^,.!?;]{0,40})?|all the best|best wishes|(?:i |we )?wish you (?:luck|well|the best|all the best|success)(?: [^,.!?;]{0,30})?|have a (?:good|nice|great|lovely|productive|wonderful) (?:day|week|weekend|one|call|meeting|chat|time)(?: with [^,.!?;]{0,40})?|cheers|take care|no worries|no hard feelings|(?:i'?m |we'?re )?sorry|kind regards|regards|(?:happy to )?(?:keep|stay) in touch|keep (?:it )?up the good work|nice (?:offer|of you|try)|hope you understand)\b/g
 
 // Questions that are not buying questions — they never reopen a rejection.
-const NON_BUYING_QUESTION = /\b(?:why (?:do|did|would) you (?:ask|want to know|reach out|message me|contact me)|how did you (?:get|find) (?:my|this|our) [^?]{0,30}|how did you (?:get|find) (?:me|us)\b[^?]{0,20}|who (?:are you|gave you [^?]{0,30}|is this)|where did you get [^?]{0,40})\?/g
+const NON_BUYING_QUESTION = /\b(?:why (?:do|did|would) you (?:ask|want to know|reach out|message me|contact me)|how did you (?:get|find) (?:my|this|our) [^?]{0,30}|how did you (?:get|find) (?:me|us)\b[^?]{0,20}|(?:when|how|where) did you (?:get|find|see) [^?]{0,40}|who (?:are you|gave you [^?]{0,30}|is this)|where did you get [^?]{0,40})\?/g
+
+// Sign-offs carry names, and a name can look like a cue ("Regards, Price").
+const ci = (w: string) => w.replace(/\b([a-z])/g, (_, c: string) => `[${c.toUpperCase()}${c}]`)
+const CLOSING = `(?:${['kind regards', 'best regards', 'warm regards', 'warmest regards', 'regards', 'best wishes', 'all the best', 'best', 'cheers', 'thanks', 'thank you', 'many thanks', 'sincerely', 'yours', 'talk soon', 'br', 'rgds'].map(ci).join('|')})`
+const NAME = String.raw`(?!(?:Bye|Goodbye|Ok|Okay)\b)[A-Z][A-Za-z'’.-]+(?:\s+[A-Z][A-Za-z'’.-]+){0,2}`
+const SIGNOFF_INLINE = new RegExp(String.raw`(^|[.!?,;]\s*|\n\s*)${CLOSING}[,.!]?\s+${NAME}[.!]?\s*$`)
+const CLOSING_LINE = new RegExp(String.raw`^\s*(?:[-–—]+\s*)?${CLOSING}[,.!]*\s*$`)
+const NAME_LINE = new RegExp(String.raw`^\s*(?:[-–—]+\s*)?${NAME}\s*$`)
+const DEVICE_LINE = /^\s*sent from my \w+/i
+
+/** The message without its signature block; the original if nothing else is left. */
+export function stripSignature(raw: string): string {
+  const ls = raw.replace(/\r/g, '').split('\n')
+  while (ls.length > 1 && !ls[ls.length - 1].trim()) ls.pop()
+  while (ls.length > 1) {
+    const last = ls[ls.length - 1]
+    if (DEVICE_LINE.test(last) || CLOSING_LINE.test(last)) { ls.pop(); continue }
+    if (NAME_LINE.test(last) && ls.length > 2 && CLOSING_LINE.test(ls[ls.length - 2])) { ls.splice(-2, 2); continue }
+    break
+  }
+  const body = ls.join('\n').replace(SIGNOFF_INLINE, '$1').trim()
+  return body || raw
+}
 
 /** Interest/question/meeting cues, ignoring negated interest ("not interested"). */
 function engagementIn(text: string, opts: { bareQuestion?: boolean } = {}): MessageIntent | null {
-  const t = text.replace(NEGATED_INTEREST, ' ').replace(NON_BUYING_QUESTION, ' ')
+  const t = text.replace(NEGATED_INTEREST, ' ').replace(NON_BUYING_QUESTION, ' ').replace(SELF_SERVE_CLAUSE, ' ')
   if (PRICING.test(t)) return { class: 'QUESTION', explicit: false, intent: 'pricing', reason: 'asked about price' }
   if (MEETING.test(t)) return { class: 'POSITIVE', explicit: false, intent: 'meeting_request', reason: 'asked to talk' }
   if (COMMIT.test(t)) return { class: 'POSITIVE', explicit: false, intent: 'interested', reason: 'ready to move ahead' }
@@ -102,7 +130,7 @@ function isNegative(text: string): boolean {
  * left non-explicit so the model's reading is not overridden.
  */
 export function classifyClientMessage(raw: string): MessageIntent {
-  const text = normalize(raw)
+  const text = normalize(stripSignature(raw))
   if (!text) return { class: 'NEUTRAL', explicit: false, intent: 'neutral', reason: 'empty' }
   if (AUTO_REPLY.test(text)) return { class: 'NEUTRAL', explicit: true, intent: 'auto_reply', reason: 'auto-reply' }
   if (STOP.test(text)) return { class: 'NEGATIVE', explicit: true, intent: 'not_interested', reason: 'asked to stop contact' }

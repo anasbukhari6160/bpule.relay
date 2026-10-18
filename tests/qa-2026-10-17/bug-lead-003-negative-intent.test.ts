@@ -1,6 +1,6 @@
 /** BUG-LEAD-003 — explicit rejection is negative and closes the sales thread. */
 import { describe, expect, it } from 'vitest'
-import { classifyClientMessage, resolveConversationIntent } from '@/lib/conversation/intent'
+import { classifyClientMessage, resolveConversationIntent, stripSignature } from '@/lib/conversation/intent'
 import { analyzeReply } from '@/lib/relay/conversation-engine'
 import { normalizeIntent } from '@/lib/conversation/memory'
 import { deriveDealStage, goalFor } from '@/lib/conversation/stage'
@@ -104,7 +104,46 @@ describe('BUG-LEAD-003 negative intent', () => {
     ['Not looking any further, you are hired', 'POSITIVE'],
     ["We don't need a demo. What are the next steps?", 'POSITIVE'],
     ['No thanks on the deck. Could you start on Monday?', 'POSITIVE'],
+    // Fourth review: buying replies that were still closed.
+    ["Not interested in the retainer, but we'd take a one-off audit", 'POSITIVE'],
+    ['Not looking for advice, just need someone to build it ASAP', 'POSITIVE'],
+    ["We're all set on our side, let's kick off Monday", 'POSITIVE'],
+    ['Can you stop by our office on Tuesday to discuss the build?', 'QUESTION'],
   ])('ready to buy: %s → %s', (text, cls) => {
+    expect(classifyClientMessage(text).class).toBe(cls)
+  })
+
+  // Fourth review: stop requests, self-serve "ready to start", courtesy and
+  // signatures must never reopen a rejection.
+  it.each([
+    'Not interested. Can you stop?',
+    'No thanks, we are all set. Could you not message again?',
+    'Not interested, our team is ready to start on it ourselves',
+    "We don't need an agency; we're happy to start in-house",
+    'Not interested but thanks, have a good call with your next client',
+    'No thanks. When did you get my number?',
+    'Not interested, but thanks. Regards, Price',
+    'Not interested. Regards, Callum Price',
+    'Not interested. Thanks, Quinn Cost',
+    'Not interested. Next steps for me are to block you.',
+    'Not interested.\n\nKind regards,\nMorgan Price',
+    'Not interested.\nSent from my iPhone',
+    'Please do not message me again',
+  ])('stays a rejection: %s', (text) => {
+    expect(classifyClientMessage(text).class).toBe('NEGATIVE')
+    expect(resolveConversationIntent(['Sure, send details', text]).declined).toBe(true)
+  })
+
+  it('signatures are stripped, the message is kept', () => {
+    expect(stripSignature('Sounds good, send the proposal.\n\nBest,\nJordan')).toBe('Sounds good, send the proposal.')
+    expect(stripSignature('No thanks, Sam')).toBe('No thanks, Sam')
+    expect(stripSignature('Thanks, John')).toBe('Thanks, John')
+    expect(classifyClientMessage('What is your price?\nRegards,\nAlex').class).toBe('QUESTION')
+  })
+
+  it.each([
+    ['Sounds great, what are next steps?', 'POSITIVE'],
+  ])('control: %s → %s', (text, cls) => {
     expect(classifyClientMessage(text).class).toBe(cls)
   })
 

@@ -20,6 +20,7 @@ import { getLeadDisplayScore, normalizeScoreDimensions, scoreExplanation } from 
 import { calendarDaysBetween, followupDueInDays } from '@/lib/leads/followup'
 import { formatRoleLine, stripEmployerFromTitle } from '@/lib/leads/role-line'
 import { ScoreBreakdown } from '@/components/score-breakdown'
+import { DecisionExplainability } from '@/components/leads/decision-explain'
 
 type Mode = 'connection' | 'dm' | 'reply' | 'followup' | null
 
@@ -337,6 +338,19 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
         </details>
       )}
 
+      {/* Decision Explainability — why this lead, why now */}
+      {!isTerminal && lead.canonicalScore != null && (
+        <DecisionExplainability
+          title={lead.displayQualification ?? getLeadDisplayScore(lead).text}
+          positiveSignals={buildPositiveSignals(lead)}
+          negativeSignals={buildNegativeSignals(lead)}
+          recommendation={nextAction.reason}
+          score={lead.canonicalScore}
+          confidence={null}
+          details={buildScoreDetails(lead)}
+        />
+      )}
+
       {/* Relationship State + Actions */}
       {!isTerminal && (
         <div className={cn('rounded-2xl border overflow-hidden', isTheirMove ? 'border-line/60 bg-bone-raised/30' : 'border-orange/20 bg-orange/[0.03]')}>
@@ -584,4 +598,62 @@ function timeAgo(iso: string | null): string {
   const hrs = Math.floor(diff / 3_600_000)
   if (hrs > 0) return `${hrs}h ago`
   return `${Math.floor(diff / 60_000)}m ago`
+}
+
+function buildPositiveSignals(lead: LeadDetail): string[] {
+  const signals: string[] = []
+  const dims = normalizeScoreDimensions(lead)
+  const byKey = new Map(dims.map(d => [d.key, d]))
+
+  const fit = byKey.get('fit')
+  if (fit?.points != null && fit.points >= 7) signals.push('Strong ICP fit — matches your target profile')
+
+  const timing = byKey.get('timing')
+  if (timing?.points != null && timing.points >= 6) signals.push('Active need or recent signal detected')
+
+  const commercial = byKey.get('commercial')
+  if (commercial?.points != null && commercial.points >= 7) signals.push('High commercial potential')
+
+  if (lead.verdict === 'send') signals.push('Scored as worth contacting')
+
+  const role = lead.contactTitle?.toLowerCase() ?? ''
+  if (/founder|ceo|cto|chief|vp|head|director/.test(role)) {
+    signals.push(`Decision maker (${lead.contactTitle})`)
+  }
+
+  if (signals.length === 0 && lead.canonicalScore != null && lead.canonicalScore >= 60) {
+    signals.push(`Scored ${lead.canonicalScore}/100`)
+  }
+
+  return signals
+}
+
+function buildNegativeSignals(lead: LeadDetail): string[] {
+  const signals: string[] = []
+  const dims = normalizeScoreDimensions(lead)
+  const byKey = new Map(dims.map(d => [d.key, d]))
+
+  const timing = byKey.get('timing')
+  if (timing?.points != null && timing.points < 4) signals.push('No active buyer signal detected')
+
+  const access = byKey.get('access')
+  if (access?.points != null && access.points < 4) signals.push('May be hard to reach or engage')
+
+  if (lead.verdict === 'skip') signals.push('Scored as skip — low fit')
+  if (lead.status === 'new' && lead.createdAt) {
+    const days = (Date.now() - new Date(lead.createdAt).getTime()) / 86_400_000
+    if (days > 14) signals.push(`Aging lead (${Math.round(days)} days) — signal may be stale`)
+  }
+
+  return signals
+}
+
+function buildScoreDetails(lead: LeadDetail): { label: string; value: string }[] {
+  const dims = normalizeScoreDimensions(lead)
+  const details = dims.map(d => ({
+    label: d.label,
+    value: d.points != null && d.max != null ? `${d.points}/${d.max}` : '—',
+  }))
+  details.push({ label: 'Total', value: `${lead.canonicalScore ?? lead.score ?? '?'}/100` })
+  return details
 }

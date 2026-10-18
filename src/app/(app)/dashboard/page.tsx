@@ -12,12 +12,26 @@ import type { RelayTodayAction } from '@/components/relay-today-workspace'
 import { RepWorkspace, type RepWorkspaceData } from '@/components/rep/rep-workspace'
 import { AdminDashboard } from '@/components/dashboard/admin-dashboard'
 import { RepDashboard } from '@/components/dashboard/rep-dashboard'
+import { PipelineAnalyticsView } from '@/components/dashboard/analytics/pipeline-analytics-view'
+import { buildDashboardAnalytics, parseRange, type RangeDays } from '@/lib/analytics/pipeline-analytics'
+import { loadBoardData } from '@/lib/leads/board-rows'
 
 export const dynamic = 'force-dynamic'
 
-export default async function TodayPage() {
+export default async function TodayPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string | string[] }>
+}) {
   const user = await getCurrentUser()
   if (!user) redirect('/login')
+  const range = parseRange((await searchParams).range)
+  const timeZone = user.rep.timezone || 'UTC'
+  const analytics = (
+    <Suspense fallback={<AnalyticsSkeleton />}>
+      <AnalyticsSection range={range} timeZone={timeZone} />
+    </Suspense>
+  )
 
   const authCtx = await getAuthContext()
   if (!authCtx) redirect('/login')
@@ -26,9 +40,12 @@ export default async function TodayPage() {
 
   if (authCtx.isOwner || authCtx.isAdmin) {
     return (
-      <Suspense fallback={<DashboardShellSkeleton />}>
-        <AdminDashboard data={acData} />
-      </Suspense>
+      <div className="space-y-10">
+        <Suspense fallback={<DashboardShellSkeleton />}>
+          <AdminDashboard data={acData} />
+        </Suspense>
+        {analytics}
+      </div>
     )
   }
 
@@ -39,12 +56,15 @@ export default async function TodayPage() {
     ])
 
     return (
-      <Suspense fallback={<DashboardShellSkeleton />}>
-        <ManagerTodayView
-          repData={repData}
-          teamData={teamData}
-        />
-      </Suspense>
+      <>
+        <Suspense fallback={<DashboardShellSkeleton />}>
+          <ManagerTodayView
+            repData={repData}
+            teamData={teamData}
+          />
+        </Suspense>
+        <div className="mt-10">{analytics}</div>
+      </>
     )
   }
 
@@ -62,6 +82,7 @@ export default async function TodayPage() {
         </details>
       )}
       <RepDashboard data={repData} />
+      <div className="mt-10">{analytics}</div>
     </Suspense>
   )
 }
@@ -305,6 +326,51 @@ async function countProfilesPulled(orgId: string, repId: string): Promise<number
   } catch {
     return 0
   }
+}
+
+async function loadAnalytics(range: RangeDays, timeZone: string) {
+  try {
+    const board = await loadBoardData()
+    const data = buildDashboardAnalytics({
+      leads: board.leads,
+      events: board.events,
+      reps: board.orgView ? board.reps : undefined,
+      range,
+      timeZone,
+    })
+    return { data, scope: board.orgView ? ('team' as const) : ('mine' as const) }
+  } catch (err) {
+    console.error('dashboard analytics failed:', err instanceof Error ? err.message : 'unknown error')
+    return null
+  }
+}
+
+async function AnalyticsSection({ range, timeZone }: { range: RangeDays; timeZone: string }) {
+  const result = await loadAnalytics(range, timeZone)
+  if (!result) {
+    return (
+      <div role="alert" className="flex items-center gap-3 rounded-lg border border-status-warning/30 bg-status-warning/5 px-4 py-3">
+        <AlertTriangle className="size-4 shrink-0 text-status-warning" />
+        <p className="text-[12px] text-graphite">Performance charts could not load. Your tasks above are unaffected. Refresh to try again.</p>
+      </div>
+    )
+  }
+  return <PipelineAnalyticsView data={result.data} scope={result.scope} />
+}
+
+function AnalyticsSkeleton() {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-label="Loading performance charts">
+      <div className="h-6 w-56 rounded bg-bone" />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => <div key={i} className="h-[132px] rounded-xl border border-line bg-bone-raised" />)}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="h-[320px] rounded-xl border border-line bg-bone-raised lg:col-span-2" />
+        <div className="h-[320px] rounded-xl border border-line bg-bone-raised" />
+      </div>
+    </div>
+  )
 }
 
 function DashboardShellSkeleton() {
