@@ -124,6 +124,34 @@ describe('Today\'s Progress — zero-action invariant', () => {
     }
   })
 
+  it('INVARIANT: progress never increases unless completed action count increases', () => {
+    // Property: for any fixed totalCompleted, changing pending work must never increase progressPct.
+    // And progressPct must be monotonically non-decreasing with totalCompleted.
+    const base = { totalTarget: 50, totalCompleted: 10, totalRemaining: 40, repliesWaiting: 0, followUpsDue: 0, outreachRemaining: 40 }
+    const baseResult = computeDailyProgress(base)
+
+    // Vary pending work — progress must NOT increase
+    const pendingVariants = [
+      { repliesWaiting: 20, followUpsDue: 10 },
+      { repliesWaiting: 50, followUpsDue: 30 },
+      { repliesWaiting: 100, followUpsDue: 100 },
+      { totalRemaining: 200, outreachRemaining: 200 },
+    ]
+    for (const v of pendingVariants) {
+      const variant = computeDailyProgress({ ...base, ...v })
+      expect(variant.progressPct).toBeLessThanOrEqual(baseResult.progressPct)
+    }
+
+    // Increase completed — progress must NOT decrease
+    const completedVariants = [15, 20, 30, 50]
+    let prev = baseResult.progressPct
+    for (const completed of completedVariants) {
+      const variant = computeDailyProgress({ ...base, totalCompleted: completed })
+      expect(variant.progressPct).toBeGreaterThanOrEqual(prev)
+      prev = variant.progressPct
+    }
+  })
+
   it('0 pending + 0 completed → CAUGHT_UP', () => {
     const result = computeDailyProgress({
       totalTarget: 0,

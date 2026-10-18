@@ -1,8 +1,11 @@
 /**
  * Weighted Action Performance API
  *
- * GET /api/admin/performance?repId=...&date=...
+ * GET /api/admin/performance?repId=...&date=...&timezone=...
  * Returns execution health, funnel warnings, SLA, outcomes.
+ *
+ * Uses org-local timezone for "today" boundaries.
+ * Eligibility falls back to action ledger if lifecycle column is missing.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -18,6 +21,30 @@ import {
 } from '@/lib/performance/execution-score'
 
 export const maxDuration = 30
+
+/**
+ * Compute UTC start/end for a local date in a given timezone.
+ * Uses Intl.DateTimeFormat for correct DST handling.
+ */
+function localDateToUtcRange(date: string, timezone: string): { start: string; end: string } {
+  if (timezone === 'UTC' || !timezone) {
+    return { start: `${date}T00:00:00.000Z`, end: `${date}T23:59:59.999Z` }
+  }
+  try {
+    // Create a date at midnight local time, then convert to UTC
+    const localMidnight = new Date(`${date}T00:00:00`)
+    const utcMidnight = new Date(
+      localMidnight.toLocaleString('en-US', { timeZone: timezone })
+    )
+    // Adjust: if local midnight in UTC is different, shift
+    const offset = localMidnight.getTime() - utcMidnight.getTime()
+    const startUtc = new Date(localMidnight.getTime() - offset)
+    const endUtc = new Date(startUtc.getTime() + 86400000 - 1)
+    return { start: startUtc.toISOString(), end: endUtc.toISOString() }
+  } catch {
+    return { start: `${date}T00:00:00.000Z`, end: `${date}T23:59:59.999Z` }
+  }
+}
 
 export async function GET(req: NextRequest) {
   const store = createServiceSupabase()
@@ -35,14 +62,14 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const repId = url.searchParams.get('repId') ?? rep.id
   const date = url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)
-  const timezone = url.searchParams.get('timezone') ?? 'UTC'
 
-  // 1. Get org performance config
-  const { data: rulebook } = await store
-    .from('organization_rulebooks')
-    .select('performance_weights, sla_config')
-    .eq('organization_id', rep.organization_id)
-    .single()
+  // 1. Get org timezone and performance config
+  const [{ data: org }, { data: rulebook }] = await Promise.all([
+    store.from('organizations').select('timezone').eq('id', rep.organization_id).single(),
+    store.from('organization_rulebooks').select('performance_weights, sla_config').eq('organization_id', rep.organization_id).single(),
+  ])
+
+  const timezone = org?.timezone ?? 'UTC'
 
   const config = {
     weights: (rulebook?.performance_weights as Record<string, number>) ?? DEFAULT_CONFIG.weights,
@@ -65,10 +92,10 @@ export async function GET(req: NextRequest) {
 
   if (!targetRep) return NextResponse.json({ error: 'Rep not found.' }, { status: 404 })
 
-  // 3. Get action_events for today
-  const dayStart = `${date}T00:00:00.000Z`
-  const dayEnd = `${date}T23:59:59.999Z`
+  // 3. Compute local-day UTC range
+  const { start: dayStart, end: dayEnd } = localDateToUtcRange(date, timezone)
 
+  // 4. Get action_events for the local day
   const { data: actionEvents } = await store
     .from('action_events')
     .select('action_type, lead_id, occurred_at, metadata')
@@ -77,7 +104,7 @@ export async function GET(req: NextRequest) {
     .gte('occurred_at', dayStart)
     .lt('occurred_at', dayEnd)
 
-  // 4. Get daily targets
+  // 5. Get daily targets
   const { data: dailyTargets } = await store
     .from('daily_targets')
     .select('activity_type, target_count')
@@ -85,7 +112,7 @@ export async function GET(req: NextRequest) {
     .eq('rep_id', repId)
     .eq('active', true)
 
-  // 5. Count actuals from action_events
+  // 6. Count actuals from canonical action_events only
   const counts: Record<string, number> = {}
   for (const event of actionEvents ?? []) {
     const canonical = mapActionEventToCanonical(event.action_type)
@@ -94,7 +121,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 6. Build targets array
+  // 7. Build targets array
   const canonicalMap: Record<string, CanonicalAction> = {
     connection_request: 'CONNECTION_SENT',
     dm: 'FIRST_DM_SENT',
@@ -114,32 +141,61 @@ export async function GET(req: NextRequest) {
     }
   }).filter((t): t is ActionTarget => t !== null)
 
-  // Add any canonical actions that have actuals but no targets
+  // Add canonical actions with actuals but no configured targets
   for (const [key, count] of Object.entries(counts)) {
     if (!targets.find((t) => t.action === key)) {
       targets.push({ action: key as CanonicalAction, target: 0, actual: count, eligibleTarget: 0 })
     }
   }
 
-  // 7. Compute eligible work from leads
+  // 8. Compute eligible work — lifecycle + action ledger fallback
   const { data: leads } = await store
     .from('leads')
-    .select('id, status, connection_accepted_at, created_at')
+    .select('id, status, connection_accepted_at')
     .eq('organization_id', rep.organization_id)
     .eq('owner_rep_id', repId)
     .eq('archived', false)
 
+  // Fallback: if connection_accepted_at is null, check action_events for CONNECTION_SENT
+  const acceptedLeadIds = new Set<string>()
+  for (const lead of leads ?? []) {
+    if (lead.connection_accepted_at) {
+      acceptedLeadIds.add(lead.id)
+    }
+  }
+
+  // For leads without connection_accepted_at, check if action ledger shows CONNECTION_SENT
+  const leadsWithoutAccept = (leads ?? []).filter((l) => !l.connection_accepted_at).map((l) => l.id)
+  if (leadsWithoutAccept.length > 0) {
+    const { data: connectionActions } = await store
+      .from('action_events')
+      .select('lead_id, action_type')
+      .eq('organization_id', rep.organization_id)
+      .eq('actor_id', repId)
+      .in('lead_id', leadsWithoutAccept)
+      .eq('action_type', 'CONNECTION_SENT')
+      .limit(200)
+
+    for (const event of connectionActions ?? []) {
+      if (event.lead_id) {
+        acceptedLeadIds.add(event.lead_id)
+      }
+    }
+  }
+
   const now = Date.now()
   let connectionsWaitingForDm = 0
   let leadsReadyForFollowup = 0
-  let connectionsAccepted = 0
   let inboundRepliesWaiting = 0
 
   for (const lead of leads ?? []) {
-    if (lead.connection_accepted_at) {
-      connectionsAccepted++
-      const acceptedMs = now - new Date(lead.connection_accepted_at).getTime()
-      if (acceptedMs > (config.slaThresholdsMs.connectionDmWaiting / 2)) {
+    const isAccepted = acceptedLeadIds.has(lead.id)
+    if (isAccepted) {
+      const acceptedAt = lead.connection_accepted_at
+        ? new Date(lead.connection_accepted_at).getTime()
+        : null
+      const waitingMs = acceptedAt ? now - acceptedAt : 0
+      if (!acceptedAt || waitingMs > (config.slaThresholdsMs.connectionDmWaiting / 2)) {
         connectionsWaitingForDm++
       }
     }
@@ -152,7 +208,7 @@ export async function GET(req: NextRequest) {
   }
 
   const eligible: EligibleWork = {
-    connectionsAccepted,
+    connectionsAccepted: acceptedLeadIds.size,
     dmsSent: counts['FIRST_DM_SENT'] ?? 0,
     followupsSent: counts['FOLLOWUP_SENT'] ?? 0,
     repliesReceived: counts['REPLY_SENT'] ?? 0,
@@ -162,7 +218,7 @@ export async function GET(req: NextRequest) {
     leadsReadyForFollowup,
   }
 
-  // 8. Compute SLA items — single query for pending replies
+  // 9. SLA items
   const repliedLeadIds = (leads ?? []).filter((l) => l.status === 'replied').map((l) => l.id)
   const pending: SLAItem[] = []
 
@@ -175,7 +231,6 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(200)
 
-    // Get most recent inbound per lead
     const lastInboundByLead = new Map<string, string>()
     for (const msg of pendingMessages ?? []) {
       if (msg.direction === 'inbound' && !lastInboundByLead.has(msg.lead_id)) {
@@ -187,10 +242,10 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 9. Outcome data (simplified — would need more queries for full accuracy)
+  // 10. Outcomes
   const outcomeData = {
     connectionsSent: counts['CONNECTION_SENT'] ?? 0,
-    connectionsAccepted,
+    connectionsAccepted: acceptedLeadIds.size,
     dmsSent: counts['FIRST_DM_SENT'] ?? 0,
     dmReplies: inboundRepliesWaiting,
     followupsSent: counts['FOLLOWUP_SENT'] ?? 0,
@@ -200,7 +255,7 @@ export async function GET(req: NextRequest) {
     wins: leads?.filter((l) => l.status === 'won').length ?? 0,
   }
 
-  // 10. Compute result
+  // 11. Compute result
   const result = computeExecutionResult({
     repId,
     repName: targetRep.name,

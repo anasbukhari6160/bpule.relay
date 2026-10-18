@@ -32,7 +32,7 @@ function statusColor(status: string): string {
 }
 
 function completionPct(completed: number, target: number): number {
-  if (target === 0) return 100
+  if (target === 0) return 0
   return Math.min(100, Math.round((completed / target) * 100))
 }
 
