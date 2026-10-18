@@ -21,16 +21,6 @@ export type CanonicalAction =
   | 'UPWORK_INTERVIEW'
   | 'UPWORK_WON'
 
-// Actions that count toward execution health
-const COMMERCIAL_ACTIONS: CanonicalAction[] = [
-  'CONNECTION_SENT',
-  'FIRST_DM_SENT',
-  'FOLLOWUP_SENT',
-  'REPLY_SENT',
-  'MEETING_BOOKED',
-  'LEAD_WON',
-]
-
 // ── Config Validation ────────────────────────────────────────────────────────
 
 const VALID_ACTIONS = new Set<string>([
@@ -290,7 +280,6 @@ export function computeFunnelWarnings(
   const dm = find('FIRST_DM_SENT')
   const followup = find('FOLLOWUP_SENT')
   const reply = find('REPLY_SENT')
-  const meeting = find('MEETING_BOOKED')
 
   // Top-heavy: connections high, DMs low
   if (conn && dm && conn.cappedRatio >= 0.8 && dm.rawRatio < config.funnelBalanceThreshold) {

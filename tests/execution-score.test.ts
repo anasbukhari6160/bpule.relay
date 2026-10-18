@@ -3,7 +3,6 @@ import {
   computeExecutionResult,
   computeEligibleTargets,
   computeActionCompletions,
-  computeExecutionHealth,
   computeFunnelWarnings,
   computeSLAHealth,
   determinePerformanceState,
@@ -316,7 +315,8 @@ describe('Config validation', () => {
       weights: { CONNECTION_SENT: 0, REPLY_SENT: 0, FIRST_DM_SENT: 0, FOLLOWUP_SENT: 0 },
     })
     expect(result.valid).toBe(false)
-    expect(result.errors.some(e => e.includes('All weights are invalid'))).toBe(true)
+    expect(result.errors.some(e => e.includes('zero'))).toBe(true)
+    expect(result.sanitized['CONNECTION_SENT']).toBe(1.0) // falls back to default
   })
 
   it('silently ignores unknown action types', () => {

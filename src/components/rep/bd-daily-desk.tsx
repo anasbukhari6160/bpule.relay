@@ -26,6 +26,7 @@ import { UnifiedInbox, deriveInboxItems } from '@/components/inbox/unified-inbox
 import { IntelligentEmptyState, repHomeEmptyState } from '@/components/ui/intelligent-empty-state'
 import { SignalFeed } from '@/components/signal/signal-feed'
 import type { SignalFeedItem } from '@/lib/relay/signal-watch'
+import { BarChart3 } from 'lucide-react'
 
 interface BdDailyDeskProps {
   yourMove: RelayTodayAction[]
@@ -284,6 +285,13 @@ export function BdDailyDesk({
         >
           <Briefcase className="size-5 text-orange" />
           <span className="text-[11px] font-medium text-ink">Add Upwork</span>
+        </Link>
+        <Link
+          href="/performance"
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-line bg-bone-raised p-3 transition-all duration-300 hover:border-orange/40 hover:bg-orange/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30 focus-visible:border-orange/40"
+        >
+          <BarChart3 className="size-5 text-orange" />
+          <span className="text-[11px] font-medium text-ink">Activity</span>
         </Link>
       </div>
 
