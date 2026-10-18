@@ -77,6 +77,16 @@ export interface RepTodayData {
   profilesPulled: number
   status: 'not_started' | 'on_track' | 'at_risk' | 'behind' | 'ready_to_close' | 'completed'
   warning?: { level: string; message: string } | null
+  executionHealth?: ExecutionHealthData
+}
+
+export interface ExecutionHealthData {
+  executionHealth: number
+  state: string
+  warnings: Array<{ level: string; message: string }>
+  completions: Array<{ action: string; actual: number; target: number; rawRatio: number }>
+  slaScore: number
+  primaryNextAction: string | null
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -181,14 +191,14 @@ export function RepToday({ data }: { data: RepTodayData }) {
           />
         </motion.div>
 
-        {/* Analyze + Quick Actions — spans 5 cols */}
+        {/* Execution Health + Quick Actions — spans 5 cols */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, ease: EASE, delay: 0.14 }}
           className="space-y-4 lg:col-span-5"
         >
-          <QuickAnalyzeCard />
+          {data.executionHealth && <ExecutionHealthCard data={data.executionHealth} />}
           <QuickActionsTile
             repliesWaiting={data.repliesWaiting}
             followUpsDue={data.followUpsDue}
@@ -866,6 +876,84 @@ function WorkingAsCard({ identities }: { identities: RepTodayData['identities'] 
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// ── Execution Health Card ───────────────────────────────────────────────────
+
+function ExecutionHealthCard({ data }: { data: ExecutionHealthData }) {
+  const stateConfig: Record<string, { label: string; color: string; bg: string }> = {
+    ON_TRACK: { label: 'ON TRACK', color: 'text-status-success', bg: 'bg-status-success/10' },
+    NEEDS_ATTENTION: { label: 'NEEDS ATTENTION', color: 'text-status-warning', bg: 'bg-status-warning/10' },
+    BEHIND: { label: 'BEHIND', color: 'text-status-danger', bg: 'bg-status-danger/10' },
+    CAUGHT_UP: { label: 'CAUGHT UP', color: 'text-cobalt', bg: 'bg-cobalt/10' },
+    BLOCKED: { label: 'BLOCKED', color: 'text-console-mute', bg: 'bg-console-line/20' },
+  }
+  const sc = stateConfig[data.state] ?? { label: data.state, color: 'text-console-mute', bg: 'bg-console-line/20' }
+
+  return (
+    <div className="srf-console h-full p-5">
+      <div className="flex items-center justify-between">
+        <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-console-mute">Execution Health</p>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${sc.bg} ${sc.color}`}>
+          {sc.label}
+        </span>
+      </div>
+
+      <div className="mt-3 flex items-baseline gap-2">
+        <span className="text-[28px] font-light tracking-tight text-console-text">{data.executionHealth}%</span>
+        <span className="text-[11px] text-console-mute">
+          SLA {data.slaScore}%
+        </span>
+      </div>
+
+      {/* Action breakdown */}
+      {data.completions.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {data.completions.map((c) => {
+            const pct = Math.min(100, Math.round(c.rawRatio * 100))
+            const label = c.action.replace(/_/g, ' ').toLowerCase()
+            return (
+              <div key={c.action} className="flex items-center gap-2">
+                <span className="w-20 truncate text-[11px] text-console-mute">{label}</span>
+                <div className="flex-1 h-1 overflow-hidden rounded-full bg-console-line/40">
+                  <div
+                    className={cn('h-full rounded-full', pct >= 80 ? 'bg-status-success' : pct >= 40 ? 'bg-orange' : 'bg-status-danger')}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="shrink-0 text-[10px] font-medium text-console-mute">
+                  {c.actual}/{c.target}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Warnings */}
+      {data.warnings.length > 0 && (
+        <div className="mt-3 space-y-1">
+          {data.warnings.map((w, i) => (
+            <p key={i} className={cn(
+              'text-[11px] font-medium',
+              w.level === 'urgent' ? 'text-status-danger' :
+              w.level === 'warning' ? 'text-status-warning' :
+              'text-console-mute'
+            )}>
+              {w.message}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {/* Primary next action */}
+      {data.primaryNextAction && (
+        <p className="mt-3 text-[11px] text-orange">
+          Next: {data.primaryNextAction}
+        </p>
+      )}
     </div>
   )
 }

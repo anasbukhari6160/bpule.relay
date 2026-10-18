@@ -185,7 +185,32 @@ export function isEmploymentHiringNotPurchase(
   if (facts.employmentHiring) return true
   const header = text.split('\n').slice(0, 15).join('\n')
   if (RECRUITER_HEADER.test(header)) return true
+  if (isCandidateSeeking(text)) return true
   return episode?.anchorEvent?.eventType === 'HIRING' && !episode.explicitRequest
+}
+
+/**
+ * Detect candidate-seeking language: prospect is looking for opportunities,
+ * not hiring or buying services.
+ */
+export function isCandidateSeeking(text: string): boolean {
+  const lower = text.toLowerCase()
+
+  // Direct candidate indicators
+  if (/i'?m\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+(?:new\s+)?(?:contract|full[- ]time|part[- ]time|freelance|work|opportunities|roles|positions|challenges)/i.test(lower)) {
+    return true
+  }
+  if (/if\s+you(?:'|')?re\s+(?:hiring|looking|seeking)\b[^.]*(?:let'?s?\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome))/i.test(lower)) {
+    return true
+  }
+  if (/please\s+(?:keep|save)\s+my\s+(?:profile|resume|cv|info)/i.test(lower)) {
+    return true
+  }
+  if (/i\s+(?:am|m)\s+(?:open|available|interested)\s+to\s+(?:new\s+)?(?:opportunities|work|roles|projects)/i.test(lower)) {
+    return true
+  }
+
+  return false
 }
 
 const BUYER_CAP = 0.2
@@ -441,7 +466,7 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
         provenance: input.provenance,
       })
 
-      modelWeight = score >= 70 || score <= 20 ? 0.7 : 0.5
+      modelWeight = score >= 75 || score <= 25 ? 0.8 : score >= 60 || score <= 40 ? 0.7 : 0.6
       signalCheckTotal = composite.total
       score = Math.round(score * modelWeight + composite.total * (1 - modelWeight))
       steps.push({

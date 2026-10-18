@@ -10,6 +10,7 @@ import { DailyJobs, jobsFromTargets } from './daily-jobs'
 import { DoThisNext } from './do-this-next'
 import { UpNext } from './up-next'
 import { BdDailyDesk } from './bd-daily-desk'
+import { ExecutionHealthCard } from '@/components/performance/execution-health-card'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { RelayTodayAction } from '@/components/relay-today-workspace'
 import { cn } from 'cn'
@@ -219,6 +220,9 @@ export function RepWorkspace({ data, teamData, mode = 'rep' }: RepWorkspaceProps
               </motion.div>
             )
           })()}
+
+          {/* Weighted Execution Health */}
+          <ExecutionHealthCard />
 
           {/* Resume Work — continue where you left off */}
           {data.resumeWork && data.resumeWork.length > 0 && (

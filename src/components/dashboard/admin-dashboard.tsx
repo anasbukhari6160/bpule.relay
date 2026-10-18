@@ -8,6 +8,7 @@ import {
   Target, Flame, MessageSquare, Mail,
 } from 'lucide-react'
 import { cn } from 'cn'
+import { AdminPerformanceOverview } from '@/components/performance/admin-performance-overview'
 import type { AccountabilityDashboardData } from '@/lib/relay/dashboard-loader'
 
 /* ─── helpers ─── */
@@ -117,6 +118,14 @@ export function AdminDashboard({ data }: { data: AccountabilityDashboardData | n
             ))}
           </div>
         </motion.div>
+      )}
+
+      {/* Weighted Performance Overview */}
+      {commandCenter?.team && commandCenter.team.length > 0 && (
+        <AdminPerformanceOverview
+          repIds={commandCenter.team.map((t) => t.personId)}
+          repNames={Object.fromEntries(commandCenter.team.map((t) => [t.personId, t.personName]))}
+        />
       )}
 
       {/* Team roster */}

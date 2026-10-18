@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { cn } from '@/lib/utils'
 import { activityLabel, formatDefaultPack } from '@/lib/accountability/default-targets'
 import { buildTeamTargetOverview } from '@/lib/accountability/target-overview'
+import { DEFAULT_WEIGHTS } from '@/lib/performance/execution-score'
 import type { DailyTarget, RevenueIdentity, Rep, ActivityType, IdentityAssignment } from '@/lib/domain/types'
 
 const ACTIVITY_OPTIONS: { value: ActivityType; label: string }[] = [
@@ -351,6 +352,99 @@ export function TargetsManager() {
           </ul>
         </article>
       )}
+
+      {/* Performance Weights & SLA Config */}
+      <PerformanceConfigSection />
     </div>
+  )
+}
+
+function PerformanceConfigSection() {
+  const [weights, setWeights] = useState<Record<string, number>>(DEFAULT_WEIGHTS)
+  const [replySla, setReplySla] = useState(2)
+  const [followupSla, setFollowupSla] = useState(24)
+  const [capRatio, setCapRatio] = useState(1.25)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/admin/performance/config', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.weights) setWeights(data.weights)
+        if (data.replyUrgentHours) setReplySla(data.replyUrgentHours)
+        if (data.followupOverdueHours) setFollowupSla(data.followupOverdueHours)
+        if (data.capRatio) setCapRatio(data.capRatio)
+      })
+      .catch(() => {})
+  }, [])
+
+  async function save() {
+    setSaving(true)
+    setSaved(false)
+    try {
+      await fetch('/api/admin/performance/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weights,
+          sla: { replyUrgentHours: replySla, followupOverdueHours: followupSla, capRatio },
+        }),
+      })
+      setSaved(true)
+    } catch {
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <article className="rounded-lg border border-line bg-bone-raised/20 overflow-hidden">
+      <div className="px-5 py-3 border-b border-line/40">
+        <p className="text-[14px] font-medium text-ink">Action Weights & SLA</p>
+        <p className="text-[12px] text-graphite">Configure how Execution Health is scored. Weights measure contribution to funnel health.</p>
+      </div>
+      <div className="p-5 space-y-4">
+        {/* Action Weights */}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {Object.entries(weights).map(([key, val]) => (
+            <label key={key} className="flex items-center gap-2 rounded border border-line bg-bone px-3 py-2">
+              <span className="flex-1 truncate text-[11px] text-ink">{key.replace(/_/g, ' ')}</span>
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={val}
+                onChange={(e) => setWeights((p) => ({ ...p, [key]: Number.parseFloat(e.target.value) || 0 }))}
+                className="h-6 w-14 rounded border border-line bg-bone-raised px-2 text-[11px] text-ink"
+              />
+            </label>
+          ))}
+        </div>
+
+        {/* SLA Thresholds */}
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="flex items-center gap-2 rounded border border-line bg-bone px-3 py-2">
+            <span className="flex-1 text-[11px] text-ink">Reply SLA (hours)</span>
+            <input type="number" min={1} value={replySla} onChange={(e) => setReplySla(Number.parseInt(e.target.value, 10) || 2)} className="h-6 w-14 rounded border border-line bg-bone-raised px-2 text-[11px] text-ink" />
+          </label>
+          <label className="flex items-center gap-2 rounded border border-line bg-bone px-3 py-2">
+            <span className="flex-1 text-[11px] text-ink">Follow-up SLA (hours)</span>
+            <input type="number" min={1} value={followupSla} onChange={(e) => setFollowupSla(Number.parseInt(e.target.value, 10) || 24)} className="h-6 w-14 rounded border border-line bg-bone-raised px-2 text-[11px] text-ink" />
+          </label>
+          <label className="flex items-center gap-2 rounded border border-line bg-bone px-3 py-2">
+            <span className="flex-1 text-[11px] text-ink">Completion cap</span>
+            <input type="number" min={1} step={0.05} value={capRatio} onChange={(e) => setCapRatio(Number.parseFloat(e.target.value) || 1.25)} className="h-6 w-14 rounded border border-line bg-bone-raised px-2 text-[11px] text-ink" />
+          </label>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button onClick={() => void save()} size="sm" variant="orange" disabled={saving}>
+            {saving ? 'Saving…' : 'Save config'}
+          </Button>
+          {saved && <span className="text-[12px] text-status-success">Saved.</span>}
+        </div>
+      </div>
+    </article>
   )
 }

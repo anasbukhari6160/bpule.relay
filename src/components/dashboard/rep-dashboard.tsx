@@ -10,6 +10,7 @@ import {
 import { cn } from 'cn'
 import type { RepWorkspaceData } from '@/components/rep/rep-workspace'
 import type { RelayTodayAction } from '@/components/relay-today-workspace'
+import { computeDailyProgress } from '@/lib/performance/daily-progress'
 
 /* ─── helpers ─── */
 function timeAgo(iso: string | null): string {
@@ -51,9 +52,16 @@ export function RepDashboard({ data }: { data: RepWorkspaceData }) {
     'Other': sortedTasks.filter((t) => !['reply_needed', 'followup_due', 'connection_dm_due'].includes(t.kind)),
   }
 
-  const totalWork = (day.totalRemaining || 0) + (day.repliesWaiting || 0) + (day.followUpsDue || 0) + (day.outreachRemaining || 0)
-  const completed = totalWork - (day.totalRemaining || 0)
-  const completionPct = totalWork > 0 ? Math.round((completed / totalWork) * 100) : 0
+  // Real completed execution only — never inflate from remaining queue items
+  const progress = computeDailyProgress({
+    totalTarget: data.targetSummary?.totalTarget ?? 0,
+    totalCompleted: data.targetSummary?.totalCompleted ?? 0,
+    totalRemaining: data.targetSummary?.totalRemaining ?? 0,
+    repliesWaiting: day.repliesWaiting ?? 0,
+    followUpsDue: day.followUpsDue ?? 0,
+    outreachRemaining: day.outreachRemaining ?? 0,
+  })
+  const completionPct = progress.progressPct
 
   return (
     <div className="space-y-8">
@@ -75,12 +83,12 @@ export function RepDashboard({ data }: { data: RepWorkspaceData }) {
             <TrendingUp className="size-4 text-cobalt" />
             <span className="text-sm font-medium text-ink">Today&apos;s Progress</span>
           </div>
-          <span className={cn(
-            'text-sm font-semibold',
-            day.isComplete ? 'text-status-success' : 'text-ink'
-          )}>
-            {day.isComplete ? 'Day Complete ✓' : `${completionPct}% done`}
-          </span>
+           <span className={cn(
+             'text-sm font-semibold',
+             progress.status === 'COMPLETE' ? 'text-status-success' : 'text-ink'
+           )}>
+             {progress.status === 'COMPLETE' ? 'Day Complete ✓' : `${completionPct}% done`}
+           </span>
         </div>
         <div className="h-2 rounded-full bg-line/40 overflow-hidden">
           <motion.div
@@ -93,10 +101,27 @@ export function RepDashboard({ data }: { data: RepWorkspaceData }) {
             )}
           />
         </div>
-        <div className="mt-3 flex gap-4 text-[11px] text-stone">
-          <span>{day.repliesWaiting || 0} replies waiting</span>
-          <span>{day.followUpsDue || 0} follow-ups due</span>
-          <span>{day.outreachRemaining || 0} outreach remaining</span>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-stone">
+          {(day.repliesWaiting ?? 0) > 0 ? (
+            <span>{day.repliesWaiting} replies waiting</span>
+          ) : (
+            <span className="text-stone/60">Inbox clear</span>
+          )}
+          {(day.followUpsDue ?? 0) > 0 ? (
+            <span>{day.followUpsDue} follow-ups due</span>
+          ) : (
+            <span className="text-stone/60">No follow-ups due</span>
+          )}
+          {(day.outreachRemaining ?? 0) > 0 ? (
+            <span>{day.outreachRemaining} outreach remaining</span>
+          ) : (
+            <span className="text-stone/60">Outreach complete</span>
+          )}
+          {(data.targetSummary?.totalCompleted ?? 0) > 0 && (
+            <span className="text-cobalt">
+              {data.targetSummary?.totalCompleted} actions done
+            </span>
+          )}
         </div>
       </div>
 

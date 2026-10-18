@@ -22,7 +22,7 @@ import type {
 } from '../types'
 import type { V3EvidenceGraph } from '../graph/evidence-graph'
 import { V3_CONFIG_VERSION } from '../config'
-import { scoreEpisode, isEmploymentHiringNotPurchase, type V3ScoreInput, type V3ScoreOutput } from '../scoring/score-v3'
+import { scoreEpisode, isEmploymentHiringNotPurchase, isCandidateSeeking, type V3ScoreInput, type V3ScoreOutput } from '../scoring/score-v3'
 import { detectCommercialRequest, findContactInstruction, isVerbatimInSource } from '../source-facts'
 import { determineAction } from '../action/action-policy'
 import type { V3ProviderResult } from './decision-provider'
@@ -348,21 +348,38 @@ export function guardBoundedDecision(
   const text = rawText ?? ''
 
   if (isEmploymentHiringNotPurchase(text, episode)) {
-    if (next.buyerRequestProbability > BUYER_CAP) {
-      adjustments.push(`Buyer request capped at ${BUYER_CAP.toFixed(2)} (model: ${decision.buyerRequestProbability.toFixed(2)}): employee hiring with no request to an external provider.`)
-      next.buyerRequestProbability = BUYER_CAP
-    }
-    if (next.externalNeedProbability > BUYER_CAP) {
-      adjustments.push(`External need capped at ${BUYER_CAP.toFixed(2)} (model: ${decision.externalNeedProbability.toFixed(2)}): the need is filled by hiring, not outside help.`)
-      next.externalNeedProbability = BUYER_CAP
-    }
-    if (next.relationship === 'BUYER') {
-      adjustments.push('Relationship BUYER → UNKNOWN: recruiting an employee is not buying services.')
-      next.relationship = 'UNKNOWN'
-    }
-    if (next.needOwnerType !== 'HIRING_NEED' && (next.needOwnerType === 'ORGANIZATION_NEED' || next.needOwnerType === 'UNKNOWN')) {
-      adjustments.push(`Need owner ${next.needOwnerType} → HIRING_NEED: the source describes employee recruitment.`)
-      next.needOwnerType = 'HIRING_NEED'
+    // Candidate seeking: prospect is looking for opportunities, not buying
+    // This must run BEFORE the employment hiring guards that set relationship to UNKNOWN
+    if (isCandidateSeeking(text)) {
+      if (next.relationship === 'BUYER' || next.relationship === 'UNKNOWN') {
+        adjustments.push('Relationship → CANDIDATE: prospect is seeking opportunities, not buying services.')
+        next.relationship = 'CANDIDATE'
+      }
+      if (next.buyerRequestProbability > 0.1) {
+        adjustments.push(`Buyer request capped at 0.1: candidate-seeking language detected.`)
+        next.buyerRequestProbability = 0.1
+      }
+      if (next.needOwnerType === 'ORGANIZATION_NEED' || next.needOwnerType === 'UNKNOWN') {
+        next.needOwnerType = 'UNKNOWN'
+      }
+    } else {
+      // Standard employment hiring (not candidate seeking)
+      if (next.buyerRequestProbability > BUYER_CAP) {
+        adjustments.push(`Buyer request capped at ${BUYER_CAP.toFixed(2)} (model: ${decision.buyerRequestProbability.toFixed(2)}): employee hiring with no request to an external provider.`)
+        next.buyerRequestProbability = BUYER_CAP
+      }
+      if (next.externalNeedProbability > BUYER_CAP) {
+        adjustments.push(`External need capped at ${BUYER_CAP.toFixed(2)} (model: ${decision.externalNeedProbability.toFixed(2)}): the need is filled by hiring, not outside help.`)
+        next.externalNeedProbability = BUYER_CAP
+      }
+      if (next.relationship === 'BUYER') {
+        adjustments.push('Relationship BUYER → UNKNOWN: recruiting an employee is not buying services.')
+        next.relationship = 'UNKNOWN'
+      }
+      if (next.needOwnerType !== 'HIRING_NEED' && (next.needOwnerType === 'ORGANIZATION_NEED' || next.needOwnerType === 'UNKNOWN')) {
+        adjustments.push(`Need owner ${next.needOwnerType} → HIRING_NEED: the source describes employee recruitment.`)
+        next.needOwnerType = 'HIRING_NEED'
+      }
     }
   } else if (detectCommercialRequest(text).externalServiceRequest && next.needOwnerType === 'HIRING_NEED') {
     adjustments.push('Need owner HIRING_NEED → ORGANIZATION_NEED: the source asks for an external provider, not employees.')

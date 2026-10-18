@@ -27,11 +27,24 @@ export interface DisplayScoreInput {
 export function displayScoreFromCanonical(input: DisplayScoreInput | null): number | null {
   if (!input || input.canonicalScore == null || Number.isNaN(input.canonicalScore)) return null
   if (input.intelligenceVersion?.startsWith('relay_decision_v3')) {
-    if (input.qualification === 'strong') return 9
-    if (input.qualification === 'worth_pursuing') return 7
-    if (input.qualification === 'maybe') return 5
-    if (input.qualification === 'low') return 3
-    if (input.qualification === 'skip') return 2
+    const score = input.canonicalScore
+    switch (input.qualification) {
+      case 'strong':
+        // 75-100 → 8-10
+        return score >= 90 ? 10 : score >= 80 ? 9 : 8
+      case 'worth_pursuing':
+        // 55-74 → 6-7
+        return score >= 65 ? 7 : 6
+      case 'maybe':
+        // 35-54 → 4-6 (within-band resolution)
+        return score >= 48 ? 6 : score >= 42 ? 5 : 4
+      case 'low':
+        // 15-34 → 3
+        return 3
+      case 'skip':
+        // 0-14 → 1-2
+        return score >= 8 ? 2 : 1
+    }
   }
   return Math.round(input.canonicalScore / 10)
 }

@@ -223,7 +223,7 @@ function extractCompanyFromProfile(
   }
 
   if (title) {
-    const atSymbolMatch = title.match(/@\s*([A-Z][A-Za-z0-9._&\-]+)/i)
+    const atSymbolMatch = title.match(/@\s*([A-Z][A-Za-z0-9._&\-,]+?)(?:\s*[|·—]|$)/i)
     if (atSymbolMatch) return cleanOrgName(atSymbolMatch[1])
   }
 
@@ -324,6 +324,10 @@ function isLikelyCompanyName(candidate: string): boolean {
   const lower = candidate.toLowerCase().trim()
 
   if (looksLikeRole(candidate)) return false
+
+  // Reject standalone legal suffixes
+  const legalSuffixes = ['inc', 'inc.', 'ltd', 'ltd.', 'llc', 'gmbh', 'corp', 'corp.', 'co', 'co.', 'sa', 's.a.', 'bv', 'nv', 'plc', 'llp', 'lp']
+  if (legalSuffixes.includes(lower)) return false
 
   const rejectPatterns = [
     /^(the|a|an|this|that|my|our|their|his|her|its)$/i,
