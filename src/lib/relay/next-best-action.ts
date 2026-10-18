@@ -1,4 +1,4 @@
-import type { RelayQueue, RelayTask } from '@/lib/domain/types'
+import type { RelayQueue, RelayTask, Message } from '@/lib/domain/types'
 import type { Lead } from '@/lib/domain/types'
 import { deriveNextLeadAction } from './lead-state-machine'
 import type { LeadDetail } from '@/lib/store/types'
@@ -36,8 +36,8 @@ export interface NextBestAction {
 
 export interface NextBestActionInput {
   queue: RelayQueue
-  leads: LeadDetail[]
-  messagesByLead: Map<string, import('@/lib/domain/types').Message[]>
+  leads: Lead[]
+  messagesByLead: Map<string, Message[]>
   now?: number
 }
 
@@ -70,13 +70,21 @@ export function rankNextActions(input: NextBestActionInput): NextBestAction[] {
   // 2. Catch any leads not in the queue but needing action
   for (const lead of input.leads) {
     if (seenLeads.has(lead.id)) continue
-    if (isTerminal(lead)) continue
+    if (isTerminalLead(lead)) continue
 
-    const leadAction = deriveNextLeadAction(lead, now)
+    // Build minimal LeadDetail from Lead + messages for deriveNextLeadAction
+    const messages = input.messagesByLead.get(lead.id) ?? []
+    const leadDetail: LeadDetail = {
+      ...lead,
+      messages,
+      outcomes: [],
+      followupCount: (lead as any).followupCount ?? 0,
+    }
+    const leadAction = deriveNextLeadAction(leadDetail, now)
     if (!leadAction.requiresAction) continue
 
     const channel: NextBestActionChannel = lead.direction === 'inbound' ? 'INBOUND' : 'LINKEDIN'
-    const nbaAction = leadActionToNba(leadAction, lead, channel, now)
+    const nbaAction = leadActionToNba(leadAction, leadDetail, channel, now)
     if (nbaAction) actions.push(nbaAction)
   }
 
@@ -97,7 +105,7 @@ export function rankNextActions(input: NextBestActionInput): NextBestAction[] {
   return actions
 }
 
-function taskToAction(task: RelayTask, input: NextBestActionInput, now: number): NextBestAction | null {
+function taskToAction(task: RelayTask, input: NextBestActionInput, _now: number): NextBestAction | null {
   const lead = input.leads.find((l) => l.id === task.entityId)
   const channel: NextBestActionChannel =
     task.kind === 'inbound_opportunity' ? 'INBOUND'
@@ -217,7 +225,7 @@ function leadActionToNba(
   }
 }
 
-function isTerminal(lead: LeadDetail): boolean {
+function isTerminalLead(lead: Lead): boolean {
   return lead.status === 'won' || lead.status === 'lost' || lead.status === 'dead' || lead.status === 'no'
 }
 

@@ -73,6 +73,9 @@ export interface RepWorkspaceData {
   upworkJobs?: Array<{ id: string; title: string; company: string; canonicalScore: number | null; fitScore: number | null }>
   completion?: { done: number; remaining: number }
   resumeWork?: Array<{ id: string; company: string; contactName: string | null; lastAction: string; state: string }>
+  signalFeed?: import('@/lib/relay/signal-watch').SignalFeedItem[]
+  onRefreshSignals?: () => void
+  onDismissSignal?: (id: string) => void
 }
 
 interface RepWorkspaceProps {
@@ -260,6 +263,9 @@ export function RepWorkspace({ data, teamData, mode = 'rep' }: RepWorkspaceProps
             referredLeads={data.referredLeads ?? []}
             recentLeads={data.recentLeads ?? []}
             hasAnyWork={(data.upNext?.length > 0) || (data.referredLeads && data.referredLeads.length > 0) || (data.day.repliesWaiting > 0) || (data.day.followUpsDue > 0)}
+            signalFeed={data.signalFeed}
+            onRefreshSignals={data.onRefreshSignals}
+            onDismissSignal={data.onDismissSignal}
           />
 
           {data.notifications.length > 0 && (

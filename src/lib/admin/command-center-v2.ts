@@ -2,6 +2,7 @@
 // Answers: What happened? Who worked? What needs attention? Where are the opportunities?
 
 // Command Center V2 data layer
+import { generateTodaysIntelligence } from '@/lib/relay/admin-intelligence'
 
 
 export type ExceptionSeverity = 'attention' | 'urgent' | 'critical'
@@ -101,6 +102,15 @@ export interface CommandCenterData {
   exceptions: ExceptionItem[]
   opportunities: OpportunityFeedItem[]
   repQueueSnapshots?: RepQueueSnapshot[]
+  todaysIntelligence?: {
+    newHighValueSignals: number
+    repliesNeedingAction: number
+    opportunitiesStronger: number
+    leadsWentStale: number
+    leadsToReassign: number
+    intelligenceFallbacks: number
+    notableEvents: Array<{ type: string; title: string; detail: string }>
+  }
 }
 
 
@@ -584,8 +594,27 @@ export async function loadCommandCenterData(
     }
   }
 
-  return { brief, sinceYesterday, team, exceptions: exceptions.slice(0, 20), opportunities: opportunities.slice(0, 15) }
+  // Today's Intelligence — concise admin brief
+  const todaysIntelligence = generateTodaysIntelligence({
+    date,
+    leads: leads ?? [],
+    messages: [], // messages not fetched in this loader
+    actionEvents: (events as Array<{ action_type: string; actor_id: string | null; occurred_at: string; metadata?: Record<string, unknown> }> ?? []),
+    signalEvents: [], // signal events populated by signal-watch cron
+  })
+
+  return { brief, sinceYesterday, team, exceptions: exceptions.slice(0, 20), opportunities: opportunities.slice(0, 15), todaysIntelligence }
 }
+
+/**
+ * Build Today's Intelligence brief from command center data.
+ * Lightweight — reuses already-fetched data.
+ */
+
+/**
+ * Build Today's Intelligence brief from command center data.
+ * Lightweight — reuses already-fetched data.
+ */
 
 function getPreviousDate(date: string): string {
   const d = new Date(date + 'T00:00:00')
@@ -625,13 +654,16 @@ export async function loadRepQueueSnapshot(
     .eq('archived', false)
     .limit(100)
 
-  const actions: RepQueueSnapshot['topActions'] = []
+  const actions: Array<RepQueueSnapshot['topActions'][number] & { _sort: number }> = []
   let pendingReplies = 0
   let overdueFollowups = 0
   let untouchedReferrals = 0
   let staleLeads = 0
 
   for (const lead of leads || []) {
+    // Skip terminal leads — must match rep view
+    if (['won', 'lost', 'dead', 'no'].includes(lead.status as string)) continue
+
     const cs = (lead.conversation_states as unknown as {
       stage: string
       last_reply_at: string | null
@@ -639,7 +671,7 @@ export async function loadRepQueueSnapshot(
       next_followup_at: string | null
     }[] | null)?.[0]
 
-    // Reply waiting
+    // Reply waiting — priority 100 (matches rankNextActions REPLY_NOW)
     if (cs?.last_reply_at && cs?.last_sent_at && cs.last_reply_at > cs.last_sent_at) {
       pendingReplies++
       const mins = Math.floor((now - new Date(cs.last_reply_at).getTime()) / 60000)
@@ -649,10 +681,11 @@ export async function loadRepQueueSnapshot(
         reason: `Client replied ${formatMinutes(mins)} ago`,
         urgency: mins > 480 ? 'urgent' : 'high',
         leadId: lead.id as string,
+        _sort: 100,
       })
     }
 
-    // Follow-up overdue
+    // Follow-up overdue — priority 70 (matches rankNextActions SEND_FOLLOWUP)
     if (cs?.next_followup_at && new Date(cs.next_followup_at).getTime() <= now) {
       const overdueMin = Math.floor((now - new Date(cs.next_followup_at).getTime()) / 60000)
       if (overdueMin > 60) {
@@ -663,11 +696,25 @@ export async function loadRepQueueSnapshot(
           reason: `Due ${formatMinutes(overdueMin)} ago`,
           urgency: overdueMin > 2880 ? 'urgent' : 'medium',
           leadId: lead.id as string,
+          _sort: 70,
         })
       }
     }
 
-    // Stale lead
+    // High-value untouched — priority 50-60 (matches rankNextActions RESEARCH)
+    const score = (lead.canonical_score as number) || 0
+    if (lead.status === 'new' && score >= 70) {
+      actions.push({
+        action: 'Contact',
+        company: (lead.company as string) || 'Unknown',
+        reason: `Score ${score}/100 — strong match`,
+        urgency: 'medium',
+        leadId: lead.id as string,
+        _sort: 50 + score / 10,
+      })
+    }
+
+    // Stale lead — priority 40 (matches rankNextActions low-priority RESEARCH)
     const days = Math.floor((now - new Date(lead.created_at as string).getTime()) / 86400000)
     if (days >= 14 && ['new', 'contacted'].includes(lead.status as string)) {
       staleLeads++
@@ -677,30 +724,18 @@ export async function loadRepQueueSnapshot(
         reason: `Untouched for ${days} days`,
         urgency: days >= 30 ? 'urgent' : 'low',
         leadId: lead.id as string,
-      })
-    }
-
-    // High-value untouched
-    const score = (lead.canonical_score as number) || 0
-    if (lead.status === 'new' && score >= 70) {
-      actions.push({
-        action: 'Contact',
-        company: (lead.company as string) || 'Unknown',
-        reason: `Score ${score}/100 — strong match`,
-        urgency: 'medium',
-        leadId: lead.id as string,
+        _sort: 40,
       })
     }
   }
 
-  // Sort: urgent first, then high, then by urgency order
-  const urgencyOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
-  actions.sort((a, b) => (urgencyOrder[a.urgency] ?? 4) - (urgencyOrder[b.urgency] ?? 4))
+  // Sort by canonical priority (matches rankNextActions ordering)
+  actions.sort((a, b) => b._sort - a._sort)
 
   return {
     repId,
     repName,
-    topActions: actions.slice(0, 5),
+    topActions: actions.slice(0, 5).map(({ _sort, ...a }) => a),
     pendingReplies,
     overdueFollowups,
     untouchedReferrals,

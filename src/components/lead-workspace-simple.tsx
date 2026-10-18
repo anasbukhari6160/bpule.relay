@@ -21,6 +21,8 @@ import { calendarDaysBetween, followupDueInDays } from '@/lib/leads/followup'
 import { formatRoleLine, stripEmployerFromTitle } from '@/lib/leads/role-line'
 import { ScoreBreakdown } from '@/components/score-breakdown'
 import { DecisionExplainability } from '@/components/leads/decision-explain'
+import { DecisionTraceView } from '@/components/leads/decision-trace-view'
+import { buildDecisionTrace } from '@/lib/relay/decision-trace'
 
 type Mode = 'connection' | 'dm' | 'reply' | 'followup' | null
 
@@ -259,6 +261,28 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           <div className="shrink-0 text-right">
             <StatusPill phase={phase} />
             {lead.url && <a href={lead.url} target="_blank" rel="noopener" className="mt-1 inline-block text-[10px] text-cobalt hover:underline">LinkedIn ↗</a>}
+            {(lead.canonicalScore ?? 0) >= 60 && (
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/leads/${lead.id}/refresh-intelligence`, {
+                      method: 'POST',
+                      headers: { 'x-force-refresh': 'true' },
+                    })
+                    if (res.ok) {
+                      const json = await res.json()
+                      if (json.refreshed) {
+                        window.location.reload()
+                      }
+                    }
+                  } catch { /* non-fatal */ }
+                }}
+                className="mt-1 inline-flex items-center gap-1 text-[10px] text-graphite hover:text-ink"
+                title="Refresh intelligence signals"
+              >
+                <Target className="size-3" /> Refresh signals
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -349,6 +373,11 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           confidence={null}
           details={buildScoreDetails(lead)}
         />
+      )}
+
+      {/* Decision Trace — full lineage */}
+      {!isTerminal && (
+        <DecisionTraceView trace={buildDecisionTrace(lead.id, lead.company, lead.canonicalIntelligence as Record<string, unknown>)} />
       )}
 
       {/* Relationship State + Actions */}

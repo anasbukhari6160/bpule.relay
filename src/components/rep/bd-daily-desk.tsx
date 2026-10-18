@@ -24,6 +24,8 @@ import { readSse } from '@/lib/sse/client'
 import type { RelayTodayAction } from '@/components/relay-today-workspace'
 import { UnifiedInbox, deriveInboxItems } from '@/components/inbox/unified-inbox'
 import { IntelligentEmptyState, repHomeEmptyState } from '@/components/ui/intelligent-empty-state'
+import { SignalFeed } from '@/components/signal/signal-feed'
+import type { SignalFeedItem } from '@/lib/relay/signal-watch'
 
 interface BdDailyDeskProps {
   yourMove: RelayTodayAction[]
@@ -33,6 +35,9 @@ interface BdDailyDeskProps {
   referredLeads: Array<{ id: string; company: string; score: number | null; canonicalScore: number | null; displayQualification?: string | null; displayIntelligenceVersion?: string | null; referredAt: string | null; referrerName?: string | null; reason?: string | null }>
   recentLeads: Array<{ id: string; company: string; score: number | null; canonicalScore: number | null; displayQualification?: string | null; displayIntelligenceVersion?: string | null; createdAt: string }>
   hasAnyWork: boolean
+  signalFeed?: SignalFeedItem[]
+  onRefreshSignals?: () => void
+  onDismissSignal?: (id: string) => void
 }
 
 function channelIcon(kind: string) {
@@ -86,6 +91,9 @@ export function BdDailyDesk({
   referredLeads,
   recentLeads,
   hasAnyWork,
+  signalFeed,
+  onRefreshSignals,
+  onDismissSignal,
 }: BdDailyDeskProps) {
   const [quickPasted, setQuickPasted] = useState('')
   const [inlinePreview, setInlinePreview] = useState<InlinePreview | null>(null)
@@ -217,6 +225,15 @@ export function BdDailyDesk({
       {/* Unified inbox — replies from all channels */}
       {replyActions.length > 0 && (
         <UnifiedInbox items={deriveInboxItems(replyActions)} />
+      )}
+
+      {/* Signal feed — what's changed */}
+      {(signalFeed && signalFeed.length > 0) && (
+        <SignalFeed
+          items={signalFeed}
+          onRefresh={onRefreshSignals}
+          onDismiss={onDismissSignal}
+        />
       )}
 
       {/* Intelligent empty state */}

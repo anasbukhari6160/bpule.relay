@@ -7,8 +7,11 @@ import { createScoutStore } from '@/lib/store'
 import { createServerSupabase } from '@/lib/supabase/server'
 import { buildRoleContext } from '@/lib/relay/role-intelligence'
 import { buildRelayQueue } from '@/lib/relay/queue-engine'
+import { rankNextActions, type NextBestAction } from '@/lib/relay/next-best-action'
+import { logRecommendation } from '@/lib/action-ledger'
 import { loadAccountabilityDashboard } from '@/lib/relay/dashboard-loader'
 import type { RelayTodayAction } from '@/components/relay-today-workspace'
+import type { RelayTaskKind } from '@/lib/domain/types'
 import { RepWorkspace, type RepWorkspaceData } from '@/components/rep/rep-workspace'
 import { AdminDashboard } from '@/components/dashboard/admin-dashboard'
 import { RepDashboard } from '@/components/dashboard/rep-dashboard'
@@ -243,29 +246,38 @@ async function loadRepWorkspaceData(repId: string): Promise<RepWorkspaceData> {
       state: (l as any).status === 'new' ? 'Draft started' : 'In progress',
     }))
 
-  const actions: RelayTodayAction[] = visibleTasks.slice(0, 10).map((task) => ({
-    id: task.id,
-    kind: task.kind,
-    priority: task.priority,
-    title: task.title.replace(/^New inbound\s*[-:]\s*/i, '').trim(),
-    subtitle: task.subtitle,
-    href: task.entityType === 'lead' ? `/leads/${task.entityId}` : task.entityType === 'job' ? `/upwork/${task.entityId}` : '/dashboard',
-    whatHappened: task.whatHappened,
-    whyItMatters: task.whyItMatters,
-    whyLines: [task.whatHappened, task.whyItMatters],
-    prepared: task.recommendation.preparedOutput ?? task.recommendation.action,
-    humanAction: task.humanAction,
-    createdAt: task.createdAt,
-    fitScore: null,
-    identity: task.entityType === 'lead' ? {
-      id: null,
-      name: workspace.identities[0]?.identityName ?? '',
-      title: workspace.identities[0]?.title ?? null,
-      channel: workspace.identities[0]?.channel ?? null,
-    } : null,
-    proof: null,
-    inbound: task.kind === 'inbound_opportunity',
-  }))
+  // Canonical ranking via next-best-action.ts — single source of truth
+  // Use role-filtered queue so reps don't see admin tasks
+  const filteredQueue: typeof queue = {
+    ...queue,
+    tasks: visibleTasks,
+    summary: {
+      total: visibleTasks.length,
+      urgent: visibleTasks.filter(t => t.priority === 'urgent').length,
+      byKind: queue.summary.byKind,
+    },
+  }
+  const rankedActions = rankNextActions({
+    queue: filteredQueue,
+    leads: dash.mine?.queue ?? [],
+    messagesByLead: relayData.messagesByLead,
+  })
+
+  const actions: RelayTodayAction[] = rankedActions.slice(0, 10).map(nbaToRelayAction(nbaToActionKind, workspace))
+
+  // Log recommendations for observability (non-blocking)
+  if (actions.length > 0 && user.organization?.id) {
+    Promise.all(actions.slice(0, 5).map(action =>
+      logRecommendation({
+        orgId: user.organization.id,
+        repId: user.rep.id,
+        leadId: action.id.startsWith('reply-') || action.id.startsWith('followup-') ? action.id.replace(/^(reply-|followup-|highfit-|opportunity-|connection-dm-)/, '') : null,
+        action: action.humanAction,
+        priority: action.priority === 'urgent' ? 90 : action.priority === 'high' ? 70 : action.priority === 'medium' ? 50 : 30,
+        reason: action.whatHappened,
+      })
+    )).catch(() => { /* observability failure is non-fatal */ })
+  }
 
   return {
     rep: workspace.rep,
@@ -305,6 +317,7 @@ async function loadRepWorkspaceData(repId: string): Promise<RepWorkspaceData> {
       lastAction: r.lastAction,
       state: r.state,
     })),
+    signalFeed: buildSignalFeedFromActionEvents(dash, recentLeads),
   }
 }
 
@@ -326,6 +339,58 @@ async function countProfilesPulled(orgId: string, repId: string): Promise<number
   } catch {
     return 0
   }
+}
+
+/**
+ * Maps canonical NextBestAction to RelayTaskKind for UI compatibility.
+ * Preserves existing kind values that BdDailyDesk / DoThisNext / UpNext expect.
+ */
+function nbaToActionKind(action: NextBestAction['action']): RelayTaskKind {
+  switch (action) {
+    case 'REPLY_NOW': return 'reply_needed'
+    case 'SEND_CONNECTION': return 'connection_dm_due'
+    case 'SEND_FIRST_DM': return 'connection_dm_due'
+    case 'SEND_FOLLOWUP': return 'followup_due'
+    case 'RESEARCH': return 'high_fit_lead'
+    case 'REVIEW_REFERRAL': return 'admin_review'
+    case 'APPLY_UPWORK': return 'job_worth_apply'
+    case 'RESUME_DRAFT': return 'proposal_ready'
+    case 'WAIT': return 'lead_going_cold'
+    default: return 'new_opportunity'
+  }
+}
+
+/**
+ * Maps a NextBestAction to the RelayTodayAction format consumed by BdDailyDesk.
+ * No new state model — pure presentation mapping over canonical ranking.
+ */
+function nbaToRelayAction(
+  toKind: typeof nbaToActionKind,
+  workspace: { identities: Array<{ identityName: string; title: string | null; channel: string | null }> },
+) {
+  return (nba: NextBestAction): RelayTodayAction => ({
+    id: nba.leadId ?? nba.jobId ?? 'unknown',
+    kind: toKind(nba.action),
+    priority: nba.priority >= 80 ? 'urgent' as const : nba.priority >= 60 ? 'high' as const : nba.priority >= 40 ? 'medium' as const : 'low' as const,
+    title: nba.title,
+    subtitle: nba.subtitle,
+    href: nba.leadId ? `/leads/${nba.leadId}` : nba.jobId ? `/upwork/${nba.jobId}` : '/dashboard',
+    whatHappened: nba.reason,
+    whyItMatters: nba.reason,
+    whyLines: [nba.reason],
+    prepared: null,
+    humanAction: nba.action,
+    createdAt: nba.dueAt ?? new Date().toISOString(),
+    fitScore: null,
+    identity: {
+      id: null,
+      name: workspace.identities[0]?.identityName ?? '',
+      title: workspace.identities[0]?.title ?? null,
+      channel: workspace.identities[0]?.channel ?? null,
+    },
+    proof: null,
+    inbound: nba.channel === 'INBOUND',
+  })
 }
 
 async function loadAnalytics(range: RangeDays, timeZone: string) {
@@ -356,6 +421,33 @@ async function AnalyticsSection({ range, timeZone }: { range: RangeDays; timeZon
     )
   }
   return <PipelineAnalyticsView data={result.data} scope={result.scope} />
+}
+
+/**
+ * Build signal feed items from recent leads with high scores.
+ * Uses stored intelligence to surface meaningful changes.
+ */
+function buildSignalFeedFromActionEvents(
+  dash: { followupsDue: { lead: { id: string; company: string; contactName?: string | null; canonicalScore?: number | null } }[] },
+  recentLeads: Array<{ id: string; company: string; canonicalScore?: number | null; createdAt: string }>,
+) {
+  const items = recentLeads
+    .filter(l => (l.canonicalScore ?? 0) >= 70)
+    .slice(0, 3)
+    .map((l, i) => ({
+      id: `feed-${l.id}`,
+      leadId: l.id,
+      company: l.company,
+      contactName: null,
+      title: `High-value lead (${l.canonicalScore}/100)`,
+      detail: `Score ${l.canonicalScore}/100 — worth pursuing`,
+      severity: 'notable' as const,
+      type: 'BUYER_REQUEST' as const,
+      createdAt: l.createdAt,
+      rankScore: (l.canonicalScore ?? 0) * (1 - i * 0.1),
+      cta: 'Review',
+    }))
+  return items
 }
 
 function AnalyticsSkeleton() {

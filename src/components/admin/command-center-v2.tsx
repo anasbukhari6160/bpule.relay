@@ -28,7 +28,8 @@ import { StatusBadge } from '@/components/ui/status-badge'
 import { EventsDrilldown } from '@/components/admin/events-drilldown'
 
 import { formatMinutesAgo } from '@/lib/ui/time'
-import type { CommandCenterData, TeamRow, ExceptionItem, OpportunityFeedItem, TeamMemberStatus, ExceptionSeverity } from '@/lib/admin/command-center-v2'
+import type { CommandCenterData, TeamRow, ExceptionItem, OpportunityFeedItem, TeamMemberStatus, ExceptionSeverity, RepQueueSnapshot } from '@/lib/admin/command-center-v2'
+import { loadRepQueueSnapshot } from '@/lib/admin/command-center-v2'
 
 
 function today(): string {
@@ -85,7 +86,7 @@ const OPERATE_NAV = [
 ]
 
 
-export function CommandCenterV2() {
+export function CommandCenterV2({ orgId }: { orgId: string }) {
   const [date, setDate] = useState(today())
   const [data, setData] = useState<CommandCenterData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -183,6 +184,11 @@ export function CommandCenterV2() {
               <SinceYesterdaySection diff={data.sinceYesterday} />
             )}
 
+            {/* Today's Intelligence */}
+            {data.todaysIntelligence && (
+              <TodaysIntelligenceSection intelligence={data.todaysIntelligence} />
+            )}
+
             {/* Daily Brief */}
             <DailyBriefSection brief={data.brief} date={date} onDrilldown={(action) => setDrilldown({ action, repId: null })} />
 
@@ -197,6 +203,7 @@ export function CommandCenterV2() {
               expandedRep={expandedRep}
               onToggleExpand={(id) => setExpandedRep(expandedRep === id ? null : id)}
               date={date}
+              orgId={orgId}
             />
 
             {/* Opportunities */}
@@ -318,6 +325,59 @@ function SinceYesterdaySection({ diff }: { diff: NonNullable<CommandCenterData['
   )
 }
 
+function TodaysIntelligenceSection({ intelligence }: {
+  intelligence: {
+    newHighValueSignals: number
+    repliesNeedingAction: number
+    opportunitiesStronger: number
+    leadsWentStale: number
+    leadsToReassign: number
+    intelligenceFallbacks: number
+    notableEvents: Array<{ type: string; title: string; detail: string }>
+  }
+}) {
+  const stats = [
+    { label: 'New signals', value: intelligence.newHighValueSignals, color: 'text-orange' },
+    { label: 'Replies need action', value: intelligence.repliesNeedingAction, color: 'text-status-warning' },
+    { label: 'Stronger opportunities', value: intelligence.opportunitiesStronger, color: 'text-status-success' },
+    { label: 'Stale high-value', value: intelligence.leadsWentStale, color: 'text-stone' },
+    { label: 'Reassign candidates', value: intelligence.leadsToReassign, color: 'text-cobalt' },
+    { label: 'Fallbacks', value: intelligence.intelligenceFallbacks, color: 'text-stone' },
+  ].filter(s => s.value > 0)
+
+  if (stats.length === 0 && intelligence.notableEvents.length === 0) return null
+
+  return (
+    <section className="rounded-lg border border-orange/20 bg-orange/[0.02] p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <Zap className="size-4 text-orange" />
+        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-stone">Today's Intelligence</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {stats.map(stat => (
+          <div key={stat.label} className="flex items-center gap-2">
+            <span className={cn('text-[18px] font-medium', stat.color)}>{stat.value}</span>
+            <span className="text-[11px] text-graphite">{stat.label}</span>
+          </div>
+        ))}
+      </div>
+      {intelligence.notableEvents.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {intelligence.notableEvents.slice(0, 3).map((event, i) => (
+            <div key={i} className="flex items-start gap-2 text-[11px]">
+              <span className="text-stone">•</span>
+              <div>
+                <span className="font-medium text-ink">{event.title}</span>
+                <span className="ml-1 text-graphite">{event.detail}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 
 function DailyBriefSection({ brief, date, onDrilldown }: { brief: CommandCenterData['brief']; date: string; onDrilldown: (action: string) => void }) {
   const isToday = date === today()
@@ -429,12 +489,27 @@ function TeamSection({
   expandedRep,
   onToggleExpand,
   date,
+  orgId,
 }: {
   team: TeamRow[]
   expandedRep: string | null
   onToggleExpand: (id: string) => void
   date: string
+  orgId: string
 }) {
+  const [repQueueSnapshots, setRepQueueSnapshots] = useState<Record<string, RepQueueSnapshot | null>>({})
+  const [loadingSnapshot, setLoadingSnapshot] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!expandedRep || repQueueSnapshots[expandedRep]) return
+    const row = team.find(t => t.repId === expandedRep)
+    if (!row) return
+    setLoadingSnapshot(expandedRep)
+    loadRepQueueSnapshot(orgId, row.repId, row.repName, date)
+      .then(snap => setRepQueueSnapshots(prev => ({ ...prev, [expandedRep]: snap })))
+      .catch(() => setRepQueueSnapshots(prev => ({ ...prev, [expandedRep]: null })))
+      .finally(() => setLoadingSnapshot(null))
+  }, [expandedRep, date, team, repQueueSnapshots])
   return (
     <section className="rounded-lg border border-line bg-bone-raised">
       <div className="flex items-center justify-between border-b border-line px-5 py-3">
@@ -506,6 +581,44 @@ function TeamSection({
                     <MiniStat label="Pending replies" value={row.pendingReplies} highlight={row.pendingReplies > 0} />
                     <MiniStat label="Last active" value={formatMinutesAgo(row.lastActivityMinutes)} isText />
                   </div>
+
+                  {/* Per-rep ranked work queue snapshot */}
+                  {loadingSnapshot === row.repId && (
+                    <div className="mt-3 text-[11px] text-stone">Loading queue...</div>
+                  )}
+                  {repQueueSnapshots[row.repId] && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-stone">Top actions</p>
+                      {repQueueSnapshots[row.repId]!.topActions.length === 0 ? (
+                        <p className="text-[11px] text-graphite">Nothing needs attention.</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {repQueueSnapshots[row.repId]!.topActions.map((action, idx) => (
+                            <Link
+                              key={idx}
+                              href={action.leadId ? `/leads/${action.leadId}` : '#'}
+                              className="flex items-center justify-between rounded-md border border-line/60 bg-bone-raised/60 px-3 py-2 text-[11px] transition-colors hover:bg-bone"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <span className="font-medium text-ink">{action.action}</span>
+                                <span className="ml-1.5 text-graphite">· {action.company}</span>
+                                <p className="truncate text-[10px] text-stone">{action.reason}</p>
+                              </div>
+                              <span className={cn(
+                                'shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium',
+                                action.urgency === 'urgent' ? 'bg-status-danger/10 text-status-danger' :
+                                action.urgency === 'high' ? 'bg-orange/10 text-orange' :
+                                'bg-stone/10 text-stone'
+                              )}>
+                                {action.urgency}
+                              </span>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="mt-3 flex gap-2">
                     <Link
                       href={`/team/${row.repId}?date=${date}`}

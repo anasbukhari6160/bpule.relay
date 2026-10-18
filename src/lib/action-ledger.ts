@@ -23,6 +23,8 @@ type ActionEventType =
   | 'OPPORTUNITY_CREATED'
   | 'CLIENT_WON'
   | 'LEAD_ARCHIVED'
+  | 'RECOMMENDATION_SHOWN'
+  | 'RECOMMENDATION_ACTED'
 
 interface EmitActionParams {
   orgId: string
@@ -134,6 +136,36 @@ export async function emitAction(params: EmitActionParams): Promise<string | nul
     return null
   }
   return data?.id || null
+}
+
+/**
+ * Log a recommendation shown to a rep. Used for observability:
+ * track whether recommendations lead to action.
+ */
+export async function logRecommendation(params: {
+  orgId: string
+  repId: string
+  leadId: string | null
+  action: string
+  priority: number
+  reason: string
+  acted?: boolean
+}): Promise<void> {
+  await emitAction({
+    orgId: params.orgId,
+    actionType: params.acted ? 'RECOMMENDATION_ACTED' : 'RECOMMENDATION_SHOWN',
+    actorType: 'rep',
+    actorId: params.repId,
+    leadId: params.leadId,
+    metadata: {
+      action: params.action,
+      priority: params.priority,
+      reason: params.reason,
+    },
+    idempotencyKey: params.acted
+      ? `rec-acted-${params.leadId}-${params.action}-${Date.now()}`
+      : `rec-shown-${params.leadId}-${params.action}`,
+  })
 }
 
 /**

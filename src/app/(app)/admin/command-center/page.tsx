@@ -14,5 +14,5 @@ export default async function CommandCenterPage() {
     redirect('/dashboard')
   }
 
-  return <CommandCenterV2 />
+  return <CommandCenterV2 orgId={authCtx?.orgId ?? ''} />
 }
