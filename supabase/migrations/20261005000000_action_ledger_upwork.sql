@@ -58,10 +58,10 @@ create table if not exists action_events (
 
 -- Indexes for the operating ledger queries
 create index if not exists ae_org_time_idx on action_events (organization_id, occurred_at desc);
-create index if not_exists ae_org_actor_time_idx on action_events (organization_id, actor_id, occurred_at desc);
-create index if not_exists ae_org_type_time_idx on action_events (organization_id, action_type, occurred_at desc);
-create index if not_exists ae_lead_idx on action_events (lead_id);
-create index if not_exists ae_actor_date_idx on action_events (actor_id, date(occurred_at));
+create index if not exists ae_org_actor_time_idx on action_events (organization_id, actor_id, occurred_at desc);
+create index if not exists ae_org_type_time_idx on action_events (organization_id, action_type, occurred_at desc);
+create index if not exists ae_lead_idx on action_events (lead_id);
+create index if not exists ae_actor_date_idx on action_events (actor_id, ((occurred_at at time zone 'UTC')::date));
 
 -- RLS: org-scoped. Admins see all. Reps see own + referred-to-them.
 alter table action_events enable row level security;

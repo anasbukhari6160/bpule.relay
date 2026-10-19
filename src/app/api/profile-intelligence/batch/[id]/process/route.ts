@@ -387,6 +387,9 @@ async function createProfile(client: Db, facts: ExtractedFacts, orgId: string, r
     .insert({
       organization_id: orgId,
       rep_id: repId,
+      // profiles began as per-rep platform identities: platform is NOT NULL
+      // and limited to linkedin/upwork.
+      platform: profilePlatform(facts),
       full_name: name,
       display_name: name,
       headline: facts.headline,
@@ -421,6 +424,12 @@ async function createProfile(client: Db, facts: ExtractedFacts, orgId: string, r
     return { id: null, error: error?.message ?? 'no row returned' }
   }
   return { id: data.id as string, error: null }
+}
+
+/** An imported person is a LinkedIn identity unless their documents point to Upwork. */
+function profilePlatform(facts: ExtractedFacts): 'linkedin' | 'upwork' {
+  const text = [facts.headline, facts.bio, facts.professionalSummary, facts.positioning].filter(Boolean).join(' ')
+  return /upwork\.com|\bupwork\b/i.test(text) && !/linkedin\.com|\blinkedin\b/i.test(text) ? 'upwork' : 'linkedin'
 }
 
 async function mergeIntoProfile(client: Db, profileId: string, facts: ExtractedFacts, projects: ExtractedProject[], proofs: ExtractedProof[], orgId: string): Promise<boolean> {

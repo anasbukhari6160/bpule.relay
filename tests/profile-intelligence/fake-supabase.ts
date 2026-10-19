@@ -12,6 +12,7 @@ const CHECKS: Record<string, Record<string, string[]>> = {
     parsing_status: ['pending', 'parsing', 'parsed', 'ocr_required', 'failed', 'unsupported'],
     extraction_status: ['pending', 'extracting', 'extracted', 'partial_failure', 'failed'],
   },
+  profiles: { platform: ['linkedin', 'upwork'] },
   profile_import_batches: {
     status: ['uploaded', 'parsing', 'identifying_people', 'extracting', 'matching', 'synthesizing', 'review_required', 'ready', 'partial_failure', 'failed'],
   },
@@ -31,7 +32,15 @@ export function createFakeSupabase() {
   const buckets = new Set<string>(['profile-sources'])
   const table = (name: string) => (tables[name] ??= [])
 
-  function check(name: string, row: Row): string | null {
+  // NOT NULL columns without a default, as in Postgres.
+  const REQUIRED: Record<string, string[]> = { profiles: ['platform', 'rep_id', 'full_name'] }
+
+  function check(name: string, row: Row, isInsert = false): string | null {
+    if (isInsert) {
+      for (const col of REQUIRED[name] ?? []) {
+        if (row[col] === undefined || row[col] === null) return `null value in column "${col}" of relation "${name}" violates not-null constraint`
+      }
+    }
     for (const [col, allowed] of Object.entries(CHECKS[name] ?? {})) {
       if (row[col] !== undefined && !allowed.includes(String(row[col]))) return `new row for relation "${name}" violates check constraint "${name}_${col}_check"`
     }
@@ -68,7 +77,7 @@ export function createFakeSupabase() {
         result = []
         for (const p of list) {
           const row = { ...(DEFAULTS[this.name] ?? {}), id: id(), uploaded_at: new Date().toISOString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...p }
-          const bad = check(this.name, row)
+          const bad = check(this.name, row, true)
           if (bad) return { data: null, error: { message: bad } }
           rows.push(row)
           result.push(row)
