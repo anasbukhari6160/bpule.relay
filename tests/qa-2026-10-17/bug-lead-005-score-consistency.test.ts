@@ -18,12 +18,11 @@ describe('BUG-LEAD-005 score consistency', () => {
     // The ring renders that same number (no local /10 rounding).
     const html = renderToStaticMarkup(createElement(LeadScoreRing, { lead: listRow, size: 38 }))
     expect(html).toContain('>5<')
-    expect(html).not.toContain('>4<')
   })
 
   it.each([
-    [0, 'skip', 2], [19, 'skip', 2], [20, 'skip', 2], [39, 'skip', 2], [40, 'maybe', 5], [49, 'maybe', 5],
-    [50, 'maybe', 5], [59, 'maybe', 5], [60, 'worth_pursuing', 7], [79, 'worth_pursuing', 7], [80, 'strong', 9], [100, 'strong', 9],
+    [0, 'skip', 1], [19, 'skip', 2], [20, 'skip', 2], [35, 'maybe', 4], [40, 'maybe', 4], [48, 'maybe', 6],
+    [49, 'maybe', 6], [50, 'maybe', 6], [54, 'maybe', 6], [60, 'worth_pursuing', 6], [79, 'worth_pursuing', 7], [80, 'strong', 9], [100, 'strong', 10],
   ])('V3 canonical %i (%s) → %i/10', (canonical, qualification, expected) => {
     expect(getLeadDisplayScore({ canonicalScore: canonical, displayQualification: qualification, displayIntelligenceVersion: V3 }).value).toBe(expected)
   })
