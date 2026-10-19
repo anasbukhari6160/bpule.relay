@@ -62,6 +62,24 @@ const EMPLOYMENT_HIRING: RegExp[] = [
   /\bcontractors?\s+needed\b/i,
 ]
 
+// Historical hiring patterns — reject these as current hiring signals
+const HISTORICAL_HIRING_CTX = [
+  /\b(?:people\s+hired\s+(?:to|for|by)|hired\s+(?:people|folks|team|developers?)\s+(?:to|for))\b/i,
+  /\b(?:my\s+(?:team|crew|staff)\s+(?:has|includes|grew\s+to))\b/i,
+  /\b(?:previously\s+(?:hired|employed)|former\s+(?:team|employee|hire))\b/i,
+  /\b(?:experience\s+(?:of\s+|in\s+)?hiring|years?\s+(?:of\s+)?(?:hiring|recruiting))\b/i,
+  /\b(?:at\s+my\s+(?:previous|former)\s+(?:company|role|firm))\b/i,
+  /\b(?:headcount|team\s+size|grew\s+from|scaled\s+(?:the\s+)?team)\b/i,
+  /\b(?:people\s+hired\s+to\s+(?:protect|defend|maintain|support))\b/i,
+]
+
+function isHistoricalHiring(line: string): boolean {
+  return HISTORICAL_HIRING_CTX.some(re => {
+    re.lastIndex = 0
+    return re.test(line)
+  })
+}
+
 /**
  * Service offering patterns: a person/company offering their services to
  * others who might be hiring. "If you're hiring for X, let's connect" is a
@@ -139,7 +157,7 @@ export function classifyLine(line: string): LineClassification {
   if (JOB_SEEKING.test(line)) return 'job_seeking'
   if (RECRUITER_CTX.test(line)) return 'recruiter'
   if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return 'external_request'
-  if (EMPLOYMENT_HIRING.some((re) => firstAffirmedMatch(line, re))) return 'employment_hiring'
+    if (!isHistoricalHiring(line) && EMPLOYMENT_HIRING.some((re) => firstAffirmedMatch(line, re))) return 'employment_hiring'
   if (EMPLOYMENT_METADATA.test(line) && !HIRING_VERB.test(line)) return 'neutral'
   if (isExternalServiceLine(line)) return 'external_request'
   return 'neutral'
@@ -180,9 +198,27 @@ export function isEmploymentHiringOnly(rawText: string): boolean {
 
 const MONEY = /(?:[$€£]\s?\d[\d,.]*\s*(?:k|m|million|thousand)?|\b\d[\d,.]*\s*(?:k|m)?\s*(?:usd|eur|gbp|dollars)\b)/i
 
+// Historical budget markers — reject these as current buyer budget
+const HISTORICAL_BUDGET_CTX = [
+  /\b(?:back\s+in|when\s+I|years?\s+ago|previously|at\s+my\s+(?:previous|former)|in\s+\d{4}|from\s+\d{4})\b/i,
+  /\b(?:a\s+reasonable\s+budget|typically\s+budget|for\s+example\s+a\s+budget|as\s+an?\s+example)\b/i,
+  /\b(?:needed\s+to\s+build|budget\s+(?:was|had|required\s+for))\b/i,
+  /\b(?:if\s+you(?:|'ve)\s+gotten\s+a\s+budget|investing\s+in|spent\s+on)\b/i,
+]
+
 export function extractStatedBudget(rawText: string): StatedBudget | null {
   for (const line of lines(rawText)) {
     if (!/\b(?:budget|budgeted|funded|allocated|fixed\s+price|project\s+value)\b/i.test(line)) continue
+
+    // Reject historical/example budgets
+    if (HISTORICAL_BUDGET_CTX.some(re => {
+      re.lastIndex = 0
+      return re.test(line)
+    })) continue
+
+    // Reject product metrics (CPI, LTV, etc.)
+    if (/\b(?:cpi|ltv|roi|roas|arpu|cac|mrr|arr|revenue|profit|burn\s+rate|runway|churn)\b/i.test(line)) continue
+
     const money = line.match(MONEY)
     if (!money) continue
     return {

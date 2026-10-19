@@ -16,6 +16,7 @@
 
 import { detectCommercialRequest } from '@/lib/intelligence-v3/source-facts'
 import { detectFunding, parseHiringCount } from '@/lib/evidence/provenance'
+import { verifyBudgetProvenance, verifyHiringProvenance, classifyTemporalProvenance, isHistoricalYear } from '@/lib/scoring/signal-attribution'
 
 export interface ExtractedSignals {
   company: CompanySignals
@@ -203,18 +204,30 @@ function extractCompanySignals(text: string, lines: string[], lower: string): Co
   const sizeHints: string[] = []
   let sizeCategory: CompanySignals['sizeCategory'] = 'unknown'
 
+  // Customer segment vs company size: "Enterprise buyers" is NOT company size
   const sizePatterns: Array<{ pattern: RegExp; category: CompanySignals['sizeCategory']; hint: string }> = [
-    { pattern: /\b(10,000\+?|fortune 500|enterprise|global team of \d{3,})\b/i, category: 'enterprise', hint: 'Enterprise size' },
+    { pattern: /\b(10,000\+?|fortune\s+500|global\s+team\s+of\s+\d{3,})\b/i, category: 'enterprise', hint: 'Enterprise size' },
     { pattern: /\b(500-999|200-499|100-199|50-99)\b/i, category: 'mid', hint: 'Mid-size company' },
-    { pattern: /\b(10-49|20-50|small team|boutique|agency)\b/i, category: 'small', hint: 'Small company' },
-    { pattern: /\b(1-9|just me|solo|bootstrapped|early stage|pre-seed|stealth)\b/i, category: 'startup', hint: 'Startup' },
+    { pattern: /\b(10-49|20-50|small\s+team|boutique)\b/i, category: 'small', hint: 'Small company' },
+    { pattern: /\b(1-9|just\s+me|solo|bootstrapped|early\s+stage|pre[- ]seed|stealth)\b/i, category: 'startup', hint: 'Startup' },
   ]
-  for (const sp of sizePatterns) {
-    if (sp.pattern.test(text)) {
-      sizeCategory = sp.category
-      sizeHints.push(sp.hint)
-      break
+  for (const line of lines) {
+    // Skip lines where "enterprise" refers to customer segment, not company size
+    if (/\benterprise\s+(?:buyers|customers|clients|businesses|companies)\b/i.test(line)) {
+      continue
     }
+    // Skip lines where size refers to target market
+    if (/\b(?:target\s+(?:market|audience)|our\s+(?:customers|clients|buyers)\s+(?:are|include))\b/i.test(line)) {
+      continue
+    }
+    for (const sp of sizePatterns) {
+      if (sp.pattern.test(line)) {
+        sizeCategory = sp.category
+        sizeHints.push(sp.hint)
+        break
+      }
+    }
+    if (sizeCategory !== 'unknown') break
   }
 
   // A funding EVENT, not vocabulary like "million users" or "venture into".
@@ -252,6 +265,7 @@ function extractFundingStage(text: string): string | null {
 }
 
 function extractIndustry(text: string): string | null {
+  const textLines = text.split('\n').map(l => l.trim()).filter(Boolean)
   const industries: Array<{ pattern: RegExp; name: string }> = [
     { pattern: /\b(healthcare|health|medical|pharma|biotech|clinical)\b/i, name: 'healthcare' },
     { pattern: /\b(fintech|finance|banking|insurance|payments|trading)\b/i, name: 'fintech' },
@@ -262,6 +276,27 @@ function extractIndustry(text: string): string | null {
     { pattern: /\b(real estate|proptech|construction)\b/i, name: 'proptech' },
     { pattern: /\b(media|entertainment|gaming|streaming)\b/i, name: 'media' },
   ]
+
+  // Find the first industry match that belongs to the current organization
+  // (not a use-case example from another domain)
+  for (const line of textLines) {
+    const normalized = line.toLowerCase()
+    // Skip lines that are clearly use-case examples
+    if (/\b(?:for\s+example|such\s+as|like\s+how|use\s+case|helps?\s+(?:with|for)|imagine|consider)\b/i.test(normalized)) {
+      continue
+    }
+    // Prefer lines with ownership markers
+    const hasOwnership = /\b(?:we\s+(?:are|build|offer|provide|work\s+with)|our\s+(?:company|startup|platform|agency|firm))\b/i.test(normalized)
+      || /\b(?:co[- ]?founder|ceo|cto|cfo|vp|director)\s+(?:of|at)\b/i.test(normalized)
+
+    for (const ind of industries) {
+      if (ind.pattern.test(line)) {
+        if (hasOwnership) return ind.name
+      }
+    }
+  }
+
+  // Fallback: return first match if no ownership-scoped match found
   for (const ind of industries) {
     if (ind.pattern.test(text)) return ind.name
   }
@@ -325,20 +360,41 @@ function extractIntentSignals(text: string, lower: string): IntentSignals {
   // "Looking for an agency" is a vendor search, not hiring. Generic
   // looking-for wording only counts as hiring when no external provider is
   // being sought and nothing else says employment.
-  const hiring = commercial.employmentHiring !== null
+  // Hiring provenance: verify current, not historical/background
+  const rawHiringMatch = commercial.employmentHiring !== null
     || (commercial.externalServiceRequest === null && HIRING_PATTERNS.some((p) => p.test(text)))
+  const textLines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  const hiring = rawHiringMatch && textLines.some(line => {
+    if (!HIRING_PATTERNS.some(p => p.test(line)) && !commercial.employmentHiring) return false
+    const check = verifyHiringProvenance(line)
+    return check.valid
+  })
 
   let hiringUrgency: IntentSignals['hiringUrgency'] = 'none'
   if (HIRING_URGENCY[0].test(text)) hiringUrgency = 'immediate'
   else if (HIRING_URGENCY[1].test(text)) hiringUrgency = 'planned'
 
-  const launching = LAUNCH_PATTERNS.some((p) => p.test(text))
+  // Temporal guard: check if launch signals are current
+  const launchMatches = LAUNCH_PATTERNS.flatMap((p) => {
+    const m = text.match(p)
+    return m ? [m[0]] : []
+  }).filter(Boolean)
+  const launching = launchMatches.length > 0 && launchMatches.some(quote => {
+    const temporal = classifyTemporalProvenance(quote)
+    return temporal !== 'HISTORICAL' && !isHistoricalYear(quote)
+  })
   const launchedProduct = extractProductName(text)
 
   const jobPosting = /\b(job|role|position|hiring for|apply now|we're hiring)\b/i.test(text)
   const seekingVendor = commercial.externalServiceRequest !== null
     || (!hiring && /\b(looking for a|seeking a|need a vendor|need a partner|need a dev)\b/i.test(text))
-  const budgetMentioned = BUDGET_PATTERNS.some((p) => p.test(text))
+  // Budget provenance: verify current, not historical/example
+  const rawBudgetMatch = BUDGET_PATTERNS.some((p) => p.test(text))
+  const budgetMentioned = rawBudgetMatch && textLines.some(line => {
+    if (!BUDGET_PATTERNS.some(p => p.test(line))) return false
+    const check = verifyBudgetProvenance(line)
+    return check.valid
+  })
 
   const urgencyWords = URGENCY_WORDS.filter((w) => lower.includes(w))
 
