@@ -44,16 +44,29 @@ export async function POST(
     return NextResponse.json({ error: 'Batch not found.' }, { status: 404 })
   }
 
+  // Only pick up 'pending' sources. 'extracting' is set to prevent
+  // duplicate processing — if a source is stuck in 'extracting' (crashed
+  // process), the recovery below will reset it after a timeout.
   const { data: nextSource } = await client
     .from('profile_sources')
     .select('*')
     .eq('import_batch_id', batchId)
-    .in('extraction_status', ['pending', 'extracting'])
+    .eq('extraction_status', 'pending')
     .order('uploaded_at', { ascending: true })
     .limit(1)
     .single()
 
   if (!nextSource) {
+    // Recover sources stuck in 'extracting' (crashed process). If a source
+    // has been extracting for >5 minutes, reset to pending so it retries.
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    await client
+      .from('profile_sources')
+      .update({ extraction_status: 'pending', error_message: 'Reset: previous extraction timed out' })
+      .eq('import_batch_id', batchId)
+      .eq('extraction_status', 'extracting')
+      .lt('updated_at', fiveMinAgo)
+
     const { data: batchSources } = await client
       .from('profile_sources')
       .select('id, original_filename, parsing_status, extraction_status, error_message')
