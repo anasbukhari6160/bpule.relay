@@ -89,6 +89,7 @@ const SKILL_ALIASES: Record<string, string> = {
 }
 
 export function normalizeSkill(raw: string): string {
+  if (!raw || typeof raw !== 'string') return ''
   const lower = raw.toLowerCase().trim()
   if (SKILL_ALIASES[lower]) return SKILL_ALIASES[lower]
   return titleCase(raw.trim())
@@ -98,6 +99,7 @@ export function normalizeSkills(raw: string[]): string[] {
   const seen = new Set<string>()
   const result: string[] = []
   for (const s of raw) {
+    if (!s || typeof s !== 'string') continue
     const norm = normalizeSkill(s)
     const key = norm.toLowerCase()
     if (!seen.has(key) && norm.length > 1) {
@@ -109,9 +111,10 @@ export function normalizeSkills(raw: string[]): string[] {
 }
 
 export function mergeSkillLists(existing: string[], incoming: string[]): string[] {
-  const seen = new Set(existing.map((s) => s.toLowerCase()))
+  const seen = new Set(existing.filter((s) => typeof s === 'string').map((s) => s.toLowerCase()))
   const result = [...existing]
   for (const s of incoming) {
+    if (!s || typeof s !== 'string') continue
     const norm = normalizeSkill(s)
     if (!seen.has(norm.toLowerCase())) {
       seen.add(norm.toLowerCase())

@@ -149,6 +149,7 @@ function buildReasons(candidate: IdentityCandidate, profile: { fullName: string 
 }
 
 function normalizeName(name: string): string {
+  if (!name || typeof name !== 'string') return ''
   return name.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim()
 }
 
