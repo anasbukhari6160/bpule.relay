@@ -18,6 +18,10 @@ import { INTELLIGENCE_PIPELINE_VERSION, normalizeForHash } from '../intelligence
 
 export const V3_DECISION_PROMPT_VERSION = 'v3_decision_prompt_v2'
 
+// Attribution guard version — increment when signal attribution rules change
+// to invalidate cached decisions that used old attribution logic
+export const ATTRIBUTION_VERSION = 'v1'
+
 export interface V3ReuseKeyParams {
   rawText: string
   profileId?: string | null
@@ -34,6 +38,7 @@ export function buildV3ReuseKey(params: V3ReuseKeyParams): string {
   const preimage = [
     `v3_config:${V3_CONFIG_VERSION}`,
     `v3_prompt:${V3_DECISION_PROMPT_VERSION}`,
+    `attribution:${ATTRIBUTION_VERSION}`,
     `pipeline:${INTELLIGENCE_PIPELINE_VERSION}`,
     `profile:${profileId}`,
     `profile_ver:${profileVersion}`,

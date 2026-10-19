@@ -42,6 +42,13 @@ import {
   findLineMentioning,
   type StatedTimeline,
 } from '../source-facts'
+import {
+  classifyTemporalProvenance,
+  verifyBudgetProvenance,
+  verifyHiringProvenance,
+  auditSignal,
+  type AttributionAudit,
+} from '@/lib/scoring/signal-attribution'
 
 
 /** How soon a source-stated start/deadline is, as a 0-1 timing value. */
@@ -245,9 +252,24 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
 
   // Employer hiring, including a recruiter's own role, is not a vendor purchase.
   const capBuyer = isEmploymentHiringNotPurchase(rawText, episode)
+
+  // Attribution guard: verify model buyer signal against source facts.
+  // The model may over-report buyer intent; we only credit it when the
+  // source contains a verified external service request.
+  const buyerAudit = auditSignal({
+    signal: 'buyerRequest',
+    value: decision.buyerRequestProbability,
+    sourceQuote: facts.externalServiceRequest?.line ?? null,
+  })
+  const hasVerifiedBuyerRequest = buyerAudit.verified && facts.externalServiceRequest !== null
+
+  // Use verified signal: if model says buyer but no verified source, cap at weak
   const buyerRaw = capBuyer
     ? Math.min(decision.buyerRequestProbability, BUYER_CAP)
-    : decision.buyerRequestProbability
+    : hasVerifiedBuyerRequest
+      ? decision.buyerRequestProbability
+      : Math.min(decision.buyerRequestProbability, 0.35)
+
   dimensions.push({
     key: 'buyerRequest',
     label: 'Buyer Request',
@@ -257,20 +279,23 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
     group: 'model',
     note: capBuyer
       ? 'Recruitment activity detected; external-service buying need not verified.'
-      : buyerRaw >= 0.7
-        ? 'Explicit request to an external provider'
-        : buyerRaw >= 0.4
-          ? 'Moderate buyer signal'
-          : 'Weak or no buyer request',
+      : hasVerifiedBuyerRequest && buyerRaw >= 0.7
+        ? 'Explicit request to an external provider (verified)'
+        : hasVerifiedBuyerRequest
+          ? 'Moderate buyer signal (verified)'
+          : buyerRaw >= 0.7
+            ? 'Model detected — NOT verified against source'
+            : 'Weak or no buyer request',
     evidence: facts.externalServiceRequest
       ? quote(facts.externalServiceRequest.line)
       : capBuyer && facts.employmentHiring
         ? quote(facts.employmentHiring.line)
         : episodeQuotes.length > 0
           ? episodeQuotes.slice(0, 1).map((text) => ({ text, kind: 'quote' as const }))
-          : inference('Model judgement — no request line found in the source'),
+          : inference(buyerAudit.verified ? 'Model judgement — no request line found' : 'Model signal NOT verified — no matching source'),
   })
-  if (!capBuyer && buyerRaw >= 0.7) reasons.push('Explicit buyer request detected')
+  if (!capBuyer && hasVerifiedBuyerRequest && buyerRaw >= 0.7) reasons.push('Explicit buyer request detected (verified)')
+  if (!capBuyer && !hasVerifiedBuyerRequest && decision.buyerRequestProbability >= 0.7) reasons.push('Model detected possible buyer intent — NOT verified against source')
   if (capBuyer) reasons.push('Recruitment activity detected; external-service buying need not verified')
   if (buyerRaw < 0.3) watchOut.push(capBuyer
     ? 'Buying intent is unproven. Employee hiring is not a request to buy services. Research before treating this as a buyer.'
@@ -280,7 +305,19 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   // buyerIntent=UNKNOWN but commercialPotential=HIGH. A budget stated in the
   // source is direct evidence of commercial value and sets a floor.
   const assessedCp = computeCommercialPotentialScore(input.commercialPotential)
-  const budgetFloor = budget ? (budget.approved ? 0.6 : 0.5) : 0
+
+  // Attribution guard: verify budget against provenance rules
+  const budgetAudit = budget ? auditSignal({
+    signal: 'budget',
+    value: budget.amount,
+    sourceQuote: budget.line,
+  }) : null
+  const hasVerifiedBudget = budgetAudit?.verified === true
+
+  // Only apply budget floor if verified (current, org-specific, not historical/example)
+  const budgetFloor = hasVerifiedBudget && budget
+    ? (budget.approved ? 0.6 : 0.5)
+    : 0
   const cpRaw = Math.max(assessedCp, budgetFloor)
   dimensions.push({
     key: 'commercialPotential',
@@ -341,7 +378,21 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   })
   if (fitRaw >= 0.8) reasons.push('Strong capability fit')
 
-  const timingRaw = computeTimingScore(episode, decision, timeline)
+  // Attribution guard: verify model timing against source temporal evidence.
+  // Model may say URGENT based on building language, not actual buyer urgency.
+  const hasTimingEvidence = (timeline && timeline.days <= 30) || (episode.ageDays !== null && episode.ageDays <= 14)
+  const modelSaysUrgent = decision.timing === 'URGENT'
+  const modelSaysCurrent = decision.timing === 'CURRENT'
+
+  // If model says URGENT but no timing evidence exists, downgrade
+  const verifiedTiming = modelSaysUrgent && !hasTimingEvidence
+    ? 'WEAK' as const
+    : modelSaysCurrent && !hasTimingEvidence
+      ? 'WEAK' as const
+      : decision.timing
+
+  const timingInput = { ...decision, timing: verifiedTiming }
+  const timingRaw = computeTimingScore(episode, timingInput, timeline)
   dimensions.push({
     key: 'timing',
     label: 'Timing',
@@ -349,7 +400,9 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
     raw: timingRaw,
     weight: V3_SCORING_WEIGHTS.timing,
     group: 'model',
-    note: timingNote(episode, timeline),
+    note: modelSaysUrgent && !hasTimingEvidence
+      ? 'Model said urgent — NOT verified (no current timing evidence in source)'
+      : timingNote(episode, timeline),
     evidence: timeline
       ? quote(timeline.line)
       : episode.ageDays !== null
@@ -357,7 +410,8 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
         : inference('No post date or start date in the source'),
   })
   if (timeline && timeline.days <= 30) reasons.push(`Start stated: ${timeline.label}`)
-  else if (timingRaw >= 0.8) reasons.push('Current/recent opportunity')
+  else if (timingRaw >= 0.8 && hasTimingEvidence) reasons.push('Current/recent opportunity')
+  else if (modelSaysUrgent && !hasTimingEvidence) watchOut.push('Urgent timing claimed — NOT verified against source dates')
   if (timingRaw <= 0.3) watchOut.push('Event may be stale or expired')
 
   const accessRaw = ACCESS_SCORES[decision.access] ?? 0.3

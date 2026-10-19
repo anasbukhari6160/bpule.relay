@@ -6,7 +6,7 @@ import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
 import { V3_CANONICAL, V3_CONFIG_VERSION } from '@/lib/intelligence-v3/config'
 import { initializeV3 } from '@/lib/intelligence-v3/index'
 import { extractEventsFromSource } from './event-extractor'
-import { buildV3ReuseKey, buildV3ReuseCacheKey } from './decision-reuse'
+import { buildV3ReuseKey, buildV3ReuseCacheKey, ATTRIBUTION_VERSION } from './decision-reuse'
 import { cleanCompanyName } from '@/lib/leads/normalize'
 import { extractHiringOrganization, extractStatedLocation, isPlausibleCompanyName, looksLikeJobAd, separateRoleFromEmployer } from '@/lib/intelligence-v2/extraction-pipeline'
 import { deriveCommercialReading } from '@/lib/intelligence-v2/commercial-reading'
@@ -163,6 +163,7 @@ function v3PacketToCanonical(
     evidenceLedger: evidenceLedger.length > 0 ? evidenceLedger : v2Canonical.evidenceLedger,
     intelligenceRunId: packet.decisionRunId,
     intelligenceVersion: V3_CONFIG_VERSION,
+    attributionVersion: ATTRIBUTION_VERSION,
     computedAt: new Date().toISOString(),
     canonicalScore: packet.score,
     scoreVersion: packet.scoreVersion,

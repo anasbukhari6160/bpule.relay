@@ -296,9 +296,24 @@ function extractIndustry(text: string): string | null {
     }
   }
 
-  // Fallback: return first match if no ownership-scoped match found
-  for (const ind of industries) {
-    if (ind.pattern.test(text)) return ind.name
+  // Fallback: return first match from a non-historical, non-example line
+  for (const line of textLines) {
+    const normalized = line.toLowerCase()
+    // Skip use-case examples
+    if (/\b(?:for\s+example|such\s+as|like\s+how|use\s+case|helps?\s+(?:with|for)|imagine|consider)\b/i.test(normalized)) {
+      continue
+    }
+    // Skip historical context
+    if (/\b(?:back\s+in|when\s+I|previously|formerly|years?\s+ago|at\s+my\s+(?:previous|former)|in\s+\d{4}|from\s+\d{4})\b/i.test(normalized)) {
+      continue
+    }
+    // Skip past role descriptions
+    if (/\b(?:previously\s+spent|spent\s+\d+\s+years|before\s+moving|career\s+in|background\s+in|experience\s+in)\b/i.test(normalized)) {
+      continue
+    }
+    for (const ind of industries) {
+      if (ind.pattern.test(line)) return ind.name
+    }
   }
   return null
 }
@@ -375,13 +390,14 @@ function extractIntentSignals(text: string, lower: string): IntentSignals {
   else if (HIRING_URGENCY[1].test(text)) hiringUrgency = 'planned'
 
   // Temporal guard: check if launch signals are current
-  const launchMatches = LAUNCH_PATTERNS.flatMap((p) => {
-    const m = text.match(p)
-    return m ? [m[0]] : []
-  }).filter(Boolean)
-  const launching = launchMatches.length > 0 && launchMatches.some(quote => {
-    const temporal = classifyTemporalProvenance(quote)
-    return temporal !== 'HISTORICAL' && !isHistoricalYear(quote)
+  // Check each line for launch patterns, then verify temporal provenance
+  const launching = textLines.some(line => {
+    if (!LAUNCH_PATTERNS.some(p => {
+      p.lastIndex = 0
+      return p.test(line)
+    })) return false
+    const temporal = classifyTemporalProvenance(line)
+    return temporal !== 'HISTORICAL' && !isHistoricalYear(line)
   })
   const launchedProduct = extractProductName(text)
 
