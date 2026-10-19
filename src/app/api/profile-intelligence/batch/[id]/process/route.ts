@@ -75,11 +75,12 @@ export async function POST(
         .eq('id', batchId)
     }
 
-    // Include error details from failed sources so the frontend can show why.
-    const failedSources = batchSources?.filter((s) => ['failed', 'partial_failure'].includes(s.extraction_status)) ?? []
-    const errors = failedSources.map((s: Record<string, unknown>) => ({
+    // Include per-source status + error details so the frontend can show why.
+    const sourceDetails = (batchSources ?? []).map((s: Record<string, unknown>) => ({
       sourceId: s.id as string,
       filename: s.original_filename as string,
+      parsingStatus: s.parsing_status as string,
+      extractionStatus: s.extraction_status as string,
       error: s.error_message as string | null,
     }))
 
@@ -87,7 +88,8 @@ export async function POST(
       batch_id: batchId,
       done: true,
       status: finalStatus,
-      errors: errors.length > 0 ? errors : undefined,
+      sources: sourceDetails,
+      errors: sourceDetails.filter((s) => s.error).length > 0 ? sourceDetails.filter((s) => s.error) : undefined,
     })
   }
 
@@ -470,6 +472,13 @@ async function applyExtractionToProfiles(
           company: facts.company ?? null,
           profileUrl: null,
         })
+      } else {
+        // Profile creation failed — record why so the UI can show it.
+        await client
+          .from('profile_sources')
+          .update({ extraction_status: 'failed', error_message: `Profile creation failed for "${personName}". Check DB constraints.` })
+          .eq('id', sourceId)
+        throw new Error(`Profile creation failed for "${personName}"`)
       }
     }
   }

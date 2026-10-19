@@ -9,6 +9,7 @@ export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdm
   const [refreshKey, setRefreshKey] = useState(0)
   const [activeBatch, setActiveBatch] = useState<ProfileImportBatch | null>(null)
   const [processing, setProcessing] = useState(false)
+  const [batchErrors, setBatchErrors] = useState<Array<{ sourceId: string; filename: string; error: string | null }>>([])
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const stopPolling = useCallback(() => {
@@ -34,7 +35,8 @@ export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdm
           if (data.done || data.status === 'review_required' || data.status === 'partial_failure' || data.status === 'failed') {
             stopPolling()
             setProcessing(false)
-            setActiveBatch(null)
+            setActiveBatch(data.batch ?? null)
+            setBatchErrors(data.errors ?? [])
             setRefreshKey((k) => k + 1)
           } else if (data.error) {
             console.warn('[profile-intelligence] file error:', data.error)
@@ -123,6 +125,15 @@ export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdm
               <p className="text-[11px] text-[color:var(--console-mute)]">
                 Status: {activeBatch.status}
               </p>
+              {batchErrors && batchErrors.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {batchErrors.map((e) => (
+                    <p key={e.sourceId} className="text-[11px] text-status-danger">
+                      {e.filename}: {e.error}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
             <button
               onClick={() => { setActiveBatch(null); setRefreshKey((k) => k + 1) }}
