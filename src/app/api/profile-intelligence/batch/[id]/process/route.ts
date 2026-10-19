@@ -57,22 +57,32 @@ export async function POST(
     .single()
 
   if (!nextSource) {
-    // Recover sources stuck in 'extracting' (crashed process). If a source
-    // has been extracting for >5 minutes, reset to pending so it retries.
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-    await client
-      .from('profile_sources')
-      .update({ extraction_status: 'pending', error_message: 'Reset: previous extraction timed out' })
-      .eq('import_batch_id', batchId)
-      .eq('extraction_status', 'extracting')
-      .lt('updated_at', fiveMinAgo)
-
     const { data: batchSources } = await client
       .from('profile_sources')
       .select('id, original_filename, parsing_status, extraction_status, error_message')
       .eq('import_batch_id', batchId)
 
+    // If any source is still extracting, the batch is NOT done — keep polling.
+    const hasExtracting = batchSources?.some((s) => s.extraction_status === 'extracting')
     const allDone = batchSources?.every((s) => ['extracted', 'failed', 'unsupported', 'partial_failure'].includes(s.extraction_status))
+
+    // Recover sources stuck in 'extracting' (>5 min) by resetting to pending.
+    if (hasExtracting) {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+      await client
+        .from('profile_sources')
+        .update({ extraction_status: 'pending', error_message: 'Reset: previous extraction timed out' })
+        .eq('import_batch_id', batchId)
+        .eq('extraction_status', 'extracting')
+        .lt('updated_at', fiveMinAgo)
+
+      return NextResponse.json({
+        batch_id: batchId,
+        done: false,
+        status: 'extracting',
+        batch: batch,
+      })
+    }
 
     let finalStatus = batch.status
     if (allDone) {

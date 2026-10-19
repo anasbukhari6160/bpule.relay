@@ -32,7 +32,7 @@ export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdm
         .then((data) => {
           consecutiveErrors = 0
 
-          if (data.done || data.status === 'review_required' || data.status === 'partial_failure' || data.status === 'failed') {
+          if ((data.done && data.status !== 'uploaded' && data.status !== 'extracting') || data.status === 'review_required' || data.status === 'partial_failure' || data.status === 'failed') {
             stopPolling()
             setProcessing(false)
             setActiveBatch(data.batch ?? null)
