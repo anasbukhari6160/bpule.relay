@@ -810,6 +810,9 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
     async getRulebook() {
       return demoRulebook
     },
+    getSupabaseClient() {
+      throw new Error('Demo store does not support direct Supabase access')
+    },
     async createLead(input: NewLeadInput): Promise<CreateLeadResult> {
       const blocked = dedupe(input)
       if (blocked) return blocked

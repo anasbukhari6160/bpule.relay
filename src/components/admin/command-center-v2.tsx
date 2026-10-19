@@ -215,6 +215,9 @@ export function CommandCenterV2({ orgId }: { orgId: string }) {
               <OpportunitySection opportunities={data.opportunities} />
             )}
 
+            {/* Routing Opportunities */}
+            <RoutingOpportunitiesSection orgId={orgId} />
+
             {/* Navigation */}
             <OperateSection />
           </div>
@@ -851,6 +854,106 @@ function OpportunitySection({ opportunities }: { opportunities: OpportunityFeedI
   )
 }
 
+
+function RoutingOpportunitiesSection({ orgId }: { orgId: string }) {
+  const [data, setData] = useState<Array<{
+    leadId: string
+    company: string
+    score: number
+    currentSenderName: string | null
+    currentSenderMatch: number
+    bestSenderName: string | null
+    bestSenderMatch: number
+    mismatchDelta: number
+    reasons: string[]
+  }>>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/admin/routing-opportunities')
+      .then((r) => (r.ok ? r.json() : { opportunities: [] }))
+      .then((json) => { if (!cancelled) setData(json.opportunities ?? []) })
+      .catch(() => { if (!cancelled) setData([]) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [orgId])
+
+  if (loading) {
+    return (
+      <section className="rounded-lg border border-line bg-bone-raised p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Users className="size-4 text-cobalt" />
+          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Routing Opportunities</p>
+        </div>
+        <p className="text-[12px] text-stone">Computing...</p>
+      </section>
+    )
+  }
+
+  if (data.length === 0) null
+
+  return (
+    <section className="rounded-lg border border-cobalt/20 bg-cobalt/[0.02]">
+      <div className="flex items-center justify-between border-b border-line px-5 py-3">
+        <div className="flex items-center gap-2">
+          <Users className="size-4 text-cobalt" />
+          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">
+            Routing Opportunities · {data.length}
+          </p>
+        </div>
+      </div>
+      {data.length === 0 ? (
+        <p className="px-5 py-4 text-[12px] text-graphite">No sender mismatches detected. All leads are with their best sender.</p>
+      ) : (
+        <div className="divide-y divide-line/60">
+          {data.slice(0, 10).map((item, i) => (
+            <motion.div
+              key={item.leadId}
+              initial={{ opacity: 0, x: -4 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.04, duration: 0.2 }}
+              className="flex items-start gap-3 px-5 py-3"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/leads/${item.leadId}`}
+                    className="text-[13px] font-medium text-ink hover:underline truncate"
+                  >
+                    {item.company}
+                  </Link>
+                  <span className="text-[10px] text-stone">{item.score}/100</span>
+                </div>
+                <div className="mt-1 flex items-center gap-3 text-[11px]">
+                  <span className="text-graphite">
+                    Current: <span className="font-medium text-ink">{item.currentSenderName ?? '—'}</span> ({item.currentSenderMatch}%)
+                  </span>
+                  <span className="text-stone">→</span>
+                  <span className="text-status-success">
+                    Best: <span className="font-medium">{item.bestSenderName ?? '—'}</span> ({item.bestSenderMatch}%)
+                  </span>
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-700">
+                    +{item.mismatchDelta}%
+                  </span>
+                </div>
+                {item.reasons.length > 0 && (
+                  <p className="mt-0.5 text-[10px] text-graphite truncate">{item.reasons[0]}</p>
+                )}
+              </div>
+              <Link
+                href={`/leads/${item.leadId}`}
+                className="shrink-0 rounded-md border border-line px-2 py-1 text-[11px] text-graphite hover:border-ink/20 hover:text-ink transition-colors"
+              >
+                Review
+              </Link>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
 
 function OperateSection() {
   return (

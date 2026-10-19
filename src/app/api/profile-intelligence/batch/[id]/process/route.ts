@@ -59,12 +59,13 @@ export async function POST(
       .select('extraction_status')
       .eq('import_batch_id', batchId)
 
-    const allDone = batchSources?.every((s) => ['extracted', 'failed', 'unsupported'].includes(s.extraction_status))
+    const allDone = batchSources?.every((s) => ['extracted', 'failed', 'unsupported', 'partial_failure'].includes(s.extraction_status))
 
+    let finalStatus = batch.status
     if (allDone) {
-      const failedCount = batchSources?.filter((s) => s.extraction_status === 'failed').length ?? 0
+      const failedCount = batchSources?.filter((s) => ['failed', 'partial_failure'].includes(s.extraction_status)).length ?? 0
       const hasExtracted = batchSources?.some((s) => s.extraction_status === 'extracted')
-      const finalStatus = hasExtracted
+      finalStatus = hasExtracted
         ? (failedCount > 0 ? 'partial_failure' : 'review_required')
         : 'failed'
 
@@ -74,10 +75,19 @@ export async function POST(
         .eq('id', batchId)
     }
 
+    // Include error details from failed sources so the frontend can show why.
+    const failedSources = batchSources?.filter((s) => ['failed', 'partial_failure'].includes(s.extraction_status)) ?? []
+    const errors = failedSources.map((s: Record<string, unknown>) => ({
+      sourceId: s.id as string,
+      filename: s.original_filename as string,
+      error: s.error_message as string | null,
+    }))
+
     return NextResponse.json({
       batch_id: batchId,
       done: true,
-      status: batch.status,
+      status: finalStatus,
+      errors: errors.length > 0 ? errors : undefined,
     })
   }
 

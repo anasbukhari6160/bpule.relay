@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   ContentDraft,
   ContentDraftFeedback,
@@ -330,6 +331,8 @@ export interface FewShotWin {
 export interface ScoutStore {
   /** The organization this store is scoped to. */
   readonly organizationId: string
+  /** The underlying Supabase client — used for queries not covered by the store API. */
+  getSupabaseClient(): SupabaseClient
   /** The scoring rulebook for this organization. Loaded once per request. */
   getRulebook(): Promise<OrganizationRulebook | null>
   // leads

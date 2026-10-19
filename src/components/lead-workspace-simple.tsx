@@ -24,6 +24,7 @@ import { ScoreBreakdown } from '@/components/score-breakdown'
 import { DecisionExplainability } from '@/components/leads/decision-explain'
 import { DecisionTraceView } from '@/components/leads/decision-trace-view'
 import { buildDecisionTrace } from '@/lib/relay/decision-trace'
+import { LeadDecisionContextCard, type DecisionContext } from '@/components/lead-decision-context-card'
 
 type Mode = 'connection' | 'dm' | 'reply' | 'followup' | null
 
@@ -50,6 +51,22 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   const nextAction = deriveNextLeadAction(lead)
   const messages = lead.messages ?? []
   const lastInbound = messages.filter((m) => m.direction === 'inbound').at(0) ?? null
+  const [decisionCtx, setDecisionCtx] = useState<DecisionContext | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const res = await fetch(`/api/leads/${lead.id}/decision-context`)
+        if (res.ok && !cancelled) {
+          const json = await res.json()
+          setDecisionCtx(json as DecisionContext)
+        }
+      } catch { /* non-fatal */ }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [lead.id])
   const phase = relationshipState.phase
   const isTheirMove = relationshipState.kind === 'their_move' && phase !== 'replied'
   const isTerminal = relationshipState.kind === 'won' || relationshipState.kind === 'lost'
@@ -292,6 +309,22 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           </div>
         </div>
       </div>
+
+      {/* Decision Context: Sender Routing + Conversation Override */}
+      {!isTerminal && decisionCtx && (
+        <LeadDecisionContextCard
+          context={decisionCtx}
+          onRefer={(senderId) => {
+            window.location.href = `/api/leads/${lead.id}/refer?toProfileId=${senderId}&reason=sender+mismatch`
+          }}
+          onAskHelp={(senderId, helpType) => {
+            window.location.href = `/leads/${lead.id}?help=${helpType}&to=${senderId}`
+          }}
+          onKeepOwner={() => {
+            setDecisionCtx((prev => prev ? { ...prev, hasMismatch: false } : prev))
+          }}
+        />
+      )}
 
       {/* Lead Status Control */}
       {!isTerminal && (

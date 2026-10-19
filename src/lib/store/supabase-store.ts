@@ -435,6 +435,10 @@ export class SupabaseStore implements ScoutStore {
     return this.organization.id
   }
 
+  getSupabaseClient(): SupabaseClient {
+    return this.client
+  }
+
   private get orgId(): string {
     return this.organization.id
   }

@@ -197,8 +197,15 @@ export async function POST(request: Request) {
     })
     .eq('id', batchId)
 
+  // Return the updated batch so the frontend sees correct processed_files.
+  const { data: updatedBatch } = await client
+    .from('profile_import_batches')
+    .select('*')
+    .eq('id', batchId)
+    .single()
+
   return NextResponse.json({
-    batch,
+    batch: updatedBatch ?? batch,
     source_ids: sourceRecords.map((s) => s.id),
     processed,
     failed,

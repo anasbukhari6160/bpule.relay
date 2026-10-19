@@ -14,11 +14,11 @@ create unique index if not exists action_events_idempotency_key_uniq
 -- Backfill: generate idempotency keys for existing events based on stable fields
 -- This prevents duplicates when the same event is re-emitted
 update action_events
-set idempotency_key = concat(
-  organization_id, ':',
+  set idempotency_key = concat(
+  organization_id::text, ':',
   action_type, ':',
-  coalesce(lead_id, job_id, 'none'), ':',
-  coalesce(message_id, 'none'), ':',
+  coalesce(lead_id::text, job_id::text, 'none'), ':',
+  coalesce(message_id::text, 'none'), ':',
   coalesce(metadata->>'event', 'none')
 )
 where idempotency_key is null;
