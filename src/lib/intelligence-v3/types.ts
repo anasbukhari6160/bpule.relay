@@ -304,6 +304,18 @@ export interface V3LeadDecisionPacket {
   latentPotential: 'LOW' | 'MEDIUM' | 'HIGH' | null
   /** Signals detected in latent assessment */
   latentSignals: string[]
+  /**
+   * The canonical buyer decision. The only buyer-intent source for UI,
+   * strategy and downstream readers; `decision` buyer fields are projected
+   * from it.
+   */
+  buyerIntent?: import('./buyer-intent').VerifiedBuyerIntent
+  /** Current-organization context — past roles never feed it. */
+  orgContext?: {
+    currentIndustry: string | null
+    currentIndustryLine: string | null
+    currentProductActivity: boolean
+  }
 }
 
 export interface V3ShadowComparison {

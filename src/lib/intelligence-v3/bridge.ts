@@ -152,9 +152,14 @@ function v3PacketToCanonical(
     && rawInput.toLowerCase().includes(episodeOrg.toLowerCase())
     ? episodeOrg
     : null
-  const intelligence = companyFromEpisode
+  const baseIntelligence = companyFromEpisode
     ? { ...v2Canonical.intelligence, company: { ...v2Canonical.intelligence.company, name: companyFromEpisode } }
     : v2Canonical.intelligence
+  // Industry is the current organization's (packet.orgContext), never a past role's.
+  const currentIndustry = packet.orgContext?.currentIndustry ?? null
+  const intelligence = currentIndustry
+    ? { ...baseIntelligence, company: { ...baseIntelligence.company, industry: currentIndustry } }
+    : baseIntelligence
 
   return {
     ...v2Canonical,

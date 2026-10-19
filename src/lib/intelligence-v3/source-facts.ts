@@ -46,6 +46,16 @@ const REQUEST_CONTEXT =
 const DEVELOPER_REQUEST =
   /\b(?:looking\s+for|seeking|need(?:s|ed)?|want(?:s|ed)?\s+(?:to\s+)?(?:hire|work\s+with|engage))\s+(?:a\s+)?(?:developer|dev|engineer|programmer)\b/i
 
+/**
+ * Asking for an outside team or partner to deliver a project ("Looking for a
+ * remote team to help build our mobile wallet", "Help us build…", "We've
+ * tried agencies before…"). The purpose clause separates outsourcing a build
+ * from recruiting a teammate. This is the one request grammar — the V2
+ * commercial-reading patterns are claims checked against it.
+ */
+const PROJECT_TEAM_REQUEST =
+  /\b(?:looking\s+for|seeking|searching\s+for|need)\s+(?:a|an)\s+(?:[\w/.+-]+\s+){0,4}?(?:team|partner|squad|studio)\s+(?:to|who\s+can)\s+(?:help\s+(?:us\s+)?)?(?:build|develop|ship|design|create|rebuild|scale|launch|finish)\b|\bhelp\s+us\s+build\b|\b(?:we(?:'|’)?ve|we\s+have)\s+tried\s+(?:agencies|contractors|freelancers|vendors)\s+before\b/i
+
 /** Internal hiring context that overrides developer request classification. */
 const INTERNAL_HIRING_CONTEXT =
   /\b(?:join\s+(?:our|the|my)\s+(?:internal\s+)?(?:team|company|startup|firm|crew)|as\s+(?:a\s+)?(?:full[- ]time|permanent|in[- ]?house))\b/i
@@ -146,17 +156,61 @@ const RECRUITER_HEADER =
 const RECRUITER_CTX = /\b(?:for\s+(?:my|our|multiple)\s+clients?|at\s+(?:my|our|multiple)\s+clients?|(?:my|our)\s+clients?\s+(?:is|are|needs?|wants?))\b/i
 
 /**
- * Classify a single line of source text.
- * Priority: service_offering > customer_discovery > job_seeking > recruiter > external_request > employment_hiring
+ * Seller ownership: the line is the prospect's own organization offering or
+ * promoting what it sells ("We built…", "Our platform helps…", "Bring us the
+ * workflow", "Request services"). Seller-owned lines describe supply, never a
+ * request to buy, so they can raise commercial potential but not buyer intent.
+ * The single seller grammar for the codebase — buyer provenance and the
+ * buyer-intent resolver read it from here.
  */
-export type LineClassification = 'service_offering' | 'customer_discovery' | 'job_seeking' | 'recruiter' | 'external_request' | 'employment_hiring' | 'neutral'
+const SELLER_OWNERSHIP: RegExp[] = [
+  /\bwe(?:(?:'|’)ve)?\s+(?:built|build|offer|provide|help|deliver|specialize\s+in|evaluate|assess|automate|serve|work\s+with|partner\s+with)\b/i,
+  // Modal offers to the reader: "we can help you…", "we'll evaluate it…".
+  /\bwe(?:(?:'|’)ll|\s+can|\s+will|\s+could)\s+(?:help|offer|provide|deliver|evaluate|assess|audit|automate|handle|get\s+you|take\s+care)\b/i,
+  /\bour\s+(?:product|platform|tool|software|solution|service|team|agency|firm|practice)s?\s+(?:helps?|lets?|enables?|evaluates?|assesses?|automates?|gives?|delivers?|provides?|is\s+(?:used|trusted|built))\b/i,
+  /\bour\s+(?:services?|solutions?|offerings?|customers?|clients?)\b/i,
+  /\bbring\s+us\b/i,
+  /\b(?:try|book|request|get)\s+(?:a\s+|our\s+)?(?:product|demo|services?|free\s+trial|trial|consultation|assessment)\b/i,
+  /\bhire\s+(?:us|me|our\s+team)\b/i,
+  /\blet\s+(?:us|me)\s+(?:help|build|create|design|handle)\b/i,
+  /\bwe(?:'|’)?re\s+(?:an?\s+)?(?:agency|consultancy|dev\s+shop|studio)\b/i,
+  /\bworking\s+with\s+(?:\w+\s+){0,3}clients\b/i,
+  /\bclient\s+(?:work|projects?|engagements?)\b/i,
+]
+
+/** The prospect asking for something themselves — overrides a seller reading on the same line. */
+const FIRST_PERSON_REQUEST =
+  /\b(?:we(?:'|’)?re|we\s+are|i(?:'|’)?m|i\s+am|we|i)\s+(?:(?:currently|now|actively|urgently|also)\s+)?(?:looking\s+for|seeking|searching\s+for|need|hiring|want\s+to\s+(?:hire|engage|work\s+with))\b|^(?:looking\s+for|seeking|searching\s+for|need|hiring)\b/i
+
+export function isSellerOwnedLine(line: string): boolean {
+  return SELLER_OWNERSHIP.some((re) => re.test(line)) && !FIRST_PERSON_REQUEST.test(line)
+}
+
+export interface SellerOwnership {
+  isSeller: boolean
+  /** Verbatim seller-owned lines, in source order. */
+  lines: string[]
+}
+
+export function detectSellerOwnership(rawText: string): SellerOwnership {
+  const owned = lines(rawText).filter(isSellerOwnedLine)
+  return { isSeller: owned.length > 0, lines: owned }
+}
+
+/**
+ * Classify a single line of source text.
+ * Priority: service_offering > seller_offering > customer_discovery > job_seeking > recruiter > external_request > employment_hiring
+ */
+export type LineClassification = 'service_offering' | 'seller_offering' | 'customer_discovery' | 'job_seeking' | 'recruiter' | 'external_request' | 'employment_hiring' | 'neutral'
 
 export function classifyLine(line: string): LineClassification {
   if (SERVICE_OFFERING.test(line)) return 'service_offering'
+  if (isSellerOwnedLine(line)) return 'seller_offering'
   if (CUSTOMER_DISCOVERY.test(line)) return 'customer_discovery'
   if (JOB_SEEKING.test(line)) return 'job_seeking'
   if (RECRUITER_CTX.test(line)) return 'recruiter'
   if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return 'external_request'
+  if (PROJECT_TEAM_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return 'external_request'
     if (!isHistoricalHiring(line) && EMPLOYMENT_HIRING.some((re) => firstAffirmedMatch(line, re))) return 'employment_hiring'
   if (EMPLOYMENT_METADATA.test(line) && !HIRING_VERB.test(line)) return 'neutral'
   if (isExternalServiceLine(line)) return 'external_request'
@@ -177,6 +231,7 @@ export function detectCommercialRequest(rawText: string): CommercialRequestFacts
     const classification = classifyLine(line)
     if (classification === 'recruiter') continue
     if (classification === 'service_offering') continue
+    if (classification === 'seller_offering') continue
     if (classification === 'customer_discovery') continue
     if (classification === 'job_seeking') continue
     if (classification === 'external_request' && !external) external = line

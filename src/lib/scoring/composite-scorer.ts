@@ -1,6 +1,6 @@
 
-import { extractSignals, type ExtractedSignals } from './signal-extractor'
-import { verifyBuyerSignal, type SignalProvenance } from './buyer-provenance'
+import type { ExtractedSignals } from './signal-extractor'
+import { resolveBuyerIntentFromSource, type VerifiedBuyerIntent } from '@/lib/intelligence-v3/buyer-intent'
 
 export interface CompositeScoreInput {
   /** V3 AI decision (may be partial/uncertain) */
@@ -14,10 +14,13 @@ export interface CompositeScoreInput {
   proofScore?: number
   /** Sender capabilities for fit assessment */
   senderCapabilities?: string[]
-  /** Raw source text — required for buyer-signal provenance verification */
+  /** Raw source text — only used to resolve buyer intent when no canonical decision is passed */
   rawText?: string
-  /** Provenance per signal type — verified before contributing to buyer intent */
-  provenance?: Partial<Record<string, SignalProvenance>>
+  /**
+   * The canonical buyer decision (resolveVerifiedBuyerIntent). Buyer intent,
+   * hiring and budget credit come only from here — never from raw matches.
+   */
+  buyerIntent?: VerifiedBuyerIntent
 }
 
 export interface CompositeDimension {
@@ -110,43 +113,50 @@ export function computeCompositeScore(input: CompositeScoreInput): CompositeScor
 }
 
 
-function scoreBuyerIntent(input: CompositeScoreInput): CompositeDimension {
-  const { signals, aiBuyerProbability, rawText } = input
-  const evidence: string[] = []
-  const text = rawText ?? ''
-  const prov = input.provenance ?? {}
+const resolvedDecisions = new WeakMap<CompositeScoreInput, VerifiedBuyerIntent>()
 
-  // Provenance-aware: each signal must pass subject + ownership + event + time
-  const verifiedExplicit = prov.explicitAsk?.verifiedClaim
-    ?? (text ? verifyBuyerSignal({ signalType: 'explicitAsk', text, rawDetected: signals.intent.explicitAsk }).buyerIntentValid : false)
-  const verifiedHiring = prov.hiring?.verifiedClaim
-    ?? (text ? verifyBuyerSignal({ signalType: 'hiring', text, rawDetected: signals.intent.hiring }).buyerIntentValid : false)
-  const verifiedVendor = prov.seekingVendor?.verifiedClaim
-    ?? (text ? verifyBuyerSignal({ signalType: 'seekingVendor', text, rawDetected: signals.intent.seekingVendor }).buyerIntentValid : false)
-  const verifiedBudget = prov.budget?.verifiedClaim
-    ?? (text ? verifyBuyerSignal({ signalType: 'budget', text, rawDetected: signals.intent.budgetMentioned }).buyerIntentValid : false)
-  const verifiedAsking = prov.askingForHelp?.verifiedClaim
-    ?? (text ? verifyBuyerSignal({ signalType: 'askingForHelp', text, rawDetected: signals.intent.askingForHelp }).buyerIntentValid : false)
-  const verifiedLaunch = prov.launching?.verifiedClaim
-    ?? (text ? verifyBuyerSignal({ signalType: 'launching', text, rawDetected: signals.intent.launching }).buyerIntentValid : false)
-
-  let score = 0
-
-  if (aiBuyerProbability !== undefined) {
-    score = aiBuyerProbability * 100
-    if (aiBuyerProbability >= 0.7) evidence.push('AI: Strong buyer signal')
-    else if (aiBuyerProbability >= 0.4) evidence.push('AI: Moderate buyer signal')
+/** The canonical decision for this input; resolved once from source when the caller passed none. */
+function buyerDecision(input: CompositeScoreInput): VerifiedBuyerIntent {
+  if (input.buyerIntent) return input.buyerIntent
+  let resolved = resolvedDecisions.get(input)
+  if (!resolved) {
+    resolved = resolveBuyerIntentFromSource(input.rawText ?? '', {
+      modelBuyerProbability: input.aiBuyerProbability ?? null,
+      signalCheck: {
+        explicitAsk: input.signals.intent.explicitAsk,
+        seekingVendor: input.signals.intent.seekingVendor,
+        hiring: input.signals.intent.hiring,
+        budgetMentioned: input.signals.intent.budgetMentioned,
+      },
+    })
+    resolvedDecisions.set(input, resolved)
   }
+  return resolved
+}
 
-  if (verifiedExplicit) { score = Math.min(100, score + 25); evidence.push('Explicit buyer request (verified)') }
-  if (verifiedHiring && signals.intent.hiringUrgency === 'immediate') { score = Math.min(100, score + 20); evidence.push('Urgent hiring (verified)') }
-  else if (verifiedHiring) { score = Math.min(100, score + 10); evidence.push('Hiring (verified)') }
-  if (verifiedVendor) { score = Math.min(100, score + 15); evidence.push('Seeking vendor (verified)') }
-  if (verifiedBudget) { score = Math.min(100, score + 10); evidence.push('Budget stated (verified)') }
-  if (verifiedAsking) { score = Math.min(100, score + 12); evidence.push('Asking for help (verified)') }
-  if (verifiedLaunch) { score = Math.min(100, score + 8); evidence.push(`Launching (verified): ${signals.intent.launchedProduct ?? 'product'}`) }
+function scoreBuyerIntent(input: CompositeScoreInput): CompositeDimension {
+  const decision = buyerDecision(input)
+  const evidence: string[] = []
 
-  if (evidence.length === 0) evidence.push('No verified buyer signal')
+  // Starts from the canonical effective probability, never the raw model value.
+  let score = decision.effectiveBuyerProbability * 100
+  if (decision.buyerIntentLevel === 'HIGH') evidence.push('Strong buyer signal (verified)')
+  else if (decision.buyerIntentLevel === 'MEDIUM') evidence.push('Moderate buyer signal (verified)')
+
+  if (decision.verifiedBuyerRequest) { score += 40; evidence.push('Explicit buyer request (verified)') }
+  if (decision.askingForHelp) { score += 12; evidence.push('Asking for help (verified)') }
+  if (decision.verifiedHiringNeed) {
+    score += decision.hiringUrgent ? 20 : 10
+    evidence.push(decision.hiringUrgent ? 'Urgent hiring (verified)' : 'Hiring (verified)')
+  }
+  if (decision.verifiedBudget) { score += 10; evidence.push('Budget stated (verified)') }
+  // A real request from someone whose profile mostly sells services is a
+  // side episode, not their primary role.
+  if (decision.verifiedBuyerRequest && decision.sellerSideContent) { score -= 10; evidence.push('Also sells services — request is a side episode') }
+  score = Math.max(0, Math.min(100, score))
+
+  if (decision.contradictions.length > 0) evidence.push('Buyer signals disagree — intent unknown')
+  if (evidence.length === 0) evidence.push(decision.relationshipRole === 'SELLER' ? 'Seller-side content — no buyer request' : 'No verified buyer signal')
 
   return {
     key: 'buyerIntent',
@@ -155,19 +165,15 @@ function scoreBuyerIntent(input: CompositeScoreInput): CompositeDimension {
     weight: WEIGHTS.buyerIntent,
     weighted: Math.round(score * WEIGHTS.buyerIntent),
     evidence,
-    confidence: evidence.length >= 3 ? 'high' : evidence.length >= 1 ? 'medium' : 'low',
+    confidence: decision.confidence >= 0.75 ? 'high' : decision.confidence >= 0.5 ? 'medium' : 'low',
   }
 }
 
 function hiringIsVerified(input: CompositeScoreInput): boolean {
-  const { signals } = input
-  const rawDetected = signals.intent.hiring || signals.company.hiringCount > 0
-  if (!rawDetected) return false
-  const verified = input.provenance?.hiring?.verifiedClaim
-  if (verified !== undefined) return verified
-  // No source text to check against: keep the extractor's reading.
-  if (!input.rawText) return signals.intent.hiring
-  return verifyBuyerSignal({ signalType: 'hiring', text: input.rawText, rawDetected }).buyerIntentValid
+  // No source and no decision: nothing to verify against, so the company
+  // row keeps the extractor's own reading. Buyer intent never uses this.
+  if (!input.buyerIntent && !input.rawText) return input.signals.intent.hiring || input.signals.company.hiringCount > 0
+  return buyerDecision(input).verifiedHiringNeed
 }
 
 function scoreCompanyQuality(input: CompositeScoreInput): CompositeDimension {
@@ -507,11 +513,10 @@ function scoreCompetitiveGap(input: CompositeScoreInput): CompositeDimension {
   const evidence: string[] = []
   let score = 30
 
-  // Only award competitive-gap points when the vendor signal is verified
-  const verifiedVendor = input.provenance?.seekingVendor?.verifiedClaim ?? false
-  if (verifiedVendor || signals.intent.seekingVendor) {
+  // Only the canonical decision can say the prospect is seeking a vendor.
+  if (buyerDecision(input).verifiedExternalNeed) {
     score += 30
-    evidence.push(verifiedVendor ? 'Actively seeking vendor (verified)' : 'Possible vendor search (unverified)')
+    evidence.push('Actively seeking vendor (verified)')
   }
   if (signals.technology.stackComplexity === 'complex') {
     score += 15

@@ -15,6 +15,7 @@
  */
 
 import { detectCommercialRequest } from '@/lib/intelligence-v3/source-facts'
+import { resolveCurrentIndustry } from '@/lib/intelligence-v3/current-org'
 import { detectFunding, parseHiringCount } from '@/lib/evidence/provenance'
 import { verifyBudgetProvenance, verifyHiringProvenance, classifyTemporalProvenance, isHistoricalYear } from '@/lib/scoring/signal-attribution'
 
@@ -264,58 +265,12 @@ function extractFundingStage(text: string): string | null {
   return null
 }
 
+/**
+ * Industry of the prospect's CURRENT organization. Delegates to the single
+ * current-org resolver, which never lets a past role's industry stand in.
+ */
 function extractIndustry(text: string): string | null {
-  const textLines = text.split('\n').map(l => l.trim()).filter(Boolean)
-  const industries: Array<{ pattern: RegExp; name: string }> = [
-    { pattern: /\b(healthcare|health|medical|pharma|biotech|clinical)\b/i, name: 'healthcare' },
-    { pattern: /\b(fintech|finance|banking|insurance|payments|trading)\b/i, name: 'fintech' },
-    { pattern: /\b(cybersecurity|security|infosec)\b/i, name: 'cybersecurity' },
-    { pattern: /\b(edtech|education|e-learning|training)\b/i, name: 'edtech' },
-    { pattern: /\b(logistics|supply chain|shipping|freight|transportation)\b/i, name: 'logistics' },
-    { pattern: /\b(ecommerce|e-commerce|retail|dtc|shopify)\b/i, name: 'ecommerce' },
-    { pattern: /\b(real estate|proptech|construction)\b/i, name: 'proptech' },
-    { pattern: /\b(media|entertainment|gaming|streaming)\b/i, name: 'media' },
-  ]
-
-  // Find the first industry match that belongs to the current organization
-  // (not a use-case example from another domain)
-  for (const line of textLines) {
-    const normalized = line.toLowerCase()
-    // Skip lines that are clearly use-case examples
-    if (/\b(?:for\s+example|such\s+as|like\s+how|use\s+case|helps?\s+(?:with|for)|imagine|consider)\b/i.test(normalized)) {
-      continue
-    }
-    // Prefer lines with ownership markers
-    const hasOwnership = /\b(?:we\s+(?:are|build|offer|provide|work\s+with)|our\s+(?:company|startup|platform|agency|firm))\b/i.test(normalized)
-      || /\b(?:co[- ]?founder|ceo|cto|cfo|vp|director)\s+(?:of|at)\b/i.test(normalized)
-
-    for (const ind of industries) {
-      if (ind.pattern.test(line)) {
-        if (hasOwnership) return ind.name
-      }
-    }
-  }
-
-  // Fallback: return first match from a non-historical, non-example line
-  for (const line of textLines) {
-    const normalized = line.toLowerCase()
-    // Skip use-case examples
-    if (/\b(?:for\s+example|such\s+as|like\s+how|use\s+case|helps?\s+(?:with|for)|imagine|consider)\b/i.test(normalized)) {
-      continue
-    }
-    // Skip historical context
-    if (/\b(?:back\s+in|when\s+I|previously|formerly|years?\s+ago|at\s+my\s+(?:previous|former)|in\s+\d{4}|from\s+\d{4})\b/i.test(normalized)) {
-      continue
-    }
-    // Skip past role descriptions
-    if (/\b(?:previously\s+spent|spent\s+\d+\s+years|before\s+moving|career\s+in|background\s+in|experience\s+in)\b/i.test(normalized)) {
-      continue
-    }
-    for (const ind of industries) {
-      if (ind.pattern.test(line)) return ind.name
-    }
-  }
-  return null
+  return resolveCurrentIndustry(text)?.industry ?? null
 }
 
 

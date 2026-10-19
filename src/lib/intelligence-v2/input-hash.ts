@@ -48,6 +48,7 @@
 
 import { createHash } from 'node:crypto'
 import { SCORE_VERSION } from './scoring-engine'
+import { BUYER_INTENT_VERSION } from '@/lib/intelligence-v3/buyer-intent'
 
 /**
  * Bumps whenever Pass A/B/C extraction logic, prompts, or schemas change in
@@ -56,7 +57,9 @@ import { SCORE_VERSION } from './scoring-engine'
  * version number, or historical reuse will incorrectly serve pre-change
  * results as if they reflected current logic.
  */
-export const INTELLIGENCE_PIPELINE_VERSION = 'intelligence_pipeline_v1'
+// Buyer-intent rules feed the commercial reading, so a buyer-intent bump
+// must invalidate reused V2 results too.
+export const INTELLIGENCE_PIPELINE_VERSION = `intelligence_pipeline_v1+${BUYER_INTENT_VERSION}`
 
 /**
  * Conservative whitespace-only normalization. Deliberately does NOT lowercase,

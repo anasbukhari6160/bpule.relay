@@ -1,4 +1,5 @@
 import { extractStatedTimeline } from '@/lib/intelligence-v3/source-facts'
+import { resolveBuyerIntentFromSource } from '@/lib/intelligence-v3/buyer-intent'
 import type { OpportunitySignal } from './types'
 
 export type ServiceBuyerIntent = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
@@ -102,7 +103,16 @@ const BUYER_ONLY_SIGNALS: OpportunitySignal[] = [
 // absence of buyer-request evidence says nothing about them, since they
 
 export function deriveCommercialReading(rawText: string): CommercialReading {
-  const buyerEvidenceKinds = BUYER_PATTERNS.filter((p) => p.re.test(rawText)).map((p) => p.kind)
+  // The pattern matches are only claims. The canonical buyer decision says
+  // which of them the source actually supports; nothing else is kept.
+  const claimedKinds = BUYER_PATTERNS.filter((p) => p.re.test(rawText)).map((p) => p.kind)
+  const claimsRequest = claimedKinds.some((k) => k === 'BUYER_REQUEST' || k === 'PARTNER_REQUEST' || k === 'PROCUREMENT_SIGNAL' || k === 'CAPACITY_REQUEST')
+  const intent = resolveBuyerIntentFromSource(rawText, {
+    signalCheck: { explicitAsk: claimsRequest, seekingVendor: claimsRequest, hiring: claimedKinds.includes('HIRING_SIGNAL') },
+  })
+  const buyerEvidenceKinds = [...new Set(claimedKinds.filter((k) =>
+    k === 'HIRING_SIGNAL' ? intent.verifiedHiringNeed : intent.verifiedBuyerRequest,
+  ))]
   const hasBuyer = buyerEvidenceKinds.length > 0
   const productMomentum = PRODUCT_MOMENTUM.test(rawText) ? 'HIGH' : 'NONE'
   const customerDiscovery = CUSTOMER_DISCOVERY.test(rawText) ? 'SUPPORTED' : 'NONE'
@@ -129,20 +139,15 @@ export function deriveCommercialReading(rawText: string): CommercialReading {
     }
   }
 
-  let serviceBuyerIntent: ServiceBuyerIntent = 'UNKNOWN'
-  // HIRING_SIGNAL is NOT a strong buyer evidence — it means hiring for own team.
-  // Only BUYER_REQUEST and PARTNER_REQUEST indicate real outside-help intent.
-  if (hasBuyer && (buyerEvidenceKinds.includes('BUYER_REQUEST') || buyerEvidenceKinds.includes('PARTNER_REQUEST'))) {
-    serviceBuyerIntent = 'HIGH'
-  } else if (hasBuyer && buyerEvidenceKinds.includes('HIRING_SIGNAL')) {
-    serviceBuyerIntent = 'LOW'
-  } else if (hasBuyer) {
-    serviceBuyerIntent = 'MEDIUM'
-  }
+  // Level comes from the canonical decision only. Employee hiring alone is
+  // LOW (hiring for their own team is not buying outside help).
+  const serviceBuyerIntent: ServiceBuyerIntent = intent.buyerIntentLevel !== 'UNKNOWN'
+    ? intent.buyerIntentLevel
+    : intent.verifiedHiringNeed ? 'LOW' : 'UNKNOWN'
 
   return recruiterHiringIsNotAPurchase(rawText, enforceBuyerIntentBoundary({
     serviceBuyerIntent,
-    externalEngineeringNeed: hasBuyer ? 'EXPLICIT' : 'NONE_DETECTED',
+    externalEngineeringNeed: intent.verifiedExternalNeed ? 'EXPLICIT' : 'NONE_DETECTED',
     immediateBuyerNeed,
     buyerTiming,
     productMomentum,

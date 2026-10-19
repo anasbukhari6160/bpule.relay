@@ -26,6 +26,8 @@ import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
+import { resolveBuyerIntentFromSource, BUYER_INTENT_VERSION, type VerifiedBuyerIntent } from '@/lib/intelligence-v3/buyer-intent'
+import { resolveCurrentOrgContext } from '@/lib/intelligence-v3/current-org'
 import { resolveTimezoneFromLocation } from '@/lib/timezone/resolve'
 import {
   applyRevenueStrategyToOutreach,
@@ -101,7 +103,7 @@ const analyzeCache = new Map<string, { data: Record<string, unknown>; ts: number
 const CACHE_TTL_MS = 5 * 60 * 1000
 
 function cacheKey(rawText: string, profileId: string | null, generateNote: boolean = false): string {
-  return `${rawText.slice(0, 200).toLowerCase().replace(/\s+/g, ' ').trim()}:${rawText.length}:${profileId ?? ''}:${generateNote ? 'note' : 'analyze'}`
+  return `${BUYER_INTENT_VERSION}:${rawText.slice(0, 200).toLowerCase().replace(/\s+/g, ' ').trim()}:${rawText.length}:${profileId ?? ''}:${generateNote ? 'note' : 'analyze'}`
 }
 
 // Periodic cache cleanup to prevent memory leaks
@@ -295,6 +297,16 @@ export async function POST(request: Request) {
 
     const canonical = canonicalResult.intelligence
     const v3Packet = (canonical as CanonicalProspectIntelligence & { v3DecisionPacket?: unknown }).v3DecisionPacket ?? null
+    // Current-organization context: the industry is the CURRENT company's,
+    // never a past role's — it replaces whatever extraction stored.
+    const packetOrg = (v3Packet as V3LeadDecisionPacket | null)?.orgContext
+    const orgContext = packetOrg ?? (() => {
+      const c = resolveCurrentOrgContext(rawText)
+      return { currentIndustry: c.currentIndustry, currentIndustryLine: c.currentIndustryLine, currentProductActivity: c.currentProductActivity }
+    })()
+    if (orgContext.currentIndustry) {
+      canonical.intelligence.company = { ...canonical.intelligence.company, industry: orgContext.currentIndustry }
+    }
     const extracted: ExtractedLead = {
       name: canonical.intelligence.person.fullName,
       title: canonical.intelligence.person.title,
@@ -328,6 +340,12 @@ export async function POST(request: Request) {
     const revenue = buildRevenueStrategy(sourceFromCanonical(canonical, { channel: 'connection' }))
     const loop = toUiSnapshot(revenue)
 
+    // The ONE buyer decision. V3 packets carry it; the V2 path resolves it
+    // from source the same way. The UI's intent comes from here only.
+    const buyerIntent: VerifiedBuyerIntent = (v3Packet as V3LeadDecisionPacket | null)?.buyerIntent
+      ?? resolveBuyerIntentFromSource(rawText)
+    ;(loop as { intent: string }).intent = buyerIntent.buyerIntentLevel
+
     const v3Action = v3Packet ? (v3Packet as { action: string }).action : null
     const v3MessageEligible = v3Packet ? (v3Packet as { messageEligible: boolean }).messageEligible : null
 
@@ -337,13 +355,11 @@ export async function POST(request: Request) {
       // notes to founders/builders (high commercial potential, no explicit
       // buyer request). The revenue strategy has channel context that V3 lacks.
       const v3Fit = (v3Packet as { decision?: { fit?: string } })?.decision?.fit || 'MEDIUM'
-      const v3Intent = (v3Packet as { decision?: { buyerRequestProbability?: number } })?.decision?.buyerRequestProbability || 0
       const v3Confidence = (v3Packet as { confidence?: number })?.confidence || 0.5
       const isConnectionNote = revenue.messagingPolicy === 'CONNECT_WITH_NOTE'
         || (revenue.contact.action === 'CONNECT_OR_OBSERVE' && revenue.contact.messageRecommended)
 
       ;(loop as { fit: string }).fit = v3Fit
-      ;(loop as { intent: string }).intent = v3Intent > 0.4 ? 'HIGH' : v3Intent > 0.2 ? 'MEDIUM' : 'UNKNOWN'
       ;(loop as { confidence: string }).confidence = v3Confidence > 0.6 ? 'HIGH' : v3Confidence > 0.3 ? 'MEDIUM' : 'LOW'
 
       // V3 lacks channel context, so its OBSERVE action shouldn't block
@@ -362,8 +378,7 @@ export async function POST(request: Request) {
       // draft route does not throw STRATEGY_REQUIRED when V3 says "eligible".
       if (v3MessageEligible === true) {
         const v3Channel = 'connection'
-        const v3HasHiring = (v3Packet as { reasons?: string[] })?.reasons?.some((r: string) => /hiring|urgently/i.test(r)) ?? false
-        if (v3HasHiring) {
+        if (buyerIntent.verifiedHiringNeed) {
           ;(loop as { messageJob: string }).messageJob = 'TEST_DELIVERY_MODEL'
         } else {
           ;(loop as { messageJob: string }).messageJob = 'EARN_CONNECTION'
@@ -464,6 +479,8 @@ export async function POST(request: Request) {
           missingInfo: canonical.scoreBreakdown.missingInfo,
           ...scoreTrace(canonical),
         },
+        buyerIntent,
+        orgContext,
         remoteEligibility: canonical.remoteEligibility,
         evidenceLedger: canonical.evidenceLedger,
         sources: {
@@ -951,6 +968,8 @@ export async function POST(request: Request) {
         missingInfo: canonical.scoreBreakdown.missingInfo,
         ...scoreTrace(canonical),
       },
+      buyerIntent,
+      orgContext,
       remoteEligibility: canonical.remoteEligibility,
       evidenceLedger: canonical.evidenceLedger,
       sources: {

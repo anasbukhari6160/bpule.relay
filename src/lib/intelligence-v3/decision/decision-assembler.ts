@@ -33,6 +33,9 @@ import {
   latentActionFromPotential,
 } from '../latent-opportunity'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
+import { readBuyerSourceFacts, resolveVerifiedBuyerIntent, type VerifiedBuyerIntent } from '../buyer-intent'
+import { resolveCurrentOrgContext } from '../current-org'
+import { extractSignals } from '@/lib/scoring/signal-extractor'
 
 // Defined before use to avoid hoisting issues with Next.js build checker.
 
@@ -113,14 +116,39 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     rawText,
   } = input
 
-  const decidedEpisode = input.decidedEpisodeId
+  const rawDecidedEpisode = input.decidedEpisodeId
     ? episodes.find((e) => e.id === input.decidedEpisodeId) ?? null
     : null
-  const { decision, adjustments: decisionAdjustments } = guardBoundedDecision(
+  const { decision: guarded, adjustments: decisionAdjustments } = guardBoundedDecision(
     buildBoundedDecision(providerResult),
     rawText,
-    decidedEpisode,
+    rawDecidedEpisode,
   )
+
+  // ONE buyer decision for the whole packet. The model's and the signal
+  // check's claims go in as an audit; what comes out is the only buyer
+  // intent any scorer, action rule or surface may read.
+  const signals = rawText && rawText.length > 50 ? extractSignals(rawText) : null
+  const buyerIntent = resolveVerifiedBuyerIntent(readBuyerSourceFacts(rawText ?? ''), {
+    modelBuyerProbability: guarded.buyerRequestProbability,
+    modelExternalNeedProbability: guarded.externalNeedProbability,
+    modelRelationship: guarded.relationship,
+    signalCheck: signals ? {
+      explicitAsk: signals.intent.explicitAsk,
+      seekingVendor: signals.intent.seekingVendor,
+      hiring: signals.intent.hiring,
+      budgetMentioned: signals.intent.budgetMentioned,
+    } : null,
+  })
+  const decision = projectBuyerIntent(guarded, buyerIntent, decisionAdjustments)
+  const orgContext = resolveCurrentOrgContext(rawText ?? '')
+  // An episode is only an explicit request when the canonical decision verified one.
+  const projectedEpisodes = episodes.map((e) =>
+    e.explicitRequest && !buyerIntent.verifiedBuyerRequest ? { ...e, explicitRequest: false } : e,
+  )
+  const decidedEpisode = rawDecidedEpisode
+    ? projectedEpisodes.find((e) => e.id === rawDecidedEpisode.id) ?? null
+    : null
   const quotesFor = (episode: V3OpportunityEpisode) => verbatimEpisodeQuotes(episode, graph, rawText)
 
   // Assess commercial potential once (deterministic, no AI call)
@@ -134,13 +162,14 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
   let bestEpisode: V3OpportunityEpisode | null = null
   let bestScore = -1
 
-  for (const episode of episodes) {
+  for (const episode of projectedEpisodes) {
     const scoreInput: V3ScoreInput = {
       episode,
       decision,
       proofRelevance: proofRelevanceMap[episode.id] ?? estimateProofRelevance(episode, senderCapabilities),
       evidenceQuality: evidenceQualityMap[episode.id] ?? estimateEvidenceQuality(episode, graph),
       rawText,
+      buyerIntent,
       episodeQuotes: quotesFor(episode),
       commercialPotential: episode.organizationName && commercialPotential
         ? scopeCommercialPotentialToOrg(commercialPotential, episode.organizationName, graph)
@@ -162,9 +191,9 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     bestScore = episodeScores.find((e) => e.episodeId === decidedEpisode.id)?.score ?? 0
   }
 
-  if (!bestEpisode && episodes.length > 0) {
-    const open = episodes.filter((e) => e.status !== 'CLOSED')
-    const fallback = open.length > 0 ? open[0] : episodes[0]
+  if (!bestEpisode && projectedEpisodes.length > 0) {
+    const open = projectedEpisodes.filter((e) => e.status !== 'CLOSED')
+    const fallback = open.length > 0 ? open[0] : projectedEpisodes[0]
     bestEpisode = fallback
     bestScore = episodeScores.find((e) => e.episodeId === fallback.id)?.score ?? 0
   }
@@ -177,6 +206,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
         proofRelevance: proofRelevanceMap[bestEpisode.id] ?? estimateProofRelevance(bestEpisode, senderCapabilities),
         evidenceQuality: evidenceQualityMap[bestEpisode.id] ?? estimateEvidenceQuality(bestEpisode, graph),
         rawText,
+        buyerIntent,
         senderCapabilities,
         episodeQuotes: quotesFor(bestEpisode),
         commercialPotential: bestEpisode.organizationName && commercialPotential
@@ -204,7 +234,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
         relationship: decision.relationship,
         fit: decision.fit,
         messageEligible: decision.messageEligible,
-        explicitRequest: bestEpisode.explicitRequest,
+        explicitRequest: buyerIntent.buyerIntentLevel === 'HIGH',
         status: bestEpisode.status,
         confidence: providerResult.confidence,
         evidenceQuality: proofRelevanceMap[bestEpisode.id] ?? estimateProofRelevance(bestEpisode, senderCapabilities),
@@ -221,7 +251,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     !['OTHER', 'SERVICE_OFFERING', 'MARKET_COMMENTARY'].includes(bestEpisode.anchorEvent.eventType)
   )
 
-  const allClosed = episodes.length > 0 && episodes.every((e) => e.status === 'CLOSED')
+  const allClosed = projectedEpisodes.length > 0 && projectedEpisodes.every((e) => e.status === 'CLOSED')
   let latentAssessment = null
   if (!hasMeaningfulEpisode && commercialPotential && !allClosed) {
     latentAssessment = await assessLatentOpportunity(input.v2Canonical!, input.rawText)
@@ -276,7 +306,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     : null
 
   // Confidence
-  const confidence = computeOverallConfidence(decision, bestEpisode, providerResult)
+  const confidence = Math.round(computeOverallConfidence(decision, bestEpisode, providerResult) * (buyerIntent.contradictions.length > 0 ? 0.7 : 1) * 100) / 100
 
   // Collect evidence refs
   const evidenceRefs = bestEpisode?.evidenceRefs ?? []
@@ -285,7 +315,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     version: 'relay_decision_v3',
     decisionRunId: generateDecisionRunId(),
     selectedEpisodeId: bestEpisode?.id ?? null,
-    episodes,
+    episodes: projectedEpisodes,
     decision,
     score: selectedScore.score,
     scoreVersion: V3_CONFIG_VERSION,
@@ -307,6 +337,12 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     shadowComparison,
     latentPotential: latentAssessment?.overallPotential ?? null,
     latentSignals: latentAssessment?.signals ?? [],
+    buyerIntent,
+    orgContext: {
+      currentIndustry: orgContext.currentIndustry,
+      currentIndustryLine: orgContext.currentIndustryLine,
+      currentProductActivity: orgContext.currentProductActivity,
+    },
   }
 
   return {
@@ -332,6 +368,35 @@ function latentCalculation(score: number, detail: string): NonNullable<V3ScoreOu
 }
 
 const BUYER_CAP = 0.2
+
+/**
+ * Write the canonical buyer decision into the bounded decision, so every
+ * reader of `packet.decision` (action policy, routing, decision context,
+ * signal watch, inbound) sees one buyer truth. Each change and each scorer
+ * contradiction is recorded for the debug trace.
+ */
+export function projectBuyerIntent(
+  decision: V3BoundedDecision,
+  intent: VerifiedBuyerIntent,
+  adjustments: string[],
+): V3BoundedDecision {
+  const next = { ...decision }
+  if (Math.abs(next.buyerRequestProbability - intent.effectiveBuyerProbability) > 0.005) {
+    adjustments.push(`Buyer request ${next.buyerRequestProbability.toFixed(2)} → ${intent.effectiveBuyerProbability.toFixed(2)}: canonical buyer decision (${intent.buyerIntentLevel}${intent.verifiedBuyerRequest ? ', verified request' : ', no verified request'}).`)
+    next.buyerRequestProbability = intent.effectiveBuyerProbability
+  }
+  if (Math.abs(next.externalNeedProbability - intent.effectiveExternalNeedProbability) > 0.005) {
+    adjustments.push(`External need ${next.externalNeedProbability.toFixed(2)} → ${intent.effectiveExternalNeedProbability.toFixed(2)}: ${intent.verifiedExternalNeed ? 'verified request for outside help' : 'no verified request for outside help'}.`)
+    next.externalNeedProbability = intent.effectiveExternalNeedProbability
+  }
+  if (next.relationship === 'BUYER' && !intent.verifiedBuyerRequest) {
+    const role = intent.relationshipRole === 'SELLER' ? 'SERVICE_PROVIDER' : intent.relationshipRole === 'CANDIDATE' ? 'CANDIDATE' : 'UNKNOWN'
+    adjustments.push(`Relationship BUYER → ${role}: no verified request to buy${intent.relationshipRole === 'SELLER' ? '; the source is seller-side promotion' : ''}.`)
+    next.relationship = role
+  }
+  for (const c of intent.contradictions) adjustments.push(`Contradiction: ${c} Buyer intent → UNKNOWN.`)
+  return next
+}
 
 /**
  * Deterministic guards on the model's bounded answers. The model is a

@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto'
 import { V3_CONFIG_VERSION } from './config'
 import { INTELLIGENCE_PIPELINE_VERSION, normalizeForHash } from '../intelligence-v2/input-hash'
+import { BUYER_INTENT_VERSION } from './buyer-intent'
 
 export const V3_DECISION_PROMPT_VERSION = 'v3_decision_prompt_v2'
 
@@ -39,6 +40,7 @@ export function buildV3ReuseKey(params: V3ReuseKeyParams): string {
     `v3_config:${V3_CONFIG_VERSION}`,
     `v3_prompt:${V3_DECISION_PROMPT_VERSION}`,
     `attribution:${ATTRIBUTION_VERSION}`,
+    `buyer_intent:${BUYER_INTENT_VERSION}`,
     `pipeline:${INTELLIGENCE_PIPELINE_VERSION}`,
     `profile:${profileId}`,
     `profile_ver:${profileVersion}`,

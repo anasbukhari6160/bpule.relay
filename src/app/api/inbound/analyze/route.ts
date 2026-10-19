@@ -68,17 +68,19 @@ export async function POST(req: NextRequest) {
 
     const bestMatch = profileMatches[0] ?? null
 
-    const v3Packet = (canonical as unknown as { v3DecisionPacket?: { decision?: Record<string, unknown> } }).v3DecisionPacket
+    const v3Packet = (canonical as unknown as { v3DecisionPacket?: { decision?: Record<string, unknown>; buyerIntent?: { buyerIntentLevel: string; verifiedExternalNeed: boolean } } }).v3DecisionPacket
     const v3Decision = v3Packet?.decision as Record<string, unknown> | undefined
+    // Intent label comes from the canonical buyer decision only.
+    const buyerIntent = v3Packet?.buyerIntent
 
     const intelligence = {
       wants: canonical.intelligence.opportunity.description
         ?? (v3Decision?.commercialReading as Record<string, unknown>)?.probableNeed as string
         ?? canonical.intelligence.opportunityTrigger
         ?? 'Not specified — ask clarifying questions',
-      intent: (v3Decision?.buyerRequestProbability as number) >= 0.6
+      intent: buyerIntent?.buyerIntentLevel === 'HIGH'
         ? 'Explicit buyer request'
-        : (v3Decision?.externalNeedProbability as number) >= 0.5
+        : buyerIntent?.verifiedExternalNeed
           ? 'External need detected'
           : canonical.intelligence.opportunityTrigger ?? 'Unknown — needs research',
       fit_score: canonical.canonicalScore,

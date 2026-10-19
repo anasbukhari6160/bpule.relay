@@ -3,9 +3,11 @@
  * a HIGH-intent buyer from their own marketing content.
  *
  * Invariant: SERVICE_OFFERING must never become BUYER_REQUEST.
+ * Asserted against the canonical buyer decision (resolveVerifiedBuyerIntent),
+ * the only buyer-intent authority.
  */
 import { describe, expect, it } from 'vitest'
-import { verifyBuyerSignal } from '@/lib/scoring/buyer-provenance'
+import { resolveBuyerIntentFromSource } from '@/lib/intelligence-v3/buyer-intent'
 import { computeCompositeScore } from '@/lib/scoring/composite-scorer'
 import { extractSignals } from '@/lib/scoring/signal-extractor'
 
@@ -18,16 +20,16 @@ Client work includes MVPs, redesigns, and team augmentation.
 We offer end-to-end development services for startups and enterprises.
 Hire us for your next project — we love solving hard problems.`
 
-  it('verifyBuyerSignal: explicitAsk on seller text is not buyer', () => {
-    const r = verifyBuyerSignal({ signalType: 'explicitAsk', text: CONSULTANT, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(false)
-    expect(r.provenance.needOwner).toBe('seller')
-    expect(r.provenance.eventType).toBe('offering')
+  it('canonical: seller text is SELLER, not a buyer request', () => {
+    const r = resolveBuyerIntentFromSource(CONSULTANT, { signalCheck: { explicitAsk: true } })
+    expect(r.verifiedBuyerRequest).toBe(false)
+    expect(r.relationshipRole).toBe('SELLER')
+    expect(r.buyerIntentLevel).toBe('UNKNOWN')
   })
 
-  it('verifyBuyerSignal: seekingVendor on seller text is not buyer', () => {
-    const r = verifyBuyerSignal({ signalType: 'seekingVendor', text: CONSULTANT, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(false)
+  it('canonical: vendor-search claim on seller text is not verified', () => {
+    const r = resolveBuyerIntentFromSource(CONSULTANT, { signalCheck: { seekingVendor: true } })
+    expect(r.verifiedExternalNeed).toBe(false)
   })
 
   it('composite: seller profile does not get high buyer intent from own marketing', () => {
@@ -48,10 +50,10 @@ Here's what I learned: pricing is about value, not cost.
 Pro tip: start with a limited budget and iterate fast.
 I mentor 12 founders and run a workshop on product launches.`
 
-  it('verifyBuyerSignal: askingForHelp on advisor text is not buyer', () => {
-    const r = verifyBuyerSignal({ signalType: 'askingForHelp', text: ADVISOR, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(false)
-    expect(r.provenance.needOwner).toBe('advisor')
+  it('canonical: advisor text is not a buyer request', () => {
+    const r = resolveBuyerIntentFromSource(ADVISOR)
+    expect(r.verifiedBuyerRequest).toBe(false)
+    expect(r.verifiedBudget).toBe(false)
   })
 
   it('composite: advisor profile does not score as strong buyer', () => {
@@ -70,10 +72,9 @@ We needed to move fast — the market was shifting under our feet.
 Within a week we had a plan, but budget was tight.
 So we started looking for an agency to help with the migration.`
 
-  it('verifyBuyerSignal: prose timing does not pass', () => {
-    const r = verifyBuyerSignal({ signalType: 'launching', text: NARRATIVE, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(false)
-    expect(r.provenance.timeReference).toBe('prose')
+  it('canonical: a request told as past narrative is not current', () => {
+    const r = resolveBuyerIntentFromSource(NARRATIVE)
+    expect(r.verifiedBuyerRequest).toBe(false)
   })
 
   it('composite: narrative with prose timing scores below strong', () => {
@@ -92,10 +93,10 @@ We realized immediately that outsourcing was the way to go.
 Looking back, the launch was a success — but it was stressful.
 Previously at a small agency, I learned to move fast.`
 
-  it('verifyBuyerSignal: historical markers prevent verification', () => {
-    const r = verifyBuyerSignal({ signalType: 'budget', text: HISTORICAL, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(false)
-    expect(r.provenance.eventStatus).toBe('historical')
+  it('canonical: historical budget and outsourcing are not verified', () => {
+    const r = resolveBuyerIntentFromSource(HISTORICAL)
+    expect(r.verifiedBudget).toBe(false)
+    expect(r.verifiedBuyerRequest).toBe(false)
   })
 
   it('composite: historical content does not resurrect old opportunity', () => {
@@ -113,10 +114,9 @@ I'm launching a workshop on React performance next month.
 Join us for a hands-on session — limited seats available.
 The launch has been a great success so far.`
 
-  it('verifyBuyerSignal: workshop launch is not buyer request', () => {
-    const r = verifyBuyerSignal({ signalType: 'launching', text: WORKSHOP, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(false)
-    expect(r.provenance.timeReference).toBe('prose')
+  it('canonical: workshop launch is not a buyer request', () => {
+    const r = resolveBuyerIntentFromSource(WORKSHOP)
+    expect(r.verifiedBuyerRequest).toBe(false)
   })
 
   it('composite: workshop content does not score as buyer', () => {
@@ -135,9 +135,9 @@ We helped them scale from zero to 1M users.
 The launch was a great success — they realized immediately that our platform worked.
 Pricing starts at $500/month for the enterprise tier.`
 
-  it('verifyBuyerSignal: customer launch is not prospect buyer need', () => {
-    const r = verifyBuyerSignal({ signalType: 'launching', text: CUSTOMER_LAUNCH, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(false)
+  it('canonical: customer launch is not the prospect buying', () => {
+    const r = resolveBuyerIntentFromSource(CUSTOMER_LAUNCH)
+    expect(r.verifiedBuyerRequest).toBe(false)
   })
 
   it('composite: customer story does not score as buyer', () => {
@@ -157,9 +157,9 @@ They are hiring 3 engineers and 2 designers.
 Looking for a dev shop to help scale the platform.
 Contact us if you know a good agency.`
 
-  it('verifyBuyerSignal: third-party repost is not prospect buyer', () => {
-    const r = verifyBuyerSignal({ signalType: 'seekingVendor', text: THIRD_PARTY_FUNDING, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(false)
+  it('canonical: third-party repost is not the prospect buying', () => {
+    const r = resolveBuyerIntentFromSource(THIRD_PARTY_FUNDING)
+    expect(r.verifiedBuyerRequest).toBe(false)
   })
 
   it('composite: third-party content does not score as buyer', () => {
@@ -178,11 +178,10 @@ The funding lets us expand the team — we are hiring a VP of Engineering.
 Looking for a development partner to rebuild our mobile app.
 Budget approved for Q1. Start within 2 weeks.`
 
-  it('verifyBuyerSignal: prospect funding + vendor request passes', () => {
-    const r = verifyBuyerSignal({ signalType: 'seekingVendor', text: PROSPECT_FUNDING, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(true)
-    expect(r.provenance.needOwner).toBe('buyer')
-    expect(r.provenance.eventType).toBe('request')
+  it('canonical: prospect vendor request is verified', () => {
+    const r = resolveBuyerIntentFromSource(PROSPECT_FUNDING)
+    expect(r.verifiedBuyerRequest).toBe(true)
+    expect(r.relationshipRole).toBe('BUYER')
   })
 
   it('composite: explicit buyer with funding scores high', () => {
@@ -200,9 +199,9 @@ We are looking for a software development agency to rebuild our mobile app in Re
 Our release cycle is killing us, we need outside help to ship faster.
 Budget approved for Q1. Launch planned within 3 months.`
 
-  it('verifyBuyerSignal: explicit contractor request passes', () => {
-    const r = verifyBuyerSignal({ signalType: 'seekingVendor', text: EXPLICIT, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(true)
+  it('canonical: explicit agency request is verified', () => {
+    const r = resolveBuyerIntentFromSource(EXPLICIT)
+    expect(r.verifiedBuyerRequest).toBe(true)
   })
 
   it('composite: explicit buyer request scores high', () => {
@@ -224,9 +223,11 @@ We are also looking for an agency specialized in DevOps to help with our CI/CD p
 Our deployment process is too slow, we need outside help to automate it.
 Budget: $5k/month. Start within 3 weeks.`
 
-  it('verifyBuyerSignal: genuine buyer portion passes', () => {
-    const r = verifyBuyerSignal({ signalType: 'seekingVendor', text: MIXED, rawDetected: true })
-    expect(r.buyerIntentValid).toBe(true)
+  it('canonical: genuine buyer episode inside a seller profile is verified', () => {
+    const r = resolveBuyerIntentFromSource(MIXED)
+    expect(r.verifiedBuyerRequest).toBe(true)
+    expect(r.relationshipRole).toBe('BUYER')
+    expect(r.sellerSideContent).toBe(true)
   })
 
   it('composite: mixed profile still scores buyer on genuine episode', () => {
