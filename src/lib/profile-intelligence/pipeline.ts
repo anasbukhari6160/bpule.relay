@@ -85,7 +85,7 @@ export async function runExtractionPipeline(
   const reviews = await reviewsPromise
   if (factsByPerson.size === 0 && segmentedCount > 0) {
     const detail = warnings.length > 0 ? warnings.join(' | ') : 'no warnings recorded'
-    throw new Error(`Extraction failed for ${segmentedCount} person(s). Warnings: ${detail}. Raw detected: ${people.length} people.`.)
+    throw new Error(`Extraction failed for ${segmentedCount} person(s). Warnings: ${detail}. Raw detected: ${people.length} people.`)
   }
   if (segmentedCount === 0 && people.length > 0) {
     const sample = people.slice(0, 3).map((p) => JSON.stringify({ name: p.name, role: p.role })).join('; ')
