@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Progress } from '@/components/ui/progress'
-import { WorkPaceChart } from '@/components/rep/work-pace-chart'
+import { ContributionHeatmap } from '@/components/performance/contribution-heatmap'
+import type { DailyActivity } from '@/lib/performance/activity-model'
 import { cn } from 'cn'
 
 /**
@@ -28,6 +29,7 @@ export interface MyDayData {
     remaining: number
     href: string
   }>
+  heatmapData?: DailyActivity[]
   warning: {
     level: string
     message: string
@@ -205,13 +207,11 @@ export function MyDayCard({ data }: { data: MyDayData }) {
         </div>
       )}
 
-      {data.categories.length > 0 && (
-        <WorkPaceChart
-          categories={data.categories}
-          dayElapsedPct={data.dayElapsedPct}
-          totalCompleted={data.totalCompleted}
-          totalTarget={data.totalTarget}
-        />
+      {data.heatmapData && data.heatmapData.length > 0 && (
+        <div className="rounded-lg border border-line bg-bone-raised p-4">
+          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone mb-3">Activity</p>
+          <ContributionHeatmap daily={data.heatmapData} />
+        </div>
       )}
 
       {/* Day Close action */}

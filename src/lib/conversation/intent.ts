@@ -42,13 +42,13 @@ const STOP = /\b(stop (?:messaging|contacting|emailing|sending|reaching out|writ
 // interested" is the opposite of one.
 const NEGATED_INTEREST = /\b(?:not|no longer|isn'?t|aren'?t|am not|i'?m not|we'?re not|we are not)\s+(?:really\s+|that\s+|very\s+|too\s+|currently\s+|actually\s+|at all\s+)?interested\b|\b(?:uninterested|disinterested|no interest)\b/g
 
-const REFUSAL = /\b(no,? thanks?|no thank you|not for (?:me|us)|we'?ll pass|i'?ll pass|pass on (?:this|that)|not a (?:good )?fit|not looking|not in the market|don'?t need|do not need|no need\b(?!\s+to\b)|(?:we'?re|we are|i'?m|all) (?:all )?set\b(?!\s+(?:for|on|with|to|up)\b)|we have (?:a|our own) (?:team|vendor|agency)|already (?:have|working with) (?:a|an|our)|not (?:something|what) we need)/
+const REFUSAL = /\b(no,? thanks?|no thank you|not for (?:me|us)|we'?ll pass|i'?ll pass|pass on (?:this|that)|not a (?:good )?fit|not looking|not in the market|don'?t need|do not need|no need\b(?!\s+to\b)|(?:we'?re|we are|i'?m|all) (?:all )?set\b(?!\s+(?:for|on|with|to|up)\b)|we have (?:a|our own) (?:team|vendor|agency)|already (?:have|working with) (?:a|an|our)|not (?:something|what) we need|went with (?:someone|another|different|other)|too expensive|out of budget|no budget|can'?t afford|not (?:in|within) budget|we'?re going with|decided to go with)/
 
 const WRONG_PERSON = /\b(wrong person|not the right person|not my (?:area|department|call)|not responsible for|i don'?t handle|not involved in|not my decision)\b/
 const REFERRAL_CUE = /\b(talk to|reach out to|contact|speak (?:to|with)|ask|try|loop in|cc'?d?)\s+(?:my |our |the )?(?:[A-Z]?\w+)/
 
 // Long horizons only: "a call next week" is interest, "next quarter" is a deferral.
-const DEFERRED = /\b(not (?:right )?now|not at the moment|not at this time|maybe later|later this (?:year|quarter)|next (?:quarter|year)|in a (?:few|couple of) months|circle back|check back|reach out (?:again )?(?:later|next|in)|follow up (?:later|next|in)|bad timing|not the right time|too busy|no budget (?:right now|this year|at the moment)|after (?:q[1-4]|the holidays|the new year))\b/
+const DEFERRED = /\b(not (?:right )?now|not at the moment|not at this time|maybe later|later this (?:year|quarter)|next (?:quarter|year)|in a (?:few|couple of) months|circle back|check back|reach out (?:again )?(?:later|next|in)|follow up (?:later|next|in)|bad timing|not the right time|too busy|no budget (?:right now|this year|at the moment)|after (?:q[1-4]|the holidays|the new year)|need to think (?:about it|more)|let me think|i'?ll think about it|give me some time|need more time|we'?ll revisit|we'?ll come back|not urgent|low priority)/
 
 const GOODBYE = /^(?:(?:ok(?:ay)?|k|sure|alright|fine|thanks?|thank you|cheers|noted)[\s,.!]*)*(?:bye|goodbye|good bye|bye bye|take care|cya|see ya|see you|have a (?:good|nice|great) (?:day|one|weekend))\b/
 

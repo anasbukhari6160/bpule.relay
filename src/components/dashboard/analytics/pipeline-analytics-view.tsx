@@ -20,6 +20,8 @@ import {
 } from 'recharts'
 import { ArrowDownRight, ArrowUpRight, ChevronRight, Minus } from 'lucide-react'
 import { cn } from 'cn'
+import { ContributionHeatmap } from '@/components/performance/contribution-heatmap'
+import type { DailyActivity } from '@/lib/performance/activity-model'
 import type {
   ActivityPoint,
   CountSlice,
@@ -343,56 +345,26 @@ function BarList({ items, color, empty }: { items: CountSlice[]; color: string; 
   )
 }
 
-const WEEKDAYS = ['Mon', '', 'Wed', '', 'Fri', '', 'Sun']
-
-// Empty days use the stone tone at low opacity so they read in light and dark themes.
-function heatStyle(level: number): React.CSSProperties {
-  return level === 0
-    ? { background: C.stone, opacity: 0.16 }
-    : { background: C.orange, opacity: 0.3 + level * 0.175 }
-}
-
-function SendHeatmap({ cells }: { cells: HeatCell[] }) {
-  const max = Math.max(0, ...cells.map((c) => c.value))
-  const total = cells.reduce((n, c) => n + c.value, 0)
-  // Columns are weeks starting Monday; pad the first week.
-  const padded: Array<HeatCell | null> = [...Array(cells[0]?.weekday ?? 0).fill(null), ...cells]
-  const weeks: Array<Array<HeatCell | null>> = []
-  for (let i = 0; i < padded.length; i += 7) weeks.push(padded.slice(i, i + 7))
-  const level = (v: number) => (v === 0 || max === 0 ? 0 : Math.min(4, Math.ceil((v / max) * 4)))
-  const activeDays = cells.filter((c) => c.value > 0).length
-  return (
-    <div>
-      <div className="flex gap-[3px] sm:gap-1" role="img" aria-label={`Messages sent per day over the last 12 weeks: ${total} in total, on ${activeDays} days`}>
-        <div className="mr-1 flex shrink-0 flex-col gap-[3px] sm:gap-1" aria-hidden="true">
-          {WEEKDAYS.map((d, i) => <span key={i} className="flex aspect-square max-h-[26px] min-h-[10px] items-center text-[9px] text-stone">{d}</span>)}
-        </div>
-        {weeks.map((week, wi) => (
-          <div key={wi} className="flex min-w-0 max-w-[26px] flex-1 flex-col gap-[3px] sm:gap-1">
-            {Array.from({ length: 7 }, (_, di) => {
-              const cell = week[di]
-              if (!cell) return <span key={di} className="aspect-square w-full" />
-              const l = level(cell.value)
-              return (
-                <span
-                  key={di}
-                  title={`${shortDate(cell.date)}: ${cell.value} sent`}
-                  className="aspect-square w-full rounded-[3px]"
-                  style={heatStyle(l)}
-                />
-              )
-            })}
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 flex items-center justify-between text-[11px] text-stone">
-        <span><span className="font-medium text-ink tabular-nums">{total}</span> sent · active on <span className="font-medium text-ink tabular-nums">{activeDays}</span> of {cells.length} days</span>
-        <span className="flex items-center gap-1" aria-hidden="true">
-          Less{[0, 1, 2, 3, 4].map((l) => <span key={l} className="size-2.5 rounded-[2px]" style={heatStyle(l)} />)}More
-        </span>
-      </div>
-    </div>
-  )
+function mapHeatCellsToDailyActivity(cells: HeatCell[]): DailyActivity[] {
+  return cells.map(cell => ({
+    date: cell.date,
+    totalActions: cell.value,
+    weightedActivity: cell.value,
+    active: cell.value > 0,
+    breakdown: {
+      leadsAnalyzed: 0,
+      leadsSaved: 0,
+      connections: cell.value,
+      firstDMs: 0,
+      followups: 0,
+      replies: 0,
+      upworkApplications: 0,
+      meetings: 0,
+      wins: 0,
+      referrals: 0,
+    },
+    events: [],
+  }))
 }
 
 function FocusList({ leads }: { leads: FocusLead[] }) {
@@ -570,7 +542,7 @@ export function PipelineAnalyticsView({ data, scope, basePath = '/dashboard' }: 
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Panel className="lg:col-span-2" title="Sending consistency" subtitle="Messages sent per day, last 12 weeks">
-          <SendHeatmap cells={data.heatmap} />
+          <ContributionHeatmap daily={mapHeatCellsToDailyActivity(data.heatmap)} />
         </Panel>
         <Panel title={scope === 'team' ? 'Leads waiting on the team' : 'Leads waiting on you'} subtitle="Replies first, then follow-ups, then new leads — best score first">
           <FocusList leads={data.focus} />

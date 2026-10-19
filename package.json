@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "qa:relay": "npm run build && npx tsc --noEmit && vitest run --reporter=verbose && echo '✅ QA:RELAY PASS'",
     "test:watch": "vitest",
     "intelligence:benchmark": "npx tsx scripts/benchmark-intelligence.mjs",
     "intelligence:benchmark:mock": "npx tsx scripts/benchmark-intelligence.mjs --pipeline=mock"
