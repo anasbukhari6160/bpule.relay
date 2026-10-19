@@ -23,9 +23,9 @@ Fiza,Frontend Engineer,BPulse,"React, TypeScript",Design System`
 
     const result = await parseSpreadsheet(createCsvBuffer(csv), 'text/csv', 'team.csv')
 
-    expect(result.detectedPeople).toContain('aneeb khan')
-    expect(result.detectedPeople).toContain('hassan raza')
-    expect(result.detectedPeople).toContain('fiza')
+    expect(result.detectedPeople).toContain('Aneeb Khan')
+    expect(result.detectedPeople).toContain('Hassan Raza')
+    expect(result.detectedPeople).toContain('Fiza')
     expect(result.personGroups.size).toBe(3)
   })
 
@@ -37,8 +37,8 @@ Fiza,Frontend Engineer,BPulse,"React, TypeScript",Design System`
 
     const result = await parseSpreadsheet(createWorkbook(rows), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'team.xlsx')
 
-    expect(result.detectedPeople).toContain('aneeb khan')
-    expect(result.detectedPeople).toContain('hassan raza')
+    expect(result.detectedPeople).toContain('Aneeb Khan')
+    expect(result.detectedPeople).toContain('Hassan Raza')
     expect(result.headers).toContain('Name')
     expect(result.headers).toContain('Role')
   })

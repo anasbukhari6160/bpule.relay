@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from 'react'
 import type { ProfileImportBatch } from '@/lib/domain/types'
 
-const ACCEPTED = '.pdf,.docx,.doc,.txt,.md,.markdown,.csv'
+const ACCEPTED = '.pdf,.docx,.doc,.txt,.md,.markdown,.csv,.xlsx,.xls'
 const MAX_FILES = 20
 
 export function UploadBatchUploader({ onBatchCreated }: {

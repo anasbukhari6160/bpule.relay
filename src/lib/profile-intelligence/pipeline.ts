@@ -1,4 +1,4 @@
-import { generate } from '@/lib/ai/runtime'
+import { generate, type AiRetryOptions } from '@/lib/ai/runtime'
 import type { ParsedDocument } from './parse-document'
 import type { DetectedPerson, ExtractedFacts, ExtractedProject, ExtractedReview, ExtractedProof } from '@/lib/domain/types'
 import { normalizeSkills, extractYearsExperience, inferSeniority } from './skill-normalization'
@@ -41,26 +41,61 @@ export interface ExtractionResult {
   warnings: string[]
 }
 
+export interface PipelineOptions {
+  /** Epoch ms the caller must finish by; AI retries never wait past it. */
+  deadline?: number
+  /**
+   * The source is about one known person (a spreadsheet row group, or an
+   * upload attached to a profile): skip classification and use this name.
+   */
+  knownPersonName?: string
+  /** Skip the advisory quality-gate call (spreadsheet rows). */
+  skipQualityGate?: boolean
+}
+
+interface CallCtx {
+  orgId: string
+  retry: AiRetryOptions
+}
+
+// Rate limits and provider cooldowns clear within seconds; two retries with
+// backoff recover most of them without blowing the route's time budget.
+function callCtx(orgId: string, deadline?: number): CallCtx {
+  return { orgId, retry: { attempts: 2, baseDelayMs: 3_000, maxDelayMs: 20_000, deadline: deadline ? deadline - 5_000 : undefined } }
+}
+
 export async function runExtractionPipeline(
   parsed: ParsedDocument,
   rawContent: string,
   organizationId: string,
+  options: PipelineOptions = {},
 ): Promise<ExtractionResult> {
-  const classification = await classifyDocument(rawContent, organizationId)
+  const ctx = callCtx(organizationId, options.deadline)
+  const warnings: string[] = []
 
-  const people = classification.detectedPeople
-  if (people.length === 0) {
-    return {
-      documentType: classification.documentType,
-      sourceQuality: classification.sourceQuality,
-      people: [],
-      factsByPerson: new Map(),
-      projectsByPerson: new Map(),
-      proofsByPerson: new Map(),
-      reviews: [],
-      qualityGate: { passed: true, issues: ['No people detected in document.'] },
-      warnings: [],
+  let documentType = 'unknown'
+  let sourceQuality = 'unknown'
+  let people: DetectedPerson[]
+  if (options.knownPersonName?.trim()) {
+    people = [namedPerson(options.knownPersonName.trim(), rawContent.length)]
+  } else {
+    // A failed classification degrades to "one person's document" (a CV) —
+    // it must never sink the whole source.
+    try {
+      const classification = await classifyDocument(rawContent, ctx)
+      documentType = typeof classification.documentType === 'string' ? classification.documentType : 'unknown'
+      sourceQuality = typeof classification.sourceQuality === 'string' ? classification.sourceQuality : 'unknown'
+      people = validPeople(classification.detectedPeople)
+    } catch (err) {
+      warnings.push(`Document classification unavailable: ${reason(err)}`)
+      people = []
     }
+  }
+
+  // Nobody detected: treat the document as a single person's (CV, profile
+  // export). The name comes from the extracted facts or the document header.
+  if (people.length === 0) {
+    return extractSinglePersonDocument(rawContent, ctx, warnings, documentType, sourceQuality, options)
   }
 
   const segmentText = segmentByPeople(rawContent, people)
@@ -72,10 +107,9 @@ export async function runExtractionPipeline(
 
   // Independent calls run in parallel (bounded) so multi-person documents fit
   // within the route's time limit.
-  const warnings: string[] = []
-  const reviewsPromise = settle(extractReviews(rawContent, people, organizationId), [] as ExtractedReview[], 'reviews', warnings)
+  const reviewsPromise = settle(extractReviews(rawContent, people, ctx), [] as ExtractedReview[], 'reviews', warnings)
   await mapLimit([...segmentText.entries()], PERSON_CONCURRENCY, async ([personName, text]) => {
-    const person = await extractPerson(text, organizationId, warnings, personName)
+    const person = await extractPerson(text, ctx, warnings, personName)
     if (!person) return
     person.facts.people = [{ name: personName, confidence: 0.9, sectionStart: 0, sectionEnd: text.length, role: person.facts.currentRole, company: person.facts.company, aliases: [], clues: [] }]
     factsByPerson.set(personName, person.facts)
@@ -93,12 +127,14 @@ export async function runExtractionPipeline(
   }
 
   // Advisory only: a failed quality check must not discard a good extraction.
-  const qualityGate = await runQualityGate(rawContent, factsByPerson, projectsByPerson, proofsByPerson, organizationId)
-    .catch((err) => ({ passed: true, issues: [`Quality gate unavailable: ${err instanceof Error ? err.message : 'error'}`] }))
+  const qualityGate = options.skipQualityGate
+    ? { passed: true, issues: [] as string[] }
+    : await runQualityGate(rawContent, factsByPerson, projectsByPerson, proofsByPerson, ctx)
+      .catch((err) => ({ passed: true, issues: [`Quality gate unavailable: ${err instanceof Error ? err.message : 'error'}`] }))
 
   return {
-    documentType: classification.documentType,
-    sourceQuality: classification.sourceQuality,
+    documentType,
+    sourceQuality,
     people,
     factsByPerson,
     projectsByPerson,
@@ -114,11 +150,12 @@ export async function runExtractionPipeline(
  * (enrichment). Used when classification finds no named person — e.g. a
  * portfolio or case study that never states the owner's name.
  */
-export async function extractForSinglePerson(text: string, organizationId: string) {
+export async function extractForSinglePerson(text: string, organizationId: string, options: { deadline?: number } = {}) {
   const warnings: string[] = []
+  const ctx = callCtx(organizationId, options.deadline)
   const [person, reviews] = await Promise.all([
-    extractPerson(text, organizationId, warnings),
-    settle(extractReviews(text, [], organizationId), [] as ExtractedReview[], 'reviews', warnings),
+    extractPerson(text, ctx, warnings),
+    settle(extractReviews(text, [], ctx), [] as ExtractedReview[], 'reviews', warnings),
   ])
   if (!person) throw new Error(`Extraction failed. ${warnings.join(' ')}`.trim())
   return { ...person, reviews, warnings }
@@ -129,9 +166,9 @@ export async function extractForSinglePerson(text: string, organizationId: strin
  * (recorded in `warnings`); only when BOTH facts and projects fail is the
  * person dropped.
  */
-async function extractPerson(text: string, orgId: string, warnings: string[], label?: string) {
+async function extractPerson(text: string, ctx: CallCtx, warnings: string[], label?: string) {
   const who = label ? ` (${label})` : ''
-  const [factsR, projectsR] = await Promise.allSettled([extractFacts(text, orgId), extractProjects(text, orgId)])
+  const [factsR, projectsR] = await Promise.allSettled([extractFacts(text, ctx), extractProjects(text, ctx)])
   if (factsR.status === 'rejected' && projectsR.status === 'rejected') {
     warnings.push(`Could not extract${who}: ${reason(factsR.reason)}`)
     return null
@@ -140,7 +177,7 @@ async function extractPerson(text: string, orgId: string, warnings: string[], la
   if (projectsR.status === 'rejected') warnings.push(`Projects unavailable${who}: ${reason(projectsR.reason)}`)
   const facts = factsR.status === 'fulfilled' ? factsR.value : emptyFacts()
   const projects = projectsR.status === 'fulfilled' ? projectsR.value : []
-  const proofs = await settle(buildProofs(text, facts, projects, orgId), [] as ExtractedProof[], `proof${who}`, warnings)
+  const proofs = await settle(buildProofs(text, facts, projects, ctx), [] as ExtractedProof[], `proof${who}`, warnings)
   return { facts, projects, proofs }
 }
 
@@ -168,6 +205,83 @@ function emptyFacts(): ExtractedFacts {
 }
 
 const PERSON_CONCURRENCY = 3
+const MAX_PEOPLE_PER_DOCUMENT = 25
+
+function namedPerson(name: string, length: number): DetectedPerson {
+  return { name, confidence: 0.9, sectionStart: 0, sectionEnd: length, role: null, company: null, aliases: [], clues: [] } as DetectedPerson
+}
+
+/** People with a usable name, first mention wins, case-insensitive dedupe. */
+export function validPeople(raw: unknown): DetectedPerson[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const out: DetectedPerson[] = []
+  for (const p of raw as Array<Partial<DetectedPerson> | null>) {
+    const name = typeof p?.name === 'string' ? p.name.replace(/\s+/g, ' ').trim() : ''
+    if (name.length < 2 || name.length > 80 || !/\p{L}/u.test(name)) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ ...(p as DetectedPerson), name })
+    if (out.length >= MAX_PEOPLE_PER_DOCUMENT) break
+  }
+  return out
+}
+
+/** A person's name from a document header: "Jane Doe" on its own line near the top. */
+export function guessNameFromHeader(text: string): string | null {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 6)
+  for (const line of lines) {
+    const candidate = line.replace(/^(?:name|full name)\s*[:\-–]\s*/i, '').trim()
+    if (candidate.length > 60 || /[@\d|•:/]/.test(candidate)) continue
+    const words = candidate.split(/\s+/)
+    if (words.length < 2 || words.length > 4) continue
+    if (!words.every((w) => /^[\p{Lu}][\p{L}'’.-]*$/u.test(w))) continue
+    if (/\b(?:curriculum|vitae|resume|résumé|profile|summary|experience|engineer|developer|manager|designer|consultant|team|company|portfolio)\b/i.test(candidate)) continue
+    return candidate
+  }
+  return null
+}
+
+async function extractSinglePersonDocument(
+  text: string,
+  ctx: CallCtx,
+  warnings: string[],
+  documentType: string,
+  sourceQuality: string,
+  options: PipelineOptions,
+): Promise<ExtractionResult> {
+  const headerName = guessNameFromHeader(text)
+  const [person, reviews] = await Promise.all([
+    extractPerson(text, ctx, warnings, headerName ?? undefined),
+    settle(extractReviews(text, [], ctx), [] as ExtractedReview[], 'reviews', warnings),
+  ])
+  const name = (person?.facts.fullName ?? person?.facts.displayName ?? headerName ?? '').trim()
+  if (!person || !name) {
+    // Nothing usable: the caller reports "no person identified" with these reasons.
+    return {
+      documentType, sourceQuality, people: [], factsByPerson: new Map(), projectsByPerson: new Map(),
+      proofsByPerson: new Map(), reviews, qualityGate: { passed: true, issues: ['No people detected in document.'] }, warnings,
+    }
+  }
+  const facts = { ...person.facts, fullName: person.facts.fullName ?? name }
+  facts.people = [{ name, confidence: 0.8, sectionStart: 0, sectionEnd: text.length, role: facts.currentRole, company: facts.company, aliases: [], clues: [] }]
+  const qualityGate = options.skipQualityGate
+    ? { passed: true, issues: [] as string[] }
+    : await runQualityGate(text, new Map([[name, facts]]), new Map([[name, person.projects]]), new Map([[name, person.proofs]]), ctx)
+      .catch((err) => ({ passed: true, issues: [`Quality gate unavailable: ${err instanceof Error ? err.message : 'error'}`] }))
+  return {
+    documentType: documentType === 'unknown' ? 'single_person' : documentType,
+    sourceQuality,
+    people: [namedPerson(name, text.length)],
+    factsByPerson: new Map([[name, facts]]),
+    projectsByPerson: new Map([[name, person.projects]]),
+    proofsByPerson: new Map([[name, person.proofs]]),
+    reviews,
+    qualityGate,
+    warnings,
+  }
+}
 
 async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let next = 0
@@ -180,7 +294,7 @@ async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<v
   await Promise.all(workers)
 }
 
-async function classifyDocument(content: string, orgId: string) {
+async function classifyDocument(content: string, ctx: CallCtx) {
   const truncated = content.slice(0, 8000)
   const result = await generate<{
     documentType: string
@@ -192,35 +306,51 @@ async function classifyDocument(content: string, orgId: string) {
     system: SYSTEM_PROMPT_DOCUMENT_CLASSIFY,
     user: `Classify this document and list all people mentioned:\n\n${truncated}`,
     outputSchema: PROFILE_DOCUMENT_CLASSIFY_SCHEMA,
-    organizationId: orgId,
+    organizationId: ctx.orgId,
+    retry: ctx.retry,
     // Long documents → large JSON output; FAST_STRUCTURED defaults (1024 tokens / 8s)
     // truncate or time out, which surfaced as 'Unable to normalize JSON' / 'aborted'.
     maxTokens: 2048, timeoutMs: 45_000,
     callSite: 'profile-intelligence:classifyDocument',
     feature: 'profile_extraction',
     promptVersion: 'v2',
-  })
+  }).catch((err) => { throw stepError('classify', err) })
 
+  if (!result.data || typeof result.data !== 'object') throw stepError('classify', 'empty response')
   return result.data
 }
 
-async function extractFacts(text: string, orgId: string): Promise<ExtractedFacts> {
+/** An AI step failure that names the step, so warnings say which part failed. */
+function stepError(step: string, err: unknown): Error {
+  return new Error(`${step}: ${reason(err)}`)
+}
+
+async function extractFacts(text: string, ctx: CallCtx): Promise<ExtractedFacts> {
   const truncated = text.slice(0, 12000)
   const result = await generate<ExtractedFacts>({
     task: 'FAST_STRUCTURED',
     system: SYSTEM_PROMPT_FACT_EXTRACT,
     user: `Extract professional facts from this person's section:\n\n${truncated}`,
     outputSchema: PROFILE_FACT_EXTRACT_SCHEMA,
-    organizationId: orgId,
+    organizationId: ctx.orgId,
+    retry: ctx.retry,
     // Long documents → large JSON output; FAST_STRUCTURED defaults (1024 tokens / 8s)
     // truncate or time out, which surfaced as 'Unable to normalize JSON' / 'aborted'.
     maxTokens: 3072, timeoutMs: 60_000,
     callSite: 'profile-intelligence:extractFacts',
     feature: 'profile_extraction',
     promptVersion: 'v2',
-  })
+  }).catch((err) => { throw stepError('facts', err) })
 
+  if (!result.data || typeof result.data !== 'object') throw stepError('facts', 'empty response')
   const facts = result.data
+  // Models sometimes return a string where a list belongs; never let that crash normalization.
+  for (const key of ['primarySkills', 'secondarySkills', 'technologies', 'industries', 'serviceCapabilities', 'specialties', 'differentiators', 'languages'] as const) {
+    const v = (facts as unknown as Record<string, unknown>)[key]
+    if (typeof v === 'string') (facts as unknown as Record<string, unknown>)[key] = v.split(/[,;]\s*/).filter(Boolean)
+    else if (!Array.isArray(v)) (facts as unknown as Record<string, unknown>)[key] = []
+  }
+  if (typeof facts.fullName !== 'string' || !facts.fullName.trim()) facts.fullName = null
   if (Array.isArray(facts.primarySkills)) facts.primarySkills = normalizeSkills(facts.primarySkills)
   if (Array.isArray(facts.secondarySkills)) facts.secondarySkills = normalizeSkills(facts.secondarySkills)
   if (Array.isArray(facts.technologies)) facts.technologies = normalizeSkills(facts.technologies)
@@ -263,23 +393,24 @@ async function extractFacts(text: string, orgId: string): Promise<ExtractedFacts
   }
 }
 
-async function extractProjects(text: string, orgId: string): Promise<ExtractedProject[]> {
+async function extractProjects(text: string, ctx: CallCtx): Promise<ExtractedProject[]> {
   const truncated = text.slice(0, 10000)
   const result = await generate<{ projects: ExtractedProject[] }>({
     task: 'FAST_STRUCTURED',
     system: SYSTEM_PROMPT_PROJECT_EXTRACT,
     user: `Extract all projects and work engagements from this text:\n\n${truncated}`,
     outputSchema: PROFILE_PROJECT_EXTRACT_SCHEMA,
-    organizationId: orgId,
+    organizationId: ctx.orgId,
+    retry: ctx.retry,
     // Long documents → large JSON output; FAST_STRUCTURED defaults (1024 tokens / 8s)
     // truncate or time out, which surfaced as 'Unable to normalize JSON' / 'aborted'.
     maxTokens: 4096, timeoutMs: 60_000,
     callSite: 'profile-intelligence:extractProjects',
     feature: 'profile_extraction',
     promptVersion: 'v2',
-  })
+  }).catch((err) => { throw stepError('projects', err) })
 
-  return (Array.isArray(result.data?.projects) ? result.data.projects : []).map((p) => ({
+  return (Array.isArray(result.data?.projects) ? result.data.projects : []).filter((p) => p && typeof p.name === 'string' && p.name.trim()).map((p) => ({
     name: p.name,
     clientCompany: p.clientCompany ?? null,
     role: p.role ?? null,
@@ -297,7 +428,7 @@ async function extractProjects(text: string, orgId: string): Promise<ExtractedPr
   }))
 }
 
-async function buildProofs(text: string, facts: ExtractedFacts, projects: ExtractedProject[], orgId: string): Promise<ExtractedProof[]> {
+async function buildProofs(text: string, facts: ExtractedFacts, projects: ExtractedProject[], ctx: CallCtx): Promise<ExtractedProof[]> {
   const evidenceContext = buildEvidenceContext(facts, projects, text)
   if (!evidenceContext) return []
 
@@ -306,16 +437,17 @@ async function buildProofs(text: string, facts: ExtractedFacts, projects: Extrac
     system: SYSTEM_PROMPT_PROOF_BUILD,
     user: `Build safe outreach proof from this evidence:\n\n${evidenceContext.slice(0, 8000)}`,
     outputSchema: PROFILE_PROOF_BUILD_SCHEMA,
-    organizationId: orgId,
+    organizationId: ctx.orgId,
+    retry: ctx.retry,
     // Long documents → large JSON output; FAST_STRUCTURED defaults (1024 tokens / 8s)
     // truncate or time out, which surfaced as 'Unable to normalize JSON' / 'aborted'.
     maxTokens: 3072, timeoutMs: 60_000,
     callSite: 'profile-intelligence:buildProofs',
     feature: 'profile_extraction',
     promptVersion: 'v2',
-  })
+  }).catch((err) => { throw stepError('proofs', err) })
 
-  return (Array.isArray(result.data?.proofs) ? result.data.proofs : []).map((p) => ({
+  return (Array.isArray(result.data?.proofs) ? result.data.proofs : []).filter((p) => p && typeof p.claim === 'string' && p.claim.trim()).map((p) => ({
     claim: p.claim,
     whyItMatters: p.whyItMatters,
     supportingEvidence: p.supportingEvidence,
@@ -326,7 +458,7 @@ async function buildProofs(text: string, facts: ExtractedFacts, projects: Extrac
   }))
 }
 
-async function extractReviews(text: string, people: DetectedPerson[], orgId: string): Promise<ExtractedReview[]> {
+async function extractReviews(text: string, people: DetectedPerson[], ctx: CallCtx): Promise<ExtractedReview[]> {
   const truncated = text.slice(0, 10000)
   const peopleNames = people.map((p) => p.name).join(', ')
 
@@ -335,16 +467,17 @@ async function extractReviews(text: string, people: DetectedPerson[], orgId: str
     system: SYSTEM_PROMPT_REVIEW_EXTRACT,
     user: `Extract reviews/testimonials. People in document: ${peopleNames}\n\n${truncated}`,
     outputSchema: PROFILE_REVIEW_EXTRACT_SCHEMA,
-    organizationId: orgId,
+    organizationId: ctx.orgId,
+    retry: ctx.retry,
     // Long documents → large JSON output; FAST_STRUCTURED defaults (1024 tokens / 8s)
     // truncate or time out, which surfaced as 'Unable to normalize JSON' / 'aborted'.
     maxTokens: 3072, timeoutMs: 60_000,
     callSite: 'profile-intelligence:extractReviews',
     feature: 'profile_extraction',
     promptVersion: 'v2',
-  })
+  }).catch((err) => { throw stepError('reviews', err) })
 
-  return (Array.isArray(result.data?.reviews) ? result.data.reviews : []).map((r) => ({
+  return (Array.isArray(result.data?.reviews) ? result.data.reviews : []).filter((r) => r && typeof r.reviewText === 'string' && r.reviewText.trim()).map((r) => ({
     reviewText: r.reviewText,
     assignedPersonName: r.assignedPersonName ?? null,
     reviewerName: r.reviewerName ?? null,
@@ -362,7 +495,7 @@ async function runQualityGate(
   factsByPerson: Map<string, ExtractedFacts>,
   projectsByPerson: Map<string, ExtractedProject[]>,
   proofsByPerson: Map<string, ExtractedProof[]>,
-  orgId: string,
+  ctx: CallCtx,
 ) {
   const summary: string[] = []
   for (const [name, facts] of factsByPerson.entries()) {
@@ -386,7 +519,7 @@ async function runQualityGate(
     system: SYSTEM_PROMPT_QUALITY_GATE,
     user: gateInput,
     outputSchema: PROFILE_QUALITY_GATE_SCHEMA,
-    organizationId: orgId,
+    organizationId: ctx.orgId,
     // Long documents → large JSON output; FAST_STRUCTURED defaults (1024 tokens / 8s)
     // truncate or time out, which surfaced as 'Unable to normalize JSON' / 'aborted'.
     maxTokens: 1024, timeoutMs: 30_000,
@@ -396,8 +529,8 @@ async function runQualityGate(
   })
 
   return {
-    passed: result.data.passed && !result.data.personMixingDetected,
-    issues: result.data.issues || [],
+    passed: Boolean(result.data?.passed) && !result.data?.personMixingDetected,
+    issues: Array.isArray(result.data?.issues) ? result.data.issues : [],
   }
 }
 
@@ -445,29 +578,48 @@ export async function synthesizeAiContext(
   return result.data
 }
 
-function segmentByPeople(text: string, people: DetectedPerson[]): Map<string, string> {
+/**
+ * Each person's section of a multi-person document. The model's character
+ * offsets are used when they are sane; otherwise the section starts at the
+ * first mention of the person's name. A section too short to describe anyone
+ * falls back to the whole document rather than producing an empty extraction.
+ */
+export function segmentByPeople(text: string, people: DetectedPerson[]): Map<string, string> {
   const segments = new Map<string, string>()
-
-  // Filter out people with no name — AI can return incomplete objects.
-  const validPeople = people.filter((p) => p && typeof p.name === 'string' && p.name.trim())
-  if (validPeople.length === 0) return segments
-
-  if (validPeople.length === 1) {
-    segments.set(validPeople[0].name, text)
+  const valid = validPeople(people)
+  if (valid.length === 0) return segments
+  if (valid.length === 1) {
+    segments.set(valid[0].name, text)
     return segments
   }
 
-  for (let i = 0; i < validPeople.length; i++) {
-    const person = validPeople[i]
-    const nextPerson = validPeople[i + 1]
-    const start = person.sectionStart
-    const end = nextPerson ? nextPerson.sectionStart : person.sectionEnd || text.length
-    const segment = text.slice(start, Math.min(end, text.length))
-    segments.set(person.name, segment)
-  }
+  const lower = text.toLowerCase()
+  const starts = valid.map((p) => {
+    const offset = Number(p.sectionStart)
+    if (Number.isFinite(offset) && offset >= 0 && offset < text.length) return offset
+    const at = lower.indexOf(p.name.toLowerCase())
+    return at >= 0 ? at : -1
+  })
+  const ordered = valid
+    .map((p, i) => ({ p, start: starts[i] }))
+    .sort((a, b) => (a.start < 0 ? Infinity : a.start) - (b.start < 0 ? Infinity : b.start))
 
+  for (let i = 0; i < ordered.length; i++) {
+    const { p, start } = ordered[i]
+    if (start < 0) {
+      segments.set(p.name, text)
+      continue
+    }
+    const nextStart = ordered.slice(i + 1).find((o) => o.start > start)?.start
+    const declaredEnd = Number(p.sectionEnd)
+    const end = nextStart ?? (Number.isFinite(declaredEnd) && declaredEnd > start ? Math.min(declaredEnd, text.length) : text.length)
+    const segment = text.slice(start, end)
+    segments.set(p.name, segment.trim().length >= MIN_SEGMENT_CHARS ? segment : text)
+  }
   return segments
 }
+
+const MIN_SEGMENT_CHARS = 80
 
 function buildEvidenceContext(facts: ExtractedFacts, projects: ExtractedProject[], rawText: string): string {
   const parts: string[] = []

@@ -11,6 +11,8 @@ export interface SpreadsheetParseResult {
   normalizedHeaders: string[]
   rows: SpreadsheetRow[]
   personGroups: Map<string, SpreadsheetRow[]>
+  /** Group key → the name as written in the sheet (case and accents kept). */
+  personDisplayNames: Map<string, string>
   detectedPeople: string[]
   warnings: string[]
 }
@@ -57,8 +59,11 @@ export async function parseSpreadsheet(buffer: ArrayBuffer, mimeType: string, fi
     inferredColumns: mapColumns(raw, rawHeaders, columnMapping),
   }))
 
-  const personGroups = groupRowsByPerson(rows, columnMapping)
-  const detectedPeople = [...personGroups.keys()].filter((n) => n && n.length > 1 && !n.startsWith('unassignedrow'))
+  const personDisplayNames = new Map<string, string>()
+  const personGroups = groupRowsByPerson(rows, columnMapping, personDisplayNames)
+  const detectedPeople = [...personGroups.keys()]
+    .filter((n) => n && n.length > 1 && !n.startsWith('__unassigned'))
+    .map((n) => personDisplayNames.get(n) ?? n)
 
   const warnings: string[] = []
   if (detectedPeople.length === 0) {
@@ -73,6 +78,7 @@ export async function parseSpreadsheet(buffer: ArrayBuffer, mimeType: string, fi
     normalizedHeaders,
     rows: rows.slice(0, 500),
     personGroups,
+    personDisplayNames,
     detectedPeople,
     warnings,
   }
@@ -145,7 +151,11 @@ function mapColumns(
   return result
 }
 
-function groupRowsByPerson(rows: SpreadsheetRow[], mapping: Record<string, string>): Map<string, SpreadsheetRow[]> {
+function groupRowsByPerson(
+  rows: SpreadsheetRow[],
+  mapping: Record<string, string>,
+  displayNames: Map<string, string> = new Map(),
+): Map<string, SpreadsheetRow[]> {
   const groups = new Map<string, SpreadsheetRow[]>()
   const nameHeaders = Object.entries(mapping).filter(([, v]) => v === 'name').map(([k]) => k)
 
@@ -179,7 +189,9 @@ function groupRowsByPerson(rows: SpreadsheetRow[], mapping: Record<string, strin
       personName = `__unassigned_row_${row.rowNumber}`
     }
 
-    const normalizedPerson = normalizePersonName(personName)
+    // Placeholder keys stay as-is so callers can recognise and skip them.
+    const normalizedPerson = personName.startsWith('__unassigned') ? personName : normalizePersonName(personName) || personName
+    if (!displayNames.has(normalizedPerson)) displayNames.set(normalizedPerson, personName.replace(/\s+/g, ' ').trim())
     if (!groups.has(normalizedPerson)) {
       groups.set(normalizedPerson, [])
     }
@@ -190,7 +202,8 @@ function groupRowsByPerson(rows: SpreadsheetRow[], mapping: Record<string, strin
 }
 
 export function normalizePersonName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim()
+  // Letters in any script count, so "José Núñez" keys as "josé núñez", not "jos nez".
+  return name.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim()
 }
 
 function levenshtein(a: string, b: string): number {

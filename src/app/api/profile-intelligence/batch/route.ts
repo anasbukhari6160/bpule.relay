@@ -4,6 +4,9 @@ import { safeErrorResponse } from '@/lib/errors'
 import { createServiceSupabase } from '@/lib/supabase/service'
 import type { ProfileImportBatch } from '@/lib/domain/types'
 import { profileAccess } from '@/lib/profile-intelligence/access'
+import { contentHash, resolveMimeType, sanitizeFilename } from '@/lib/profile-intelligence/parse-document'
+
+const BUCKET = 'profile-sources'
 
 const MAX_FILES = 20
 const MAX_BYTES = 20 * 1024 * 1024
@@ -86,104 +89,73 @@ export async function POST(request: Request) {
   let failed = 0
   const sourceRecords: Array<{ id: string; path: string }> = []
 
+  // A file rejected here is recorded as failed with its reason, so the
+  // processor reports that reason instead of a confusing download error.
+  const recordRejected = async (file: File, mimeType: string, parsingStatus: 'failed' | 'unsupported', message: string, storagePath = '', hash = '') => {
+    failed++
+    await client.from('profile_sources').insert({
+      organization_id: orgId,
+      import_batch_id: batchId,
+      storage_path: storagePath,
+      original_filename: file.name.slice(0, 200),
+      mime_type: mimeType || 'unknown',
+      file_size_bytes: file.size,
+      file_hash: hash,
+      parsing_status: parsingStatus,
+      extraction_status: 'failed',
+      error_message: message,
+      uploaded_by: uploadedBy,
+    })
+  }
+
   for (const file of files) {
-    if (file.size > MAX_BYTES) {
-      failed++
-      await client.from('profile_sources').insert({
-        organization_id: orgId,
-        import_batch_id: batchId,
-        storage_path: '',
-        original_filename: file.name.slice(0, 200),
-        mime_type: file.type || 'unknown',
-        file_size_bytes: file.size,
-        file_hash: '',
-        parsing_status: 'failed',
-        error_message: `File exceeds ${MAX_BYTES / 1024 / 1024} MB limit.`,
-        uploaded_by: uploadedBy,
-      })
+    const mimeType = resolveMimeType(file.type, file.name)
+    if (file.size === 0) {
+      await recordRejected(file, mimeType, 'failed', 'The file is empty.')
       continue
     }
-
-    if (!ALLOWED_MIME.has(file.type)) {
-      failed++
-      await client.from('profile_sources').insert({
-        organization_id: orgId,
-        import_batch_id: batchId,
-        storage_path: '',
-        original_filename: file.name.slice(0, 200),
-        mime_type: file.type || 'unknown',
-        file_size_bytes: file.size,
-        file_hash: '',
-        parsing_status: 'unsupported',
-        error_message: `Unsupported file type: ${file.type}`,
-        uploaded_by: uploadedBy,
-      })
+    if (file.size > MAX_BYTES) {
+      await recordRejected(file, mimeType, 'failed', `File exceeds the ${MAX_BYTES / 1024 / 1024} MB limit.`)
+      continue
+    }
+    if (!ALLOWED_MIME.has(mimeType)) {
+      await recordRejected(file, mimeType, 'unsupported', `Unsupported file type (${mimeType || 'unknown'}). Upload PDF, DOCX, TXT, CSV or XLSX.`)
       continue
     }
 
     try {
       const buffer = await file.arrayBuffer()
-      const { contentHash, sanitizeFilename } = await import('@/lib/profile-intelligence/parse-document')
       const hash = contentHash(new TextDecoder().decode(buffer))
-      const safeName = sanitizeFilename(file.name)
-      const storagePath = `${orgId}/${batchId}/${crypto.randomUUID()}_${safeName}`
+      const storagePath = `${orgId}/${batchId}/${crypto.randomUUID()}_${sanitizeFilename(file.name)}`
 
-      const { error: uploadError } = await client.storage
-        .from('profile-sources')
-        .upload(storagePath, new Uint8Array(buffer), {
-          contentType: file.type,
-          cacheControl: '3600',
-          upsert: false,
-        })
-
+      const uploadError = await uploadWithBucketCheck(client, storagePath, buffer, mimeType)
       if (uploadError) {
-        failed++
-        await client.from('profile_sources').insert({
-          organization_id: orgId,
-          import_batch_id: batchId,
-          storage_path: storagePath,
-          original_filename: file.name.slice(0, 200),
-          mime_type: file.type,
-          file_size_bytes: file.size,
-          file_hash: hash,
-          parsing_status: 'failed',
-          error_message: uploadError.message,
-          uploaded_by: uploadedBy,
-        })
+        await recordRejected(file, mimeType, 'failed', `Upload to storage failed: ${uploadError}`, storagePath, hash)
         continue
       }
 
-      const { data: sourceRecord } = await client.from('profile_sources').insert({
+      const { data: sourceRecord, error: insertError } = await client.from('profile_sources').insert({
         organization_id: orgId,
         import_batch_id: batchId,
         storage_path: storagePath,
         original_filename: file.name.slice(0, 200),
-        mime_type: file.type,
+        mime_type: mimeType,
         file_size_bytes: file.size,
         file_hash: hash,
         parsing_status: 'pending',
+        extraction_status: 'pending',
         uploaded_by: uploadedBy,
       }).select().single()
 
-      if (sourceRecord) {
-        sourceRecords.push({ id: sourceRecord.id as string, path: storagePath })
+      if (insertError || !sourceRecord) {
+        failed++
+        console.error('[profile-intelligence] source insert failed:', insertError?.message ?? 'no row')
+        continue
       }
+      sourceRecords.push({ id: sourceRecord.id as string, path: storagePath })
       processed++
     } catch (err) {
-      failed++
-      const msg = err instanceof Error ? err.message : 'Upload failed'
-      await client.from('profile_sources').insert({
-        organization_id: orgId,
-        import_batch_id: batchId,
-        storage_path: '',
-        original_filename: file.name.slice(0, 200),
-        mime_type: file.type || 'unknown',
-        file_size_bytes: file.size,
-        file_hash: '',
-        parsing_status: 'failed',
-        error_message: msg,
-        uploaded_by: uploadedBy,
-      })
+      await recordRejected(file, mimeType, 'failed', err instanceof Error ? err.message : 'Upload failed')
     }
   }
 
@@ -210,4 +182,29 @@ export async function POST(request: Request) {
     processed,
     failed,
   })
+}
+
+/**
+ * Upload to the profile-sources bucket. When the bucket is missing (fresh
+ * project, migration not run) it is created as a private bucket and the
+ * upload retried once. Returns an error message, or null on success.
+ */
+async function uploadWithBucketCheck(
+  client: ReturnType<typeof createServiceSupabase>,
+  path: string,
+  buffer: ArrayBuffer,
+  contentType: string,
+): Promise<string | null> {
+  const upload = () => client.storage.from(BUCKET).upload(path, new Uint8Array(buffer), { contentType, cacheControl: '3600', upsert: false })
+  const first = await upload()
+  if (!first.error) return null
+  if (!/bucket not found|not found/i.test(first.error.message)) return first.error.message
+  const { error: createError } = await client.storage.createBucket(BUCKET, {
+    public: false,
+    fileSizeLimit: MAX_BYTES,
+    allowedMimeTypes: [...ALLOWED_MIME],
+  })
+  if (createError && !/already exists/i.test(createError.message)) return `${first.error.message}; creating the storage bucket also failed: ${createError.message}`
+  const second = await upload()
+  return second.error ? second.error.message : null
 }

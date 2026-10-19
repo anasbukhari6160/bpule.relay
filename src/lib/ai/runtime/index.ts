@@ -144,6 +144,69 @@ export interface GenerateOptions {
   callSite?: string
   /** Feature that initiated this call (e.g. 'prospect_analysis', 'connection_note') */
   feature?: string
+  /**
+   * Opt-in retry of the whole provider chain when every provider failed for a
+   * transient reason (rate limit, timeout, overload, circuit-breaker cooldown).
+   * Waits with exponential backoff and never sleeps past `deadline` (epoch ms).
+   * Off by default, so existing callers behave exactly as before.
+   */
+  retry?: AiRetryOptions
+}
+
+export interface AiRetryOptions {
+  /** Extra attempts after the first (0 = no retry). */
+  attempts: number
+  /** First wait; doubles each attempt (with jitter). Default 2s. */
+  baseDelayMs?: number
+  /** Longest single wait. Default 20s. */
+  maxDelayMs?: number
+  /** Give up instead of waiting past this time (epoch ms). */
+  deadline?: number
+}
+
+// Rate limits, timeouts, overload and provider cooldowns clear with time;
+// missing credentials, budget blocks and bad requests do not.
+const RETRYABLE_AI_ERROR = /\b(?:429|rate[ _-]?limit|too many requests|quota|timeout|timed out|aborted|abort|overloaded|unavailable|503|502|500|504|econnreset|etimedout|socket hang up|fetch failed|network|skipped_unhealthy|empty_output|unable to normalize|malformed)\b/i
+const NON_RETRYABLE_AI_ERROR = /\b(?:budget exceeded|missing_credentials|invalid api key|unauthorized|401|403)\b/i
+
+export function isRetryableAiError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (NON_RETRYABLE_AI_ERROR.test(msg)) return false
+  // Every provider skipped for missing credentials: nothing will change by waiting.
+  if (/All providers failed: $/.test(msg)) return false
+  return RETRYABLE_AI_ERROR.test(msg)
+}
+
+/** Backoff delay for a retry attempt (1-based), with up to 25% jitter. */
+export function aiRetryDelay(attempt: number, opts: AiRetryOptions, random: () => number = Math.random): number {
+  const base = opts.baseDelayMs ?? 2_000
+  const max = opts.maxDelayMs ?? 20_000
+  const raw = Math.min(max, base * 2 ** (attempt - 1))
+  return Math.round(raw * (1 + random() * 0.25))
+}
+
+/**
+ * Run `fn`, retrying transient AI failures with exponential backoff. Pure
+ * apart from `sleep`/`now`, which tests replace.
+ */
+export async function withAiRetry<T>(
+  fn: () => Promise<T>,
+  opts: AiRetryOptions | undefined,
+  deps: { sleep?: (ms: number) => Promise<void>; now?: () => number; random?: () => number } = {},
+): Promise<T> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const now = deps.now ?? Date.now
+  const attempts = Math.max(0, opts?.attempts ?? 0)
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (!opts || attempt >= attempts || !isRetryableAiError(err)) throw err
+      const wait = aiRetryDelay(attempt + 1, opts, deps.random)
+      if (opts.deadline && now() + wait >= opts.deadline) throw err
+      await sleep(wait)
+    }
+  }
 }
 
 export interface GenerateResult<T> {
@@ -162,6 +225,13 @@ function cacheKey(opts: Pick<GenerateOptions, 'task' | 'system' | 'user' | 'prom
 
 
 export async function generate<T = Record<string, unknown>>(
+  options: GenerateOptions,
+): Promise<GenerateResult<T>> {
+  if (!options.retry || options.retry.attempts <= 0) return generateOnce<T>(options)
+  return withAiRetry(() => generateOnce<T>(options), options.retry)
+}
+
+async function generateOnce<T>(
   options: GenerateOptions,
 ): Promise<GenerateResult<T>> {
   const profile = TASK_PROFILES[options.task]
