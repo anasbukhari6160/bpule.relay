@@ -123,16 +123,17 @@ export async function POST(
       .update({ parsing_status: 'parsing', extraction_status: 'extracting', updated_at: new Date().toISOString() })
       .eq('id', nextSource.id)
 
-    const { data: fileData } = await client.storage
+    const { data: fileData, error: downloadError } = await client.storage
       .from('profile-sources')
       .download(nextSource.storage_path)
 
-    if (!fileData) {
+    if (!fileData || downloadError) {
+      const msg = downloadError?.message || 'File not found in storage.'
       await client
         .from('profile_sources')
-        .update({ parsing_status: 'failed', extraction_status: 'failed', error_message: 'File not found in storage.' })
+        .update({ parsing_status: 'failed', extraction_status: 'failed', error_message: `Download failed: ${msg} (path: ${nextSource.storage_path})` })
         .eq('id', nextSource.id)
-      return NextResponse.json({ batch_id: batchId, done: false, status: 'parsing', error: 'File not found.' })
+      throw new Error(`Download failed: ${msg}`)
     }
 
     const buffer = await fileData.arrayBuffer()
