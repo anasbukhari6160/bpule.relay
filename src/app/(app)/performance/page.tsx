@@ -62,10 +62,7 @@ export default async function PerformancePage({
         <ContributionHeatmap
           daily={result.daily}
           timezone={timezone}
-          onDayClick={(day) => {
-            // Navigate to day detail (client-side)
-            window.location.href = `/performance?range=${range}&date=${day.date}`
-          }}
+          dayHref={`/performance?range=${encodeURIComponent(range)}&date={date}`}
         />
       </section>
 

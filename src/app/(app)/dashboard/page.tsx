@@ -78,12 +78,6 @@ export default async function TodayPage({
 
   return (
     <Suspense fallback={<DashboardShellSkeleton />}>
-      {process.env.NODE_ENV === 'development' && (
-        <details className="mb-4 rounded-lg border border-line bg-bone-raised/30 px-4 py-2 text-xs">
-          <summary className="cursor-pointer font-medium text-stone">Debug: RepWorkspaceData</summary>
-          <pre className="mt-2 overflow-auto text-[10px] text-graphite">{JSON.stringify(repData, null, 2)}</pre>
-        </details>
-      )}
       <RepDashboard data={repData} />
       <div className="mt-10">{analytics}</div>
     </Suspense>

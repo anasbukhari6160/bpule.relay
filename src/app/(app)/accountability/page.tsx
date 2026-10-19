@@ -1,13 +1,12 @@
-import { Target, TrendingUp, CheckCircle2, Clock, ArrowRight } from 'lucide-react'
-import { cn } from 'cn'
+import { ChevronRight, Send, MessageSquare, Bell, Reply, Trophy, Activity } from 'lucide-react'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getCurrentUser } from '@/lib/auth/current'
 import { getAuthContext } from '@/lib/auth/organization'
-import { createScoutStore } from '@/lib/store'
+import { isProductAdmin } from '@/lib/auth/admin-page'
 import { createServerSupabase } from '@/lib/supabase/server'
-import { getRepAccountability } from '@/lib/accountability/metrics'
-import { PageHeader } from '@/components/ui/page-header'
+import { getRepAccountability, type DailyMetrics, type LeadJourney } from '@/lib/accountability/metrics'
+import { DashHeader, EmptyNote, Panel, Pill, StatTile } from '@/components/dashboard/kit'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,141 +15,116 @@ export default async function RepAccountabilityPage() {
   if (!user) redirect('/login')
   const authCtx = await getAuthContext()
   if (!authCtx) redirect('/login')
+  // Admins track the team, not a personal scorecard.
+  if (isProductAdmin(user, authCtx)) redirect('/admin/accountability')
 
-  const store = await createScoutStore()
   const client = await createServerSupabase()
   const accountability = await getRepAccountability(client, authCtx.repId, user.rep.name)
+  const { today, week, month } = accountability
 
-  const pendingLeads = accountability.openLeads.filter(
-    (l) => !l.hasReply && l.connectionSent && !l.dmSent,
-  )
   const needsReply = accountability.openLeads.filter((l) => l.hasReply)
-  const needsFollowup = accountability.openLeads.filter(
-    (l) => l.dmSent && !l.hasReply,
-  )
+  const needsFollowup = accountability.openLeads.filter((l) => l.dmSent && !l.hasReply)
+  const pendingDm = accountability.openLeads.filter((l) => !l.hasReply && l.connectionSent && !l.dmSent)
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Your Accountability"
-        description="One action = one meaningful outreach step. Here's where you stand."
+      <DashHeader
+        eyebrow="My numbers"
+        title={today.totalActions > 0 ? `${today.totalActions} actions today` : 'No actions yet today'}
+        subtitle="One action = one real outreach step a client can see. Here is where you stand."
+        actions={<Link href="/performance" className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bone-raised px-3 py-1.5 text-[12px] font-medium text-ink hover:border-ink/20">Full history<ChevronRight className="size-3.5" aria-hidden="true" /></Link>}
       />
 
-      {/* Today Stats */}
-      <section className="rounded-2xl border border-line bg-bone-raised/20 p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <Target className="size-4 text-cobalt" />
-          <h2 className="text-sm font-medium text-ink">Today</h2>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <StatCard label="Connections" value={accountability.today.connectionsSent} />
-          <StatCard label="DMs" value={accountability.today.dmsSent} />
-          <StatCard label="Follow-ups" value={accountability.today.followupsSent} />
-          <StatCard label="Replies" value={accountability.today.repliesSent} />
-          <StatCard label="Won" value={accountability.today.leadsWon} highlight />
-        </div>
-        <div className="mt-4 pt-4 border-t border-line flex items-center justify-between">
-          <div>
-            <p className="text-lg font-semibold text-ink">{accountability.today.totalActions} total actions</p>
-            <p className="text-[12px] text-stone">Response rate: {accountability.today.responseRate}%</p>
-          </div>
-          <div className="text-right">
-            <p className="text-sm text-stone">Week: <strong className="text-ink">{accountability.week.totalActions}</strong></p>
-            <p className="text-sm text-stone">Month: <strong className="text-ink">{accountability.month.totalActions}</strong></p>
-          </div>
-        </div>
-      </section>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <StatTile label="Connections" value={today.connectionsSent} icon={<Send className="size-3.5" />} />
+        <StatTile label="First DMs" value={today.dmsSent} icon={<MessageSquare className="size-3.5" />} />
+        <StatTile label="Follow-ups" value={today.followupsSent} icon={<Bell className="size-3.5" />} />
+        <StatTile label="Replies sent" value={today.repliesSent} icon={<Reply className="size-3.5" />} />
+        <StatTile label="Won" value={today.leadsWon} tone={today.leadsWon > 0 ? 'success' : 'neutral'} icon={<Trophy className="size-3.5" />} />
+        <StatTile label="Response rate" value={today.outreachActions > 0 ? `${today.responseRate}%` : '—'} tone="cobalt" icon={<Activity className="size-3.5" />} sub="Client replies ÷ outreach" />
+      </div>
 
-      {/* What to do next */}
-      {needsReply.length > 0 && (
-        <Section icon={<TrendingUp className="size-4 text-orange" />} title="Needs Your Reply">
-          {needsReply.slice(0, 5).map((lead) => (
-            <LeadRow key={lead.leadId} lead={lead} label="Reply" href={`/leads/${lead.leadId}`} />
+      <Panel title="Today, this week, this month" flush>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] text-[12px]">
+            <thead>
+              <tr className="border-b border-line text-right text-[10px] uppercase tracking-[0.1em] text-stone">
+                <th scope="col" className="px-4 py-2 text-left font-medium sm:px-5">Period</th>
+                <th scope="col" className="px-2 py-2 font-medium">Conn.</th>
+                <th scope="col" className="px-2 py-2 font-medium">DMs</th>
+                <th scope="col" className="px-2 py-2 font-medium">Follow-ups</th>
+                <th scope="col" className="px-2 py-2 font-medium">Replies</th>
+                <th scope="col" className="px-2 py-2 font-medium">Client replies</th>
+                <th scope="col" className="px-2 py-2 font-medium">Won</th>
+                <th scope="col" className="px-4 py-2 font-medium sm:px-5">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line/60">
+              <PeriodRow label="Today" m={today} />
+              <PeriodRow label="This week" m={week} />
+              <PeriodRow label="This month" m={month} />
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <LeadQueue title="Needs your reply" hint="Clients who answered" leads={needsReply} cta="Reply" tone="orange" />
+        <LeadQueue title="Follow-up due" hint="Messaged, no answer yet" leads={needsFollowup} cta="Follow up" tone="cobalt" />
+        <LeadQueue title="Send first DM" hint="Connected, not messaged" leads={pendingDm} cta="Send DM" tone="neutral" />
+      </div>
+
+      <details className="group rounded-xl border border-line bg-bone-raised px-5 py-3 text-[12px]">
+        <summary className="cursor-pointer list-none font-medium text-ink marker:hidden">
+          <span className="inline-flex items-center gap-1.5"><ChevronRight className="size-3.5 text-stone transition-transform group-open:rotate-90" aria-hidden="true" />What counts as an action</span>
+        </summary>
+        <dl className="mt-3 grid gap-x-6 gap-y-2 text-graphite sm:grid-cols-2">
+          <div><dt className="inline font-medium text-ink">Connection</dt> <dd className="inline">— you sent a LinkedIn connection note</dd></div>
+          <div><dt className="inline font-medium text-ink">First DM</dt> <dd className="inline">— your first message to a connected lead</dd></div>
+          <div><dt className="inline font-medium text-ink">Follow-up</dt> <dd className="inline">— you re-engaged a lead that went quiet</dd></div>
+          <div><dt className="inline font-medium text-ink">Reply</dt> <dd className="inline">— you answered a client&apos;s message</dd></div>
+          <div><dt className="inline font-medium text-ink">Won</dt> <dd className="inline">— a lead you converted</dd></div>
+        </dl>
+      </details>
+    </div>
+  )
+}
+
+function PeriodRow({ label, m }: { label: string; m: DailyMetrics }) {
+  return (
+    <tr className="text-right tabular-nums text-graphite">
+      <th scope="row" className="px-4 py-2.5 text-left text-[13px] font-medium text-ink sm:px-5">{label}</th>
+      <td className="px-2 py-2.5">{m.connectionsSent}</td>
+      <td className="px-2 py-2.5">{m.dmsSent}</td>
+      <td className="px-2 py-2.5">{m.followupsSent}</td>
+      <td className="px-2 py-2.5">{m.repliesSent}</td>
+      <td className="px-2 py-2.5">{m.repliesReceived}</td>
+      <td className={m.leadsWon > 0 ? 'px-2 py-2.5 font-medium text-status-success' : 'px-2 py-2.5'}>{m.leadsWon}</td>
+      <td className="px-4 py-2.5 text-[13px] font-medium text-ink sm:px-5">{m.totalActions}</td>
+    </tr>
+  )
+}
+
+function LeadQueue({ title, hint, leads, cta, tone }: { title: string; hint: string; leads: LeadJourney[]; cta: string; tone: 'orange' | 'cobalt' | 'neutral' }) {
+  return (
+    <Panel title={title} subtitle={hint} action={<Pill tone={leads.length > 0 ? tone : 'neutral'}>{leads.length}</Pill>} flush>
+      {leads.length === 0 ? (
+        <EmptyNote>Nothing here right now.</EmptyNote>
+      ) : (
+        <ul className="divide-y divide-line/70">
+          {leads.slice(0, 6).map((lead) => (
+            <li key={lead.leadId}>
+              <Link href={`/leads/${lead.leadId}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-bone sm:px-5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] text-ink">{lead.company}</p>
+                  <p className="truncate text-[11px] text-stone">{lead.contactName || 'Contact'} · score {lead.score}</p>
+                </div>
+                <span className="shrink-0 text-[11px] font-medium text-cobalt">{cta}</span>
+              </Link>
+            </li>
           ))}
-        </Section>
-      )}
-
-      {needsFollowup.length > 0 && (
-        <Section icon={<Clock className="size-4 text-cobalt" />} title="Follow-Up Due">
-          {needsFollowup.slice(0, 5).map((lead) => (
-            <LeadRow key={lead.leadId} lead={lead} label="Follow up" href={`/leads/${lead.leadId}`} />
-          ))}
-        </Section>
-      )}
-
-      {pendingLeads.length > 0 && (
-        <Section icon={<ArrowRight className="size-4 text-stone" />} title="Send First DM">
-          {pendingLeads.slice(0, 5).map((lead) => (
-            <LeadRow key={lead.leadId} lead={lead} label="Send DM" href={`/leads/${lead.leadId}`} />
-          ))}
-        </Section>
-      )}
-
-      {/* Action Definition */}
-      <section className="rounded-2xl border border-line bg-bone-raised/20 p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <CheckCircle2 className="size-4 text-cobalt" />
-          <h2 className="text-sm font-medium text-ink">What counts as an action</h2>
-        </div>
-        <ul className="space-y-2 text-[12px] text-graphite">
-          <li className="flex items-start gap-2">
-            <span className="mt-0.5 size-1.5 rounded-full bg-cobalt shrink-0" />
-            <span><strong className="text-ink">Connection sent</strong> — You sent a LinkedIn connection note</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-0.5 size-1.5 rounded-full bg-cobalt shrink-0" />
-            <span><strong className="text-ink">DM sent</strong> — You sent a first message to a connected lead</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-0.5 size-1.5 rounded-full bg-cobalt shrink-0" />
-            <span><strong className="text-ink">Follow-up sent</strong> — You re-engaged a non-responsive lead</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-0.5 size-1.5 rounded-full bg-cobalt shrink-0" />
-            <span><strong className="text-ink">Reply sent</strong> — You responded to a client's message</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-0.5 size-1.5 rounded-full bg-status-success shrink-0" />
-            <span><strong className="text-ink">Lead won</strong> — Lead converted successfully</span>
-          </li>
         </ul>
-      </section>
-    </div>
-  )
-}
-
-function Section({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-2xl border border-line overflow-hidden">
-      <div className="px-5 py-3 border-b border-line flex items-center gap-2">
-        {icon}
-        <h2 className="text-sm font-medium text-ink">{title}</h2>
-      </div>
-      <div className="divide-y divide-line/50">{children}</div>
-    </section>
-  )
-}
-
-function LeadRow({ lead, label, href }: { lead: { leadId: string; company: string; contactName: string; score: number }; label: string; href: string }) {
-  return (
-    <Link href={href} className="flex items-center justify-between px-5 py-3 hover:bg-bone-raised/30 transition-colors">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-ink truncate">{lead.company}</p>
-        <p className="text-[11px] text-stone truncate">{lead.contactName}</p>
-      </div>
-      <div className="flex items-center gap-3 shrink-0">
-        <span className="text-[11px] text-stone">Score: {lead.score}</span>
-        <span className="rounded-full bg-orange/10 px-2 py-0.5 text-[11px] font-medium text-orange">{label}</span>
-      </div>
-    </Link>
-  )
-}
-
-function StatCard({ label, value, highlight }: { label: string; value: number; highlight?: boolean }) {
-  return (
-    <div className={cn('rounded-xl border p-3', highlight ? 'border-status-success/30 bg-status-success/5' : 'border-line bg-bone')}>
-      <p className="text-[11px] text-stone">{label}</p>
-      <p className={cn('text-xl font-semibold mt-1', highlight ? 'text-status-success' : 'text-ink')}>{value}</p>
-    </div>
+      )}
+    </Panel>
   )
 }

@@ -1,305 +1,451 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { motion } from 'motion/react'
+import Link from 'next/link'
+import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Send, Reply, MessagesSquare, FileText, Trophy, Search, Lightbulb } from 'lucide-react'
+import { cn } from 'cn'
+import { DashHeader, EmptyNote, Initials, Meter, Panel, Pill, StatTile, type Tone } from '@/components/dashboard/kit'
 
 interface FunnelData { extracted: number; qualified: number; contacted: number; replied: number; qualifiedConversations: number; calls: number; proposals: number; won: number; lost: number }
-interface AIStats { totalCalls: number; totalCost: number; avgExtractionTime: number; p50Latency: number; p95Latency: number; providers: Array<{ provider: string; total: number; fallback: number; errors: number; avgLatency: number; totalCost: number }> }
-interface RepPerformance { repId: string; extracted: number; qualified: number; contacted: number; replies: number; qualifiedConversations: number; calls: number; proposals: number; wins: number; losses: number; targetProgress: number }
-interface ActivityItem { id: string; timestamp: string; eventType: string; actorId: string | null; entityId: string | null; prospectName: string | null; company: string | null; revenueIdentityName: string | null; payload: Record<string, unknown> | null }
+interface RepPerformance { repId: string; repName: string; extracted: number; qualified: number; contacted: number; replies: number; qualifiedConversations: number; calls: number; proposals: number; wins: number; losses: number; targetProgress: number }
+interface ActivityItem { id: string; timestamp: string; eventType: string; actorName: string | null; entityId: string | null; prospectName: string | null; company: string | null; revenueIdentityName: string | null }
 interface DashboardData {
   range: { start: string; end: string }
   funnel: FunnelData
   conversationStages: Record<string, number>
-  extraction: { total: number; successful: number; failed: number; aiExtractions: number; fallbackExtractions: number; avgExtractionTime: number; failedExtractions: number }
-  ai: AIStats
-  messages: { total: number; generatedOnly: number; reviewed: number; unchanged: number; lightEdit: number; heavyEdit: number; rejected: number; dispositions: Record<string, number> }
-  relayVsHuman: { relayActions: Record<string, number>; humanActions: Record<string, number> }
   reps: RepPerformance[]
-  identities: Array<{ id: string; name: string; slug: string; title: string; channel: string; status: string }>
+  identityPerformance?: Array<{ id: string; name: string; channel: string; leads: number; contacted: number; replies: number; wins: number }>
+  daily?: Array<{ date: string; outreach: number; replies: number; wins: number }>
   sourcePerformance: Array<{ source: string; extracted: number; qualified: number; contacted: number; replies: number }>
   fitDistribution: Record<string, number>
-  confidenceDistribution: { high: number; medium: number; low: number }
-  qualificationDistribution: Record<string, number>
   activityFeed: ActivityItem[]
   targets: { total: number; totalTarget: number; totalCompleted: number }
-  insights: Array<{ id: string; type: string; severity: string; title: string; explanation: string; sampleSize?: number; confidence: string; suggestedInvestigation?: string }>
-  dataHealth: Record<string, { health: string; reason?: string }>
-  costCoverage: number
-  latencyHealth: { health: string; reason?: string }
-  fallbackBreakdown: { demoMode: number; productionFailures: number; byReason: Record<string, number> }
+  insights: Array<{ id: string; type: string; severity: string; title: string; explanation: string }>
 }
 
 const RANGE_OPTIONS = [
   { label: 'Today', value: 'today' },
-  { label: '7 days', value: '7d' },
-  { label: '30 days', value: '30d' },
+  { label: '7d', value: '7d' },
+  { label: '30d', value: '30d' },
+  { label: '90d', value: '90d' },
 ]
 
-function fmt(n: number) { return n.toLocaleString() }
+const EVENT_LABEL: Record<string, string> = {
+  PROSPECT_ANALYZED: 'Analyzed a prospect',
+  PROSPECT_CAPTURED: 'Captured a prospect',
+  LEAD_QUALIFIED: 'Qualified a lead',
+  OUTREACH_RECORDED: 'Sent outreach',
+  FOLLOWUP_RECORDED: 'Sent a follow-up',
+  CLIENT_REPLIED: 'Client replied',
+  INTENT_DETECTED: 'Buying intent detected',
+  CONVERSATION_ADVANCED: 'Conversation advanced',
+  OUTCOME_RECORDED: 'Outcome recorded',
+}
+
+const FIT_ORDER = ['Strong', 'Maybe', 'Weak', 'Not a fit']
+const FIT_COLOR: Record<string, string> = { Strong: 'bg-status-success', Maybe: 'bg-cobalt', Weak: 'bg-orange-light', 'Not a fit': 'bg-stone-light' }
+
+const rate = (num: number, den: number): number | null => (den > 0 ? num / den : null)
+const pct = (v: number | null) => (v == null ? '—' : `${Math.round(v * 100)}%`)
+
+function humanize(s: string): string {
+  const t = s.replace(/[_-]+/g, ' ').trim().toLowerCase()
+  return t ? t[0].toUpperCase() + t.slice(1) : 'Unknown'
+}
+
+function relative(iso: string): string {
+  const diff = Date.now() - Date.parse(iso)
+  const m = Math.floor(diff / 60_000)
+  if (m < 60) return `${Math.max(1, m)}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
+function shortDate(key: string): string {
+  return new Date(`${key}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
 
 export function RevenueIntelligenceDashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [range, setRange] = useState('30d')
-  const [activeTab, setActiveTab] = useState<'overview' | 'funnel' | 'team' | 'quality' | 'activity'>('overview')
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null)
     try {
       const res = await fetch(`/api/admin/revenue-intelligence?range=${range}`, { credentials: 'include' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) throw new Error(res.status === 403 ? 'You do not have access to revenue data.' : 'Revenue data could not load. Refresh to try again.')
       setData(await res.json())
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load') }
     finally { setLoading(false) }
   }, [range])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => { void fetchData() }, [fetchData])
 
-  if (loading) return <div className="text-[13px] text-graphite py-12 text-center">Loading intelligence…</div>
-  if (error) return <div className="text-[13px] text-status-danger py-12 text-center">{error}</div>
-  if (!data) return <div className="text-[13px] text-graphite py-12 text-center">No data for this period.</div>
-
-  const maxFunnel = Math.max(data.funnel.extracted, data.funnel.qualified, data.funnel.contacted, data.funnel.replied, 1)
-  const tabs = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'funnel', label: 'Funnel' },
-    { key: 'team', label: 'Team' },
-    { key: 'quality', label: 'Quality' },
-    { key: 'activity', label: 'Activity' },
-  ] as const
+  const rangeLabel = range === 'today' ? 'today' : `last ${range.replace('d', '')} days`
 
   return (
     <div className="space-y-6">
-      {/* Range selector */}
-      <div className="flex items-center gap-2">
-        <span className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone mr-2">Period</span>
-        {RANGE_OPTIONS.map((opt) => (
-          <button key={opt.value} onClick={() => setRange(opt.value)}
-            className={`rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${range === opt.value ? 'bg-ink text-bone' : 'border border-line text-graphite hover:text-ink'}`}>
-            {opt.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-4 border-b border-line">
-        {tabs.map((tab) => (
-          <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-            className={`pb-2.5 text-[13px] font-medium transition-colors ${activeTab === tab.key ? 'text-ink border-b-2 border-orange' : 'text-stone hover:text-ink'}`}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Overview */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-          {/* Insights */}
-          {data.insights && data.insights.length > 0 && (
-            <section className="rounded-lg border border-orange/20 bg-orange/5 p-5 space-y-3">
-              <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Intelligence</p>
-              {data.insights.map((insight) => (
-                <div key={insight.id} className="flex items-start gap-3">
-                  <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${insight.severity === 'ACTION' ? 'bg-status-danger/10 text-status-danger' : insight.severity === 'WATCH' ? 'bg-status-warning/10 text-status-warning' : 'bg-cobalt/10 text-cobalt'}`}>
-                    {insight.severity}
-                  </span>
-                  <div>
-                    <p className="text-[13px] font-medium text-ink">{insight.title}</p>
-                    <p className="text-[12px] text-graphite">{insight.explanation}</p>
-                  </div>
-                </div>
-              ))}
-            </section>
-          )}
-
-          {/* KPI Grid */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <KPICard label="Extracted" value={fmt(data.funnel.extracted)} subtext="prospects" accent="neutral" />
-            <KPICard label="Qualified" value={fmt(data.funnel.qualified)} subtext={`${data.funnel.extracted > 0 ? Math.round((data.funnel.qualified / data.funnel.extracted) * 100) : 0}% conversion`} accent="cobalt" />
-            <KPICard label="Contacted" value={fmt(data.funnel.contacted)} subtext="reached out" accent="cobalt" />
-            <KPICard label="Replies" value={fmt(data.funnel.replied)} subtext={`${data.funnel.contacted > 0 ? Math.round((data.funnel.replied / data.funnel.contacted) * 100) : 0}% reply rate`} accent="success" />
-            <KPICard label="Qual Convos" value={fmt(data.funnel.qualifiedConversations)} subtext="meaningful" accent="success" />
-            <KPICard label="Proposals" value={fmt(data.funnel.proposals)} subtext="sent" accent="orange" />
-            <KPICard label="Wins" value={fmt(data.funnel.won)} subtext="closed" accent="success" />
-            <KPICard label="AI Cost" value={`$${data.ai.totalCost.toFixed(2)}`} subtext={`P50: ${data.ai.p50Latency}ms`} accent="neutral" />
-          </div>
-
-          {/* Funnel visualization */}
-          <div className="rounded-lg border border-line p-5 space-y-3">
-            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Funnel</p>
-            <FunnelBar label="Extracted" value={data.funnel.extracted} max={maxFunnel} color="bg-ink" />
-            <FunnelBar label="Qualified" value={data.funnel.qualified} max={maxFunnel} color="bg-cobalt" />
-            <FunnelBar label="Contacted" value={data.funnel.contacted} max={maxFunnel} color="bg-cobalt-light" />
-            <FunnelBar label="Replied" value={data.funnel.replied} max={maxFunnel} color="bg-orange" />
-            <FunnelBar label="Qual Convos" value={data.funnel.qualifiedConversations} max={maxFunnel} color="bg-orange-light" />
-            <FunnelBar label="Wins" value={data.funnel.won} max={maxFunnel} color="bg-status-success" />
-            <FunnelBar label="Lost" value={data.funnel.lost} max={maxFunnel} color="bg-status-danger" />
-          </div>
-        </div>
-      )}
-
-      {/* Funnel tab */}
-      {activeTab === 'funnel' && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-lg border border-line p-5 space-y-3">
-            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Pipeline</p>
-            {['Extracted', 'Qualified', 'Contacted', 'Replied', 'Qual Convos', 'Calls', 'Proposals', 'Wins', 'Lost'].map((label) => {
-              const key = label.toLowerCase().replace(' ', '') as keyof FunnelData
-              const val = data.funnel[key] ?? 0
-              return <FunnelBar key={label} label={label} value={val} max={maxFunnel} color={val > 0 ? 'bg-cobalt' : 'bg-line'} />
-            })}
-          </div>
-          <div className="rounded-lg border border-line p-5 space-y-3">
-            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-stone">Conversation Stages</p>
-            {Object.keys(data.conversationStages).length === 0 ? (
-              <p className="text-[13px] text-graphite">No conversation stages recorded.</p>
-            ) : (
-              Object.entries(data.conversationStages).map(([stage, count]) => (
-                <FunnelBar key={stage} label={stage} value={count} max={Math.max(...Object.values(data.conversationStages), 1)} color="bg-cobalt" />
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Team tab */}
-      {activeTab === 'team' && (
-        <div className="space-y-4">
-          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-ststone">Team Performance</p>
-          {data.reps.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-line py-12 text-center">
-              <p className="text-[13px] text-graphite">No rep activity in this period.</p>
-            </div>
-          ) : (
-            <div className="rounded-lg border border-line overflow-hidden">
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="border-b border-line bg-bone-raised">
-                    {['Rep', 'Extracted', 'Qualified', 'Contacted', 'Replies', 'Convos', 'Proposals', 'Wins', 'Target %'].map((h) => (
-                      <th key={h} className="text-left px-3 py-2 font-medium text-stone text-mono-medium text-[9px] uppercase tracking-wider">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.reps.map((rep) => (
-                    <tr key={rep.repId} className="border-b border-line/50 hover:bg-bone/50">
-                      <td className="px-3 py-2 font-medium text-ink">{rep.repId.slice(0, 8)}</td>
-                      <td className="px-3 py-2 text-graphite">{rep.extracted}</td>
-                      <td className="px-3 py-2 text-graphite">{rep.qualified}</td>
-                      <td className="px-3 py-2 text-graphite">{rep.contacted}</td>
-                      <td className="px-3 py-2 text-graphite">{rep.replies}</td>
-                      <td className="px-3 py-2 text-graphite">{rep.qualifiedConversations}</td>
-                      <td className="px-3 py-2 text-graphite">{rep.proposals}</td>
-                      <td className="px-3 py-2 text-status-success font-medium">{rep.wins}</td>
-                      <td className="px-3 py-2 text-graphite">{rep.targetProgress}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <KPICard label="Active Targets" value={fmt(data.targets.total)} accent="neutral" />
-            <KPICard label="Total Target" value={fmt(data.targets.totalTarget)} accent="cobalt" />
-            <KPICard label="Completed" value={fmt(data.targets.totalCompleted)} subtext={data.targets.totalTarget > 0 ? `${Math.round((data.targets.totalCompleted / data.targets.totalTarget) * 100)}%` : undefined} accent="success" />
-          </div>
-        </div>
-      )}
-
-      {/* Quality tab */}
-      {activeTab === 'quality' && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-lg border border-line p-5 space-y-3">
-            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-ststone">Fit Distribution</p>
-            {Object.entries(data.fitDistribution).map(([fit, count]) => (
-              <FunnelBar key={fit} label={fit} value={count} max={Math.max(...Object.values(data.fitDistribution), 1)} color="bg-cobalt" />
+      <DashHeader
+        eyebrow="Admin · Revenue"
+        title="Pipeline and revenue"
+        subtitle={`From first touch to closed deal, ${rangeLabel}. Leads count once per stage they reached.`}
+        actions={
+          <div role="group" aria-label="Time range" className="inline-flex rounded-lg border border-line bg-bone p-0.5">
+            {RANGE_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setRange(o.value)}
+                aria-pressed={range === o.value}
+                className={cn('rounded-md px-3 py-1 text-[12px] font-medium transition-colors', range === o.value ? 'bg-bone-raised text-ink shadow-sm' : 'text-stone hover:text-ink')}
+              >
+                {o.label}
+              </button>
             ))}
           </div>
-          <div className="rounded-lg border border-line p-5 space-y-3">
-            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-ststone">AI Provider Health</p>
-            {data.ai.providers.length === 0 ? (
-              <p className="text-[13px] text-graphite">No AI traces in this period.</p>
-            ) : (
-              <table className="w-full text-[12px]">
-                <thead><tr className="border-b border-line">{['Provider', 'Calls', 'Fallback', 'Errors', 'Cost'].map(h => (<th key={h} className="text-left px-2 py-1.5 text-stone text-mono-medium text-[9px] uppercase tracking-wider">{h}</th>))}</tr></thead>
-                <tbody>
-                  {data.ai.providers.map((p) => (
-                    <tr key={p.provider} className="border-b border-line/50">
-                      <td className="px-2 py-1.5 font-medium text-ink">{p.provider}</td>
-                      <td className="px-2 py-1.5 text-graphite">{p.total}</td>
-                      <td className="px-2 py-1.5 text-graphite">{p.fallback}</td>
-                      <td className="px-2 py-1.5 text-graphite">{p.errors}</td>
-                      <td className="px-2 py-1.5 text-graphite">${p.totalCost.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            <div className="grid grid-cols-2 gap-3 mt-4">
-              <KPICard label="P50 Latency" value={`${data.ai.p50Latency}ms`} accent="neutral" />
-              <KPICard label="P95 Latency" value={`${data.ai.p95Latency}ms`} accent="neutral" />
-            </div>
-          </div>
-        </div>
-      )}
+        }
+      />
 
-      {/* Activity tab */}
-      {activeTab === 'activity' && (
-        <div className="rounded-lg border border-line overflow-hidden">
-          <div className="border-b border-line px-4 py-3">
-            <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-ststone">Activity Feed</p>
-          </div>
-          {data.activityFeed.length === 0 ? (
-            <p className="text-[13px] text-graphite py-12 text-center">No activity in this period.</p>
-          ) : (
-            <div className="divide-y divide-line/60">
-              {data.activityFeed.slice(0, 50).map((item) => (
-                <div key={item.id} className="flex items-center gap-3 px-4 py-2.5 text-[12px]">
-                  <span className="text-stone font-mono w-20 shrink-0">{new Date(item.timestamp).toLocaleDateString()}</span>
-                  <span className="font-medium text-ink w-32 shrink-0 truncate">{item.eventType}</span>
-                  <span className="text-graphite truncate">{item.prospectName ?? item.company ?? item.entityId?.slice(0, 8) ?? '—'}</span>
+      {loading && !data ? (
+        <RevenueSkeleton />
+      ) : error ? (
+        <EmptyNote className="rounded-xl border border-dashed border-line">{error}</EmptyNote>
+      ) : data ? (
+        <div className={cn('space-y-6 transition-opacity', loading && 'opacity-60')}>
+          <Body data={data} rangeLabel={rangeLabel} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function Body({ data, rangeLabel }: { data: DashboardData; rangeLabel: string }) {
+  const f = data.funnel
+  const replyRate = rate(f.replied, f.contacted)
+  const winRate = rate(f.won, f.won + f.lost)
+
+  return (
+    <>
+      {data.insights.length > 0 && (
+        <Panel title="What stands out" flush>
+          <ul className="divide-y divide-line/70">
+            {data.insights.slice(0, 4).map((insight) => (
+              <li key={insight.id} className="flex items-start gap-3 px-4 py-3 sm:px-5">
+                <Lightbulb className={cn('mt-0.5 size-4 shrink-0', insight.severity === 'ACTION' ? 'text-status-danger' : insight.severity === 'WATCH' ? 'text-status-warning' : 'text-cobalt')} aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="text-[13px] font-medium text-ink">{insight.title}</p>
+                  <p className="text-[12px] text-graphite">{insight.explanation}</p>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <Pill tone={insight.severity === 'ACTION' ? 'danger' : insight.severity === 'WATCH' ? 'warning' : 'cobalt'} className="ml-auto shrink-0">{humanize(insight.severity)}</Pill>
+              </li>
+            ))}
+          </ul>
+        </Panel>
       )}
-    </div>
-  )
-}
 
-function KPICard({ label, value, subtext, accent = 'neutral' }: { label: string; value: string; subtext?: string; accent?: 'orange' | 'cobalt' | 'success' | 'danger' | 'neutral' }) {
-  const colors = {
-    orange: 'border-orange/20 bg-orange/5',
-    cobalt: 'border-cobalt/20 bg-cobalt/5',
-    success: 'border-status-success/20 bg-status-success/5',
-    danger: 'border-status-danger/20 bg-status-danger/5',
-    neutral: 'border-line',
-  }
-  return (
-    <div className={cn('rounded border px-4 py-3', colors[accent])}>
-      <p className="text-mono-medium text-[9px] uppercase tracking-[0.14em] text-stone">{label}</p>
-      <p className="mt-1 text-[20px] font-medium text-ink">{value}</p>
-      {subtext && <p className="mt-0.5 text-[11px] text-graphite">{subtext}</p>}
-    </div>
-  )
-}
-
-function FunnelBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
-  const width = max > 0 ? Math.round((value / max) * 100) : 0
-  return (
-    <div className="flex items-center gap-3 text-[12px]">
-      <span className="w-28 text-stone truncate">{label}</span>
-      <div className="flex-1 h-3 bg-line/40 rounded overflow-hidden">
-        <div className={`h-full rounded transition-all duration-500 ${color}`} style={{ width: `${width}%` }} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <StatTile label="Analyzed" value={f.extracted} icon={<Search className="size-3.5" />} sub={`${f.qualified} qualified`} />
+        <StatTile label="Contacted" value={f.contacted} icon={<Send className="size-3.5" />} tone="cobalt" />
+        <StatTile label="Reply rate" value={pct(replyRate)} icon={<Reply className="size-3.5" />} tone="cobalt" sub={`${f.replied} replied`} />
+        <StatTile label="Conversations" value={f.qualifiedConversations} icon={<MessagesSquare className="size-3.5" />} sub={`${f.calls} calls booked`} />
+        <StatTile label="Proposals" value={f.proposals} icon={<FileText className="size-3.5" />} tone="orange" />
+        <StatTile label="Won" value={f.won} icon={<Trophy className="size-3.5" />} tone={f.won > 0 ? 'success' : 'neutral'} sub={`${pct(winRate)} win rate · ${f.lost} lost`} />
       </div>
-      <span className="w-10 text-right font-mono text-ink">{value}</span>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+        <Panel className="lg:col-span-2" title="Funnel" subtitle="Step-to-step conversion on the right">
+          <Funnel funnel={f} />
+        </Panel>
+        <Panel className="lg:col-span-3" title="Outreach and replies" subtitle={`Per day, ${rangeLabel}`}>
+          <TrendChart daily={data.daily ?? []} />
+        </Panel>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+        <Panel className="lg:col-span-3" title="Team leaderboard" subtitle="Leads each person owns, by the furthest stage reached" flush>
+          <Leaderboard reps={data.reps} />
+        </Panel>
+        <Panel className="lg:col-span-2" title="By sending identity" subtitle="Which identity gets answers" flush>
+          <IdentityTable rows={data.identityPerformance ?? []} />
+        </Panel>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Panel title="Sources" subtitle="Reply rate by where leads came from" flush>
+          <SourceTable rows={data.sourcePerformance} />
+        </Panel>
+        <Panel title="Lead quality" subtitle="Score bands of new leads">
+          <FitBars fit={data.fitDistribution} />
+        </Panel>
+        <Panel title="Live conversations" subtitle="Where every open thread stands now">
+          <StageBars stages={data.conversationStages} />
+        </Panel>
+      </div>
+
+      <Panel title="Recent activity" subtitle="Latest pipeline events" flush>
+        <ActivityFeed items={data.activityFeed} />
+      </Panel>
+    </>
+  )
+}
+
+function Funnel({ funnel }: { funnel: FunnelData }) {
+  const steps = [
+    { label: 'Analyzed', value: funnel.extracted },
+    { label: 'Qualified', value: funnel.qualified },
+    { label: 'Contacted', value: funnel.contacted },
+    { label: 'Replied', value: funnel.replied },
+    { label: 'Conversation', value: funnel.qualifiedConversations },
+    { label: 'Proposal', value: funnel.proposals },
+    { label: 'Won', value: funnel.won },
+  ]
+  const top = Math.max(...steps.map((s) => s.value), 1)
+  if (steps.every((s) => s.value === 0)) return <EmptyNote>No pipeline events in this period.</EmptyNote>
+  return (
+    <ol className="space-y-2">
+      {steps.map((s, i) => {
+        const prev = i > 0 ? steps[i - 1].value : null
+        const conv = prev ? s.value / prev : null
+        return (
+          <li key={s.label} className="grid grid-cols-[92px_1fr_40px_44px] items-center gap-2 text-[12px]">
+            <span className="truncate text-graphite">{s.label}</span>
+            <div className="h-5 overflow-hidden rounded bg-line/40">
+              <div className={cn('h-full rounded transition-[width] duration-700', i === steps.length - 1 ? 'bg-status-success' : 'bg-cobalt')} style={{ width: `${Math.max(s.value > 0 ? 3 : 0, (s.value / top) * 100)}%`, opacity: i === steps.length - 1 ? 1 : 1 - i * 0.1 }} />
+            </div>
+            <span className="text-right font-medium tabular-nums text-ink">{s.value}</span>
+            <span className="text-right tabular-nums text-stone">{conv == null ? '' : pct(conv)}</span>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+function TrendChart({ daily }: { daily: NonNullable<DashboardData['daily']> }) {
+  const total = daily.reduce((n, d) => n + d.outreach + d.replies, 0)
+  if (total === 0) return <EmptyNote>No outreach recorded in this period.</EmptyNote>
+  return (
+    <>
+      <div className="h-[230px]" role="img" aria-label="Outreach sent and client replies per day">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={daily} margin={{ top: 4, right: 4, bottom: 0, left: -24 }}>
+            <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 10, fill: 'var(--stone)' }} tickLine={false} axisLine={false} minTickGap={20} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: 'var(--stone)' }} tickLine={false} axisLine={false} />
+            <Tooltip
+              cursor={{ fill: 'var(--line)', opacity: 0.35 }}
+              content={({ active, payload, label }) => {
+                if (!active || !payload?.length) return null
+                const p = payload[0].payload as { outreach: number; replies: number; wins: number }
+                return (
+                  <div className="rounded-lg border border-line bg-bone-raised px-3 py-2 text-[11px] shadow-md">
+                    <p className="mb-1 font-medium text-ink">{shortDate(String(label))}</p>
+                    <p className="text-graphite">Outreach <span className="font-medium text-ink">{p.outreach}</span></p>
+                    <p className="text-graphite">Client replies <span className="font-medium text-ink">{p.replies}</span></p>
+                    {p.wins > 0 && <p className="text-status-success">{p.wins} won</p>}
+                  </div>
+                )
+              }}
+            />
+            <Bar dataKey="outreach" name="Outreach" fill="var(--cobalt-light)" radius={[4, 4, 0, 0]} maxBarSize={18} />
+            <Line type="monotone" dataKey="replies" name="Client replies" stroke="var(--status-success)" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <ul className="mt-3 flex gap-4 text-[11px] text-graphite">
+        <li className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-cobalt-light" aria-hidden="true" />Outreach</li>
+        <li className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-status-success" aria-hidden="true" />Client replies</li>
+      </ul>
+    </>
+  )
+}
+
+function Leaderboard({ reps }: { reps: RepPerformance[] }) {
+  if (reps.length === 0) return <EmptyNote>No owned leads moved in this period.</EmptyNote>
+  const sorted = [...reps].sort((a, b) => b.wins - a.wins || b.replies - a.replies || b.contacted - a.contacted)
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] text-[12px]">
+        <thead>
+          <tr className="border-b border-line text-right text-[10px] uppercase tracking-[0.1em] text-stone">
+            <th scope="col" className="px-4 py-2 text-left font-medium sm:px-5">Person</th>
+            <th scope="col" className="px-2 py-2 font-medium">Contacted</th>
+            <th scope="col" className="px-2 py-2 font-medium">Replies</th>
+            <th scope="col" className="px-2 py-2 font-medium">Reply rate</th>
+            <th scope="col" className="px-2 py-2 font-medium">Convos</th>
+            <th scope="col" className="px-2 py-2 font-medium">Won</th>
+            <th scope="col" className="w-[110px] px-4 py-2 font-medium sm:px-5">Targets</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line/60 text-right tabular-nums text-graphite">
+          {sorted.map((rep) => (
+            <tr key={rep.repId} className="hover:bg-bone/60">
+              <th scope="row" className="px-4 py-2.5 text-left font-normal sm:px-5">
+                <Link href={`/team/${rep.repId}`} className="flex items-center gap-2 hover:underline">
+                  <Initials name={rep.repName} size="sm" />
+                  <span className="truncate text-[13px] text-ink">{rep.repName}</span>
+                </Link>
+              </th>
+              <td className="px-2 py-2.5">{rep.contacted}</td>
+              <td className="px-2 py-2.5">{rep.replies}</td>
+              <td className="px-2 py-2.5 font-medium text-ink">{pct(rate(rep.replies, rep.contacted))}</td>
+              <td className="px-2 py-2.5">{rep.qualifiedConversations}</td>
+              <td className={cn('px-2 py-2.5', rep.wins > 0 && 'font-medium text-status-success')}>{rep.wins}</td>
+              <td className="px-4 py-2.5 sm:px-5">
+                <div className="flex items-center gap-2">
+                  <Meter value={rep.targetProgress} max={100} className="flex-1" />
+                  <span className="w-9 text-[11px]">{rep.targetProgress}%</span>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
 
-function cn(...classes: (string | false | null | undefined)[]) {
-  return classes.filter(Boolean).join(' ')
+function IdentityTable({ rows }: { rows: NonNullable<DashboardData['identityPerformance']> }) {
+  if (rows.length === 0) return <EmptyNote>No leads were sent from an identity in this period.</EmptyNote>
+  return (
+    <ul className="divide-y divide-line/70">
+      {rows.slice(0, 8).map((r) => {
+        const rr = rate(r.replies, r.contacted)
+        return (
+          <li key={r.id} className="px-4 py-2.5 sm:px-5">
+            <div className="flex items-center justify-between gap-2 text-[12px]">
+              <span className="min-w-0 truncate font-medium text-ink">{r.name} <span className="font-normal text-stone">· {r.channel}</span></span>
+              <span className="shrink-0 tabular-nums text-graphite"><span className="font-medium text-ink">{pct(rr)}</span> reply · {r.wins} won</span>
+            </div>
+            <div className="mt-1.5 flex items-center gap-2">
+              <Meter value={r.replies} max={Math.max(r.contacted, 1)} tone="success" className="flex-1" />
+              <span className="w-24 text-right text-[11px] tabular-nums text-stone">{r.replies}/{r.contacted} contacted</span>
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function SourceTable({ rows }: { rows: DashboardData['sourcePerformance'] }) {
+  const sorted = [...rows].filter((r) => r.extracted + r.contacted > 0).sort((a, b) => b.contacted - a.contacted || b.extracted - a.extracted)
+  if (sorted.length === 0) return <EmptyNote>No sources recorded.</EmptyNote>
+  return (
+    <table className="w-full text-[12px]">
+      <thead>
+        <tr className="border-b border-line text-right text-[10px] uppercase tracking-[0.1em] text-stone">
+          <th scope="col" className="px-4 py-2 text-left font-medium sm:px-5">Source</th>
+          <th scope="col" className="px-2 py-2 font-medium">Leads</th>
+          <th scope="col" className="px-2 py-2 font-medium">Sent</th>
+          <th scope="col" className="px-4 py-2 font-medium sm:px-5">Reply</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-line/60 text-right tabular-nums text-graphite">
+        {sorted.slice(0, 8).map((r) => (
+          <tr key={r.source}>
+            <th scope="row" className="truncate px-4 py-2 text-left font-normal text-ink sm:px-5">{humanize(r.source)}</th>
+            <td className="px-2 py-2">{r.extracted}</td>
+            <td className="px-2 py-2">{r.contacted}</td>
+            <td className="px-4 py-2 font-medium text-ink sm:px-5">{pct(rate(r.replies, r.contacted))}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function FitBars({ fit }: { fit: Record<string, number> }) {
+  const total = Object.values(fit).reduce((n, v) => n + v, 0)
+  if (total === 0) return <EmptyNote>No new leads in this period.</EmptyNote>
+  return (
+    <div className="space-y-4">
+      <div className="flex h-3 overflow-hidden rounded-full" aria-hidden="true">
+        {FIT_ORDER.filter((k) => (fit[k] ?? 0) > 0).map((k) => (
+          <div key={k} className={cn('h-full border-r-2 border-bone-raised last:border-r-0', FIT_COLOR[k])} style={{ width: `${((fit[k] ?? 0) / total) * 100}%` }} />
+        ))}
+      </div>
+      <ul className="space-y-2">
+        {FIT_ORDER.map((k) => (
+          <li key={k} className="flex items-center gap-2 text-[12px]">
+            <span className={cn('size-2 rounded-full', FIT_COLOR[k])} aria-hidden="true" />
+            <span className="flex-1 text-graphite">{k}</span>
+            <span className="font-medium tabular-nums text-ink">{fit[k] ?? 0}</span>
+            <span className="w-10 text-right tabular-nums text-stone">{Math.round(((fit[k] ?? 0) / total) * 100)}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function StageBars({ stages }: { stages: Record<string, number> }) {
+  const entries = Object.entries(stages).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])
+  if (entries.length === 0) return <EmptyNote>No conversations yet.</EmptyNote>
+  const max = Math.max(...entries.map(([, v]) => v), 1)
+  return (
+    <ul className="space-y-2.5">
+      {entries.slice(0, 7).map(([stage, count]) => {
+        const tone: Tone = stage === 'won' ? 'success' : stage === 'lost' ? 'neutral' : 'cobalt'
+        return (
+          <li key={stage}>
+            <div className="mb-1 flex items-center justify-between text-[12px]">
+              <span className="text-graphite">{humanize(stage)}</span>
+              <span className="font-medium tabular-nums text-ink">{count}</span>
+            </div>
+            <Meter value={count} max={max} tone={tone} />
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function ActivityFeed({ items }: { items: ActivityItem[] }) {
+  if (items.length === 0) return <EmptyNote>No activity in this period.</EmptyNote>
+  return (
+    <ul className="divide-y divide-line/70">
+      {items.slice(0, 15).map((item) => {
+        const subject = item.prospectName ?? item.company
+        const body = (
+          <>
+            <span className="w-16 shrink-0 text-[11px] tabular-nums text-stone">{relative(item.timestamp)}</span>
+            <span className="min-w-0 flex-1 truncate text-[12px] text-graphite">
+              <span className="font-medium text-ink">{EVENT_LABEL[item.eventType] ?? humanize(item.eventType)}</span>
+              {subject && <> · {subject}</>}
+              {item.revenueIdentityName && <span className="text-stone"> · as {item.revenueIdentityName}</span>}
+            </span>
+            {item.actorName && <span className="hidden shrink-0 text-[11px] text-stone sm:inline">{item.actorName}</span>}
+          </>
+        )
+        return (
+          <li key={item.id}>
+            {item.entityId && subject ? (
+              <Link href={`/leads/${item.entityId}`} className="flex items-center gap-3 px-4 py-2 hover:bg-bone sm:px-5">{body}</Link>
+            ) : (
+              <div className="flex items-center gap-3 px-4 py-2 sm:px-5">{body}</div>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function RevenueSkeleton() {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-label="Loading revenue">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="h-[92px] animate-pulse rounded-xl border border-line bg-bone-raised" />)}
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+        <div className="h-[280px] animate-pulse rounded-xl border border-line bg-bone-raised lg:col-span-2" />
+        <div className="h-[280px] animate-pulse rounded-xl border border-line bg-bone-raised lg:col-span-3" />
+      </div>
+    </div>
+  )
 }

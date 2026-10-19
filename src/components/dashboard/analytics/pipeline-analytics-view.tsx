@@ -482,7 +482,7 @@ export function PipelineAnalyticsView({ data, scope, basePath = '/dashboard' }: 
   }
 
   return (
-    <div className="space-y-4" data-testid="pipeline-analytics">
+    <div className="space-y-4 border-t border-line pt-8" data-testid="pipeline-analytics">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.2em] text-stone">{scope === 'team' ? 'Team performance' : 'Your performance'}</p>
@@ -502,7 +502,7 @@ export function PipelineAnalyticsView({ data, scope, basePath = '/dashboard' }: 
         <KpiCard label="Time to answer" value={hours(kpis.medianReplyHours.value)} kpi={kpis.medianReplyHours} color={C.stone} format="hours" lowerIsBetter hint="Median time from a client's message to your next message" />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel
           className="lg:col-span-2"
           title="Outreach and replies"
@@ -516,7 +516,7 @@ export function PipelineAnalyticsView({ data, scope, basePath = '/dashboard' }: 
         </Panel>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel title="Conversion funnel" subtitle="All leads · step-to-step conversion on the right">
           <Funnel steps={data.funnel} />
         </Panel>
@@ -540,16 +540,16 @@ export function PipelineAnalyticsView({ data, scope, basePath = '/dashboard' }: 
         </Panel>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel className="lg:col-span-2" title="Sending consistency" subtitle="Messages sent per day, last 12 weeks">
-          <ContributionHeatmap daily={mapHeatCellsToDailyActivity(data.heatmap)} />
+          <ContributionHeatmap daily={mapHeatCellsToDailyActivity(data.heatmap)} unit="messages" maxCell={26} />
         </Panel>
         <Panel title={scope === 'team' ? 'Leads waiting on the team' : 'Leads waiting on you'} subtitle="Replies first, then follow-ups, then new leads — best score first">
           <FocusList leads={data.focus} />
         </Panel>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Panel title="Markets" subtitle="Where your leads are based">
           <BarList items={data.regions} color={C.cobalt} empty="No locations recorded yet." />
         </Panel>

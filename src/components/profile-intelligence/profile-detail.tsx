@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { EnrichPanel } from './enrich-panel'
 import { MergeTool } from './merge-tool'
+import { SendingIdentitiesPanel } from './sending-identities-panel'
 
 interface ProfileData {
   id: string
@@ -79,23 +80,23 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
 
   useEffect(() => { load() }, [load])
 
-  if (loading) return <div className="p-6 text-[12px] text-[color:var(--console-mute)]">Loading...</div>
+  if (loading) return <div className="space-y-4" aria-busy="true"><div className="h-6 w-40 animate-pulse rounded bg-bone" /><div className="h-40 animate-pulse rounded-xl border border-line bg-bone-raised" /></div>
   if (error) return <div className="p-6 text-[12px] text-danger">{error}</div>
   if (!profile) return null
 
   return (
-    <div className="space-y-6 p-5 sm:p-6">
-      <div className="flex items-center gap-2 text-[11px] text-[color:var(--console-mute)]">
+    <div className="space-y-5">
+      <div className="flex items-center gap-2 text-[11px] text-graphite">
         <Link href="/profile-intelligence" className="hover:text-orange">Profiles</Link>
         <span>/</span>
-        <span className="text-[color:var(--console-text)]">{profile.fullName ?? profile.displayName ?? 'Profile'}</span>
+        <span className="text-ink">{profile.fullName ?? profile.displayName ?? 'Profile'}</span>
       </div>
 
       {/* Identity */}
-      <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+      <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
         <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Identity</p>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-          <h1 className="text-[24px] leading-[1.1] tracking-[-0.02em] text-[color:var(--console-text)]">
+          <h1 className="text-[24px] leading-[1.1] tracking-[-0.02em] text-ink">
             {profile.fullName ?? profile.displayName ?? 'Unnamed'}
           </h1>
           {canImport && !profile.archivedAt && (
@@ -106,7 +107,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
           )}
         </div>
         {!canImport && (
-          <p data-testid="view-only-note" className="mt-2 text-[11px] text-[color:var(--console-mute)]">
+          <p data-testid="view-only-note" className="mt-2 text-[11px] text-graphite">
             View only · assigned to you for outreach. Ask an admin to add or correct profile data.
           </p>
         )}
@@ -116,12 +117,12 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
           </p>
         )}
         {profile.currentRole && (
-          <p className="mt-1 text-[13px] text-[color:var(--console-mute)]">
+          <p className="mt-1 text-[13px] text-graphite">
             {profile.currentRole}{profile.company ? ` · ${profile.company}` : ''}
           </p>
         )}
         {profile.headline && (
-          <p className="mt-2 text-[12px] text-[color:var(--console-mute)]">{profile.headline}</p>
+          <p className="mt-2 text-[12px] text-graphite">{profile.headline}</p>
         )}
         <div className="mt-3 flex gap-2">
           {profile.readiness === 'ready' && (
@@ -133,7 +134,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
           {profile.yearsExperience != null && (
             <span className="rounded bg-orange/5 px-2 py-0.5 text-[10px] text-orange/80">{profile.yearsExperience}+ yrs exp</span>
           )}
-          <span className="rounded bg-orange/5 px-2 py-0.5 text-[10px] text-[color:var(--console-mute)]">
+          <span className="rounded bg-orange/5 px-2 py-0.5 text-[10px] text-graphite">
             {profile.sourceCount} sources · {profile.proofCount} proofs
           </span>
         </div>
@@ -143,20 +144,22 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
         <EnrichPanel profileId={profile.id} onApplied={load} onClose={() => setShowImport(false)} />
       )}
 
+      {isAdmin && !profile.archivedAt && <SendingIdentitiesPanel profileId={profile.id} />}
+
       {/* Capabilities */}
       {(profile.primarySkills?.length > 0 || profile.technologies?.length > 0) && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Best At</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {profile.primarySkills?.map((s) => (
               <span key={s} className="rounded bg-orange/10 px-2 py-0.5 text-[11px] text-orange">{s}</span>
             ))}
             {profile.technologies?.filter((t) => !profile.primarySkills?.includes(t)).map((t) => (
-              <span key={t} className="rounded border border-orange/10 px-2 py-0.5 text-[11px] text-[color:var(--console-mute)]">{t}</span>
+              <span key={t} className="rounded border border-orange/10 px-2 py-0.5 text-[11px] text-graphite">{t}</span>
             ))}
           </div>
           {profile.specialties?.length > 0 && (
-            <p className="mt-2 text-[11px] text-[color:var(--console-mute)]">
+            <p className="mt-2 text-[11px] text-graphite">
               <span className="font-medium">Specialties:</span> {profile.specialties.join(', ')}
             </p>
           )}
@@ -165,9 +168,9 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
 
       {/* Summary */}
       {(profile.professionalSummary || profile.bio) && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Summary</p>
-          <p className="mt-2 text-[13px] leading-relaxed text-[color:var(--console-text)]">
+          <p className="mt-2 text-[13px] leading-relaxed text-ink">
             {profile.professionalSummary ?? profile.bio}
           </p>
         </section>
@@ -175,13 +178,13 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
 
       {/* Role history */}
       {profile.experience?.length > 0 && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Role History</p>
           <ul className="mt-3 space-y-1.5" data-testid="role-history">
             {profile.experience.map((e) => (
-              <li key={e.id} className="text-[12px] text-[color:var(--console-text)]">
+              <li key={e.id} className="text-[12px] text-ink">
                 {e.role ?? 'Role'}{e.company ? ` · ${e.company}` : ''}
-                <span className="ml-2 text-[11px] text-[color:var(--console-mute)]">
+                <span className="ml-2 text-[11px] text-graphite">
                   {[e.startDate, e.endDate ?? (e.isCurrent ? 'present' : null)].filter(Boolean).join(' – ')}
                 </span>
                 {e.isCurrent && <span className="ml-2 rounded bg-success/10 px-1 text-[9px] text-success">current</span>}
@@ -196,17 +199,17 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
 
       {/* Projects */}
       {profile.portfolioProjects?.length > 0 && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Projects</p>
           <div className="mt-3 space-y-3">
             {profile.portfolioProjects.map((p) => (
               <div key={p.id} className="border-l-2 border-orange/20 pl-3">
-                <p className="text-[12px] font-medium text-[color:var(--console-text)]">
+                <p className="text-[12px] font-medium text-ink">
                   {p.projectTitle}
-                  {p.myRole && <span className="text-[color:var(--console-mute)]"> — {p.myRole}</span>}
+                  {p.myRole && <span className="text-graphite"> — {p.myRole}</span>}
                 </p>
                 {p.description && (
-                  <p className="mt-1 text-[11px] text-[color:var(--console-mute)]">{p.description}</p>
+                  <p className="mt-1 text-[11px] text-graphite">{p.description}</p>
                 )}
               </div>
             ))}
@@ -216,7 +219,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
 
       {/* Proof */}
       {profile.proofCards?.length > 0 && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Proof</p>
           <div className="mt-3 space-y-2">
             {profile.proofCards.map((pc) => (
@@ -228,7 +231,7 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
                 }`}>
                   {pc.strength}
                 </span>
-                <p className="text-[12px] text-[color:var(--console-text)]">{pc.safeClaim}</p>
+                <p className="text-[12px] text-ink">{pc.safeClaim}</p>
                 {pc.verified && (
                   <span className="flex-shrink-0 text-[9px] text-success">verified</span>
                 )}
@@ -240,14 +243,14 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
 
       {/* Reviews */}
       {profile.reviews?.length > 0 && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Reviews</p>
           <div className="mt-3 space-y-3">
             {profile.reviews.map((r) => (
               <div key={r.id} className="border-l-2 border-orange/20 pl-3">
-                <p className="text-[12px] italic text-[color:var(--console-text)]">&ldquo;{r.reviewText}&rdquo;</p>
+                <p className="text-[12px] italic text-ink">&ldquo;{r.reviewText}&rdquo;</p>
                 {r.reviewerName && (
-                  <p className="mt-1 text-[10px] text-[color:var(--console-mute)]">— {r.reviewerName}</p>
+                  <p className="mt-1 text-[10px] text-graphite">— {r.reviewerName}</p>
                 )}
               </div>
             ))}
@@ -257,12 +260,12 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
 
       {/* Sources */}
       {profile.sources?.length > 0 && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Sources</p>
           <div className="mt-3 space-y-1">
             {profile.sources.map((s) => (
               <div key={s.id} className="flex items-center gap-2 text-[11px]">
-                <span className="text-[color:var(--console-text)]">{s.originalFilename}</span>
+                <span className="text-ink">{s.originalFilename}</span>
                 <span className={`rounded px-1 text-[9px] ${
                   s.parsingStatus === 'parsed' ? 'bg-success text-success' : 'bg-stone-light/10 text-stone'
                 }`}>{s.parsingStatus}</span>
@@ -273,9 +276,9 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
       )}
 
       {/* Assignment */}
-      <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+      <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
         <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Assignment</p>
-        <p className="mt-2 text-[12px] text-[color:var(--console-text)]">
+        <p className="mt-2 text-[12px] text-ink">
           {profile.assignments?.length > 0
             ? `Assigned to: ${profile.assignments.map((a) => a.rep.name).join(', ')}`
             : 'Not assigned'}
@@ -284,14 +287,14 @@ export function ProfileDetail({ profileId, canImport = false, isAdmin = false }:
 
       {/* Import history */}
       {canImport && runs.length > 0 && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Import History</p>
           <ul className="mt-3 space-y-1" data-testid="import-history">
             {runs.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-center gap-2 text-[11px] text-[color:var(--console-text)]">
+              <li key={r.id} className="flex flex-wrap items-center gap-2 text-[11px] text-ink">
                 <span>{new Date(r.created_at).toLocaleString()}</span>
                 <span className={`rounded px-1 text-[9px] ${r.status === 'applied' ? 'bg-success text-success' : 'bg-stone-light/10 text-stone'}`}>{r.status}</span>
-                <span className="text-[color:var(--console-mute)]">
+                <span className="text-graphite">
                   {r.source_ids.length} source{r.source_ids.length === 1 ? '' : 's'}
                   {r.summary ? ` · +${r.summary.fieldsToAdd} added · ${r.summary.fieldsToEnrich} enriched · ${r.summary.conflictsRequiringReview} conflicts · ${r.summary.duplicatesIgnored} duplicates` : ''}
                 </span>

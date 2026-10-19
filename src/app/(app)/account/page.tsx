@@ -19,29 +19,14 @@ export default async function AccountPage({
   const authCtx = await getAuthContext()
   if (!authCtx) redirect('/login')
 
-  const { company, companyKey } = await searchParams
+  const { companyKey } = await searchParams
+  // Without a company this route used to dead-end; Settings lives at /settings.
+  if (!companyKey) redirect('/settings')
   const store = await createScoutStore()
 
   // Find leads by company — ONLY use companyKey for exact dedup
   const allLeads = await store.listOwnedLeads()
-  const companyLeads = companyKey
-    ? allLeads.filter(l => l.companyKey === companyKey)
-    : []
-
-  if (companyLeads.length === 0 && !companyKey) {
-    // Empty state — user needs to search by companyKey (from lead detail link)
-    return (
-      <div className="space-y-6 pb-8">
-        <header className="space-y-1.5">
-          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange">Account 360</p>
-          <h1 className="text-display text-[28px] font-light tracking-[-0.02em] text-ink">Company Intelligence</h1>
-        </header>
-        <div className="rounded-lg border border-dashed border-line bg-bone-raised/40 p-8 text-center">
-          <p className="text-[14px] text-graphite">No company selected. Open any lead and click the company link to view Account 360.</p>
-        </div>
-      </div>
-    )
-  }
+  const companyLeads = allLeads.filter(l => l.companyKey === companyKey)
 
   const companyName = companyLeads[0]?.company ?? 'Unknown'
 
@@ -65,7 +50,7 @@ export default async function AccountPage({
     <Suspense fallback={<div className="text-[13px] text-graphite">Loading Account 360...</div>}>
       <Account360View
         company={companyName}
-        companyKey={companyLeads[0]?.companyKey ?? companyKey ?? ''}
+        companyKey={companyLeads[0]?.companyKey ?? companyKey}
         leads={companyLeads}
         messages={messages}
         profiles={profiles}

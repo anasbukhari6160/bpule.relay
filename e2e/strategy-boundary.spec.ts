@@ -9,7 +9,7 @@ test.describe('Strategy boundary + Admin checks', () => {
   test('Admin Revenue Intelligence loads without crashing', async ({ page }) => {
     await page.goto('/admin/revenue-intelligence')
     await page.waitForLoadState('domcontentloaded')
-    await expect(page.getByText(/Revenue Intelligence|Overview/i).first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText(/Pipeline and revenue|Revenue Intelligence/i).first()).toBeVisible({ timeout: 30_000 })
     const body = (await page.textContent('body')) ?? ''
     // Should not show NaN or Infinity
     expect(body).not.toMatch(/NaN|Infinity/)

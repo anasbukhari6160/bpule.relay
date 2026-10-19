@@ -4,7 +4,7 @@ import { loginAsAdmin } from './helpers'
 async function navigateToProfiles(page: Page) {
   await page.goto('/profile-intelligence', { waitUntil: 'domcontentloaded' })
   await page.waitForLoadState('networkidle')
-  await expect(page.getByText('Upload documents. Relay builds your team.')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('Add people from documents')).toBeVisible({ timeout: 15_000 })
 }
 
 async function uploadFile(page: Page, content: string, filename: string, mimeType: string = 'text/plain') {
@@ -135,7 +135,7 @@ Projects: Customer Dashboard (React, Node.js), API Gateway (FastAPI, AWS)
     await page.reload()
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByText('Upload documents. Relay builds your team.')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('Add people from documents')).toBeVisible({ timeout: 10_000 })
   })
 
   test('mobile: profiles section is usable at 390px', async ({ page }) => {

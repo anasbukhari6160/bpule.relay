@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { ChevronDown, Upload } from 'lucide-react'
 import { UploadBatchUploader } from './upload-batch'
 import { ProfileList } from './profile-list'
 import type { ProfileImportBatch } from '@/lib/domain/types'
@@ -13,7 +14,7 @@ interface FileResult {
   error: string | null
 }
 
-export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdmin }: { orgId: string; isAdmin: boolean; canManage?: boolean }) {
+export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdmin, openUpload = true }: { orgId: string; isAdmin: boolean; canManage?: boolean; openUpload?: boolean }) {
   const [refreshKey, setRefreshKey] = useState(0)
   const [activeBatch, setActiveBatch] = useState<ProfileImportBatch | null>(null)
   const [processing, setProcessing] = useState(false)
@@ -68,50 +69,34 @@ export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdm
   const okCount = results.filter((r) => r.extractionStatus === 'extracted').length
 
   return (
-    <div className="space-y-6">
-      {canManage ? (
-        <>
-      <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
-          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">
-            Profile Intelligence V2
-          </p>
-          <h1 className="mt-2 text-[30px] leading-[1.05] tracking-[-0.03em] text-[color:var(--console-text)]">
-            Upload documents. Relay builds your team.
-          </h1>
-          <p className="mt-2 max-w-2xl text-[13px] text-[color:var(--console-mute)]">
-            Drop CVs, reviews, project summaries, or a combined team PDF. Relay identifies each person,
-            extracts experience and proof, and builds identities your reps can use in outreach.
-          </p>
-        </section>
-  
-        <UploadBatchUploader
-          orgId={orgId}
-          isAdmin={isAdmin}
-          onBatchCreated={handleBatchCreated}
-        />
-        </>
-      ) : (
-        <section data-testid="rep-profiles-header" className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
-          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Your profiles</p>
-          <h1 className="mt-2 text-[24px] leading-[1.1] tracking-[-0.02em] text-[color:var(--console-text)]">
-            Profiles assigned to you
-          </h1>
-          <p className="mt-2 max-w-2xl text-[13px] text-[color:var(--console-mute)]">
-            Open a profile to see its skills, proof and projects for your outreach. Profile data is managed by your admins —
-            ask them to upload new sources or correct anything.
-          </p>
-        </section>
+    <div className="space-y-4">
+      {canManage && (
+        <details className="group rounded-xl border border-line bg-bone-raised" open={openUpload}>
+          <summary className="flex cursor-pointer list-none items-center gap-3 px-5 py-4 marker:hidden">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-orange/10 text-orange" aria-hidden="true">
+              <Upload className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[14px] font-medium text-ink">Add people from documents</span>
+              <span className="block text-[12px] text-graphite">Drop CVs, reviews, project write-ups or a whole team PDF. Relay finds each person, pulls their experience and proof, and builds or updates their profile.</span>
+            </span>
+            <ChevronDown className="size-4 shrink-0 text-stone transition-transform group-open:rotate-180" aria-hidden="true" />
+          </summary>
+          <div className="border-t border-line px-5 pb-5 pt-4">
+            <UploadBatchUploader orgId={orgId} isAdmin={isAdmin} onBatchCreated={handleBatchCreated} />
+          </div>
+        </details>
       )}
 
       {activeBatch && processing && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-4 sm:px-6" aria-live="polite" data-testid="batch-processing">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-4 sm:px-6" aria-live="polite" data-testid="batch-processing">
           <div className="flex items-center gap-3">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-orange/30 border-t-orange" aria-hidden="true" />
             <div className="min-w-0">
-              <p className="text-[13px] text-[color:var(--console-text)]">
+              <p className="text-[13px] text-ink">
                 Processing {Math.min(activeBatch.processedFiles, activeBatch.totalFiles)} of {activeBatch.totalFiles} {activeBatch.totalFiles === 1 ? 'file' : 'files'}…
               </p>
-              <p className="truncate text-[11px] text-[color:var(--console-mute)]">
+              <p className="truncate text-[11px] text-graphite">
                 {lastFile
                   ? `${lastFile.filename}: ${lastFile.extractionStatus === 'extracted' ? 'done' : lastFile.extractionStatus === 'failed' ? 'failed' : 'partly done'}`
                   : 'One file at a time. Finished files are saved as they complete.'}
@@ -122,7 +107,7 @@ export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdm
       )}
 
       {activeBatch && !processing && pauseMessage && (
-        <section role="alert" className="srf-console srf-console-edge overflow-hidden px-5 py-4 sm:px-6" data-testid="batch-paused">
+        <section role="alert" className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-4 sm:px-6" data-testid="batch-paused">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-[13px] text-status-warning">{pauseMessage}</p>
             <button
@@ -136,16 +121,16 @@ export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdm
       )}
 
       {activeBatch && !processing && !pauseMessage && (
-        <section className="srf-console srf-console-edge overflow-hidden px-5 py-4 sm:px-6" data-testid="batch-complete">
+        <section className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-4 sm:px-6" data-testid="batch-complete">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[13px] text-[color:var(--console-text)]">
+              <p className="text-[13px] text-ink">
                 Batch complete: {okCount} of {results.length || activeBatch.totalFiles} {activeBatch.totalFiles === 1 ? 'file' : 'files'} processed
                 {activeBatch.createdProfiles + activeBatch.mergedProfiles > 0 && (
                   <> · {activeBatch.createdProfiles} new {activeBatch.createdProfiles === 1 ? 'profile' : 'profiles'}{activeBatch.mergedProfiles > 0 ? `, ${activeBatch.mergedProfiles} updated` : ''}</>
                 )}
               </p>
-              <p className="text-[11px] text-[color:var(--console-mute)]">Status: {activeBatch.status.replaceAll('_', ' ')}</p>
+              <p className="text-[11px] text-graphite">Status: {activeBatch.status.replaceAll('_', ' ')}</p>
               {failedResults.length > 0 && (
                 <ul className="mt-2 space-y-1" aria-label="Files that failed">
                   {failedResults.map((e) => (

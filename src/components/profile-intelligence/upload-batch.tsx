@@ -52,7 +52,7 @@ export function UploadBatchUploader({ onBatchCreated }: {
 
   return (
     <>
-    <section className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+    <section>
       <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
         onDragLeave={() => setDragOver(false)}
@@ -63,7 +63,7 @@ export function UploadBatchUploader({ onBatchCreated }: {
         }}
         onClick={() => inputRef.current?.click()}
         className={`cursor-pointer rounded-lg border-2 border-dashed p-8 text-center transition-colors ${
-          dragOver ? 'border-orange bg-orange/5' : 'border-orange/20 hover:border-orange/40'
+          dragOver ? 'border-orange bg-orange/5' : 'border-line hover:border-orange/40'
         }`}
       >
         <input
@@ -74,10 +74,10 @@ export function UploadBatchUploader({ onBatchCreated }: {
           onChange={(e) => e.target.files && handleFiles(e.target.files)}
           className="hidden"
         />
-        <p className="text-[15px] text-[color:var(--console-text)]">
+        <p className="text-[15px] text-ink">
           Upload profiles &amp; proof
         </p>
-        <p className="mt-1 text-[12px] text-[color:var(--console-mute)]">
+        <p className="mt-1 text-[12px] text-graphite">
           PDF, DOCX, TXT, Markdown · up to {MAX_FILES} files · drag &amp; drop or click
         </p>
         {files.length > 0 && (
@@ -88,10 +88,10 @@ export function UploadBatchUploader({ onBatchCreated }: {
       </div>
     </section>
 
-    <div className="mt-4 px-5 sm:px-6">
+    <div>
       {files.length > 0 && (
         <div className="mt-3 flex items-center justify-between">
-          <ul className="text-[11px] text-[color:var(--console-mute)]">
+          <ul className="text-[11px] text-graphite">
             {files.slice(0, 5).map((f, i) => (
               <li key={i}>{f.name} ({(f.size / 1024).toFixed(0)} KB)</li>
             ))}

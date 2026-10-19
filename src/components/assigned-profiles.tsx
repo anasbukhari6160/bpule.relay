@@ -198,7 +198,7 @@ export function AssignedProfilesView() {
             <ArrowRight className="size-3.5" />
           </Link>
           <Link
-            href="/usage"
+            href="/settings#send-budget"
             className="inline-flex items-center gap-1.5 rounded border border-line/30 px-3 py-1.5 text-[12px] font-medium text-[color:var(--console-mute)] hover:text-[color:var(--console-text)]"
           >
             Check usage budget

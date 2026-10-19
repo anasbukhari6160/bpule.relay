@@ -1,279 +1,220 @@
 'use client'
 
-import { motion } from 'motion/react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import {
-  Users, TrendingUp, CheckCircle2, AlertTriangle,
-  Clock, ChevronRight, Send, Reply, Bell,
-  Target, Flame, MessageSquare, Mail,
-} from 'lucide-react'
+import { Users, CheckCircle2, AlertTriangle, Activity, ChevronRight, Shield, Target } from 'lucide-react'
 import { cn } from 'cn'
-import { AdminPerformanceOverview } from '@/components/performance/admin-performance-overview'
 import type { AccountabilityDashboardData } from '@/lib/relay/dashboard-loader'
+import { DashHeader, EmptyNote, Initials, Meter, Panel, Pill, StatTile, type Tone } from '@/components/dashboard/kit'
 
-/* ─── helpers ─── */
-function catKeyToIcon(key: string): React.ReactNode {
-  if (key.includes('connection')) return <Send className="size-3.5" />
-  if (key.includes('dm') || key.includes('message')) return <MessageSquare className="size-3.5" />
-  if (key.includes('reply')) return <Reply className="size-3.5" />
-  if (key.includes('follow')) return <Bell className="size-3.5" />
-  if (key.includes('email')) return <Mail className="size-3.5" />
-  return <Target className="size-3.5" />
+type TeamPerson = NonNullable<AccountabilityDashboardData['commandCenter']>['team'][number]
+
+interface Health {
+  health: number
+  state: string
+  bottleneck: string | null
 }
 
-function statusColor(status: string): string {
-  switch (status) {
-    case 'completed': return 'text-status-success bg-status-success/10'
-    case 'on_track': return 'text-cobalt bg-cobalt/10'
-    case 'behind': return 'text-orange bg-orange/10'
-    case 'blocked': return 'text-status-danger bg-status-danger/10'
-    default: return 'text-stone bg-stone-100'
-  }
+const STATE_LABEL: Record<string, { label: string; tone: Tone }> = {
+  ON_TRACK: { label: 'On track', tone: 'success' },
+  NEEDS_ATTENTION: { label: 'Attention', tone: 'warning' },
+  BEHIND: { label: 'Behind', tone: 'danger' },
+  CAUGHT_UP: { label: 'Caught up', tone: 'cobalt' },
+  BLOCKED: { label: 'Blocked', tone: 'neutral' },
 }
 
-function completionPct(completed: number, target: number): number {
-  if (target === 0) return 0
-  return Math.min(100, Math.round((completed / target) * 100))
+function parseProgress(progress: string): { done: number; target: number } {
+  const [done, target] = progress.split('/').map((n) => Number.parseInt(n, 10) || 0)
+  return { done: done ?? 0, target: target ?? 0 }
 }
 
-/* ─── component ─── */
+function statusPill(person: TeamPerson): { label: string; tone: Tone } {
+  if (person.status === 'completed' || person.remaining === 0) return { label: 'Done', tone: 'success' }
+  if (person.status === 'behind') return { label: `Behind · ${person.remaining} left`, tone: 'warning' }
+  return { label: `${person.remaining} left`, tone: 'cobalt' }
+}
+
+/** Admin "Today": the team's day, never the admin's own numbers. */
 export function AdminDashboard({ data }: { data: AccountabilityDashboardData | null }) {
+  const team = useMemo(() => data?.commandCenter?.team ?? [], [data])
+  const health = useTeamHealth(team.map((t) => t.personId))
+
   if (!data) {
-    return <p className="py-12 text-center text-sm text-stone">Could not load dashboard data.</p>
+    return <EmptyNote className="rounded-xl border border-dashed border-line">Could not load the team dashboard. Refresh to try again.</EmptyNote>
   }
 
-  const { commandCenter, myDay } = data
-  const health = commandCenter?.teamHealth
-  const totalReps = (health?.working ?? 0) + (health?.closed ?? 0)
-  const activeReps = (health?.onTrack ?? 0) + (health?.behind ?? 0) + (health?.atRisk ?? 0)
+  const { commandCenter } = data
+  const teamHealth = commandCenter?.teamHealth
+  const attention = commandCenter?.attentionItems ?? []
+  const working = teamHealth?.working ?? 0
+  const totals = team.reduce((acc, p) => {
+    const { done, target } = parseProgress(p.progress)
+    return { done: acc.done + done, target: acc.target + target }
+  }, { done: 0, target: 0 })
+  const teamPct = totals.target > 0 ? Math.round((totals.done / totals.target) * 100) : 0
+
+  const sorted = [...team].sort((a, b) => {
+    const rank = (p: TeamPerson) => (p.status === 'behind' ? 0 : p.remaining > 0 ? 1 : 2)
+    return rank(a) - rank(b) || b.remaining - a.remaining
+  })
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <header>
-        <p className="text-mono-medium text-[10px] uppercase tracking-[0.2em] text-stone">Command Center</p>
-        <h1 className="mt-1 text-display text-[32px] font-light tracking-[-0.02em] text-ink">Team Overview</h1>
-        <p className="mt-1 text-[13px] text-graphite">
-          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-        </p>
-      </header>
+    <div className="space-y-6">
+      <DashHeader
+        eyebrow={new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+        title="Team today"
+        subtitle={working > 0
+          ? `${working} ${working === 1 ? 'person is' : 'people are'} working against targets today${attention.length > 0 ? ` · ${attention.length} need${attention.length === 1 ? 's' : ''} attention` : ' · everyone is on pace'}.`
+          : 'Nobody has targets for today yet. Assign daily packs to start tracking.'}
+        actions={
+          <>
+            <Link href="/admin/targets" className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bone-raised px-3 py-1.5 text-[12px] font-medium text-ink hover:border-ink/20">
+              <Target className="size-3.5" aria-hidden="true" />Targets
+            </Link>
+            <Link href="/admin/command-center" className="inline-flex items-center gap-1.5 rounded-md bg-solid px-3 py-1.5 text-[12px] font-medium text-on-solid hover:opacity-90">
+              <Shield className="size-3.5" aria-hidden="true" />Command center
+            </Link>
+          </>
+        }
+      />
 
-      {/* Top stats */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatCard
-          icon={<Users className="size-4" />}
-          label="Active Reps"
-          value={activeReps}
-          accent="cobalt"
-          sub={`${totalReps} total`}
-        />
-        <StatCard
-          icon={<CheckCircle2 className="size-4" />}
-          label="Day Complete"
-          value={health?.closed ?? 0}
-          accent="green"
-          sub={`of ${totalReps}`}
-        />
-        <StatCard
-          icon={<AlertTriangle className="size-4" />}
-          label="Need Attention"
-          value={commandCenter?.attentionItems?.length ?? 0}
-          accent="orange"
-          sub={commandCenter?.attentionItems?.length ? 'act now' : 'all clear'}
-        />
-        <StatCard
-          icon={<Flame className="size-4" />}
-          label="My Progress"
-          value={myDay ? `${Math.round(100 - (myDay.dayElapsedPct * 100))}%` : '—'}
-          accent="cobalt"
-          sub={myDay?.status ?? '—'}
-        />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile label="Working today" value={working} icon={<Users className="size-3.5" />} tone="cobalt" sub={`${teamHealth?.onTrack ?? 0} on pace`} href="/team" />
+        <StatTile label="Day complete" value={teamHealth?.closed ?? 0} icon={<CheckCircle2 className="size-3.5" />} tone="success" sub={working > 0 ? `of ${working} people` : '—'} />
+        <StatTile label="Behind" value={teamHealth?.behind ?? 0} icon={<AlertTriangle className="size-3.5" />} tone={(teamHealth?.behind ?? 0) > 0 ? 'warning' : 'neutral'} sub={(teamHealth?.behind ?? 0) > 0 ? 'Check in with them' : 'All clear'} href="/admin/accountability" />
+        <StatTile label="Team actions" value={`${totals.done}`} icon={<Activity className="size-3.5" />} tone="orange" sub={totals.target > 0 ? `${teamPct}% of ${totals.target} target` : 'No targets today'} />
       </div>
 
-      {/* Attention items */}
-      {commandCenter?.attentionItems && commandCenter.attentionItems.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl border border-orange/20 bg-orange/[0.03] overflow-hidden"
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Panel
+          className="lg:col-span-2"
+          title="Who is covering their numbers"
+          subtitle="Sorted by who needs help first · health blends pace, replies and follow-ups"
+          action={<Link href="/admin/accountability" className="text-[11px] font-medium text-cobalt hover:underline">This week</Link>}
+          flush
         >
-          <div className="flex items-center gap-2 px-5 py-3 border-b border-orange/10">
-            <AlertTriangle className="size-4 text-orange" />
-            <span className="text-sm font-medium text-ink">Needs Attention</span>
-            <span className="rounded-full bg-orange/10 px-1.5 py-0.5 text-[10px] font-semibold text-orange">
-              {commandCenter.attentionItems.length}
-            </span>
-          </div>
-          <div className="divide-y divide-orange/10">
-            {commandCenter.attentionItems.map((item, i) => (
-              <div key={`${item.repId}-${i}`} className="px-5 py-3 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-ink">{item.repName}</p>
-                  <p className="text-[11px] text-stone">{item.message}</p>
-                </div>
-                <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', statusColor(item.status))}>
-                  {item.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        </motion.div>
-      )}
+          {sorted.length === 0 ? (
+            <EmptyNote>
+              <span>No targets assigned for today. <Link href="/admin/targets" className="font-medium text-cobalt hover:underline">Assign daily packs</Link></span>
+            </EmptyNote>
+          ) : (
+            <div className="relative overflow-x-auto">
+              <table className="w-full min-w-[560px] text-[12px]">
+                <thead>
+                  <tr className="border-b border-line text-left text-[10px] uppercase tracking-[0.1em] text-stone">
+                    <th scope="col" className="px-4 py-2 font-medium sm:px-5">Person</th>
+                    <th scope="col" className="w-[150px] px-3 py-2 font-medium">Progress</th>
+                    <th scope="col" className="px-3 py-2 font-medium">Health</th>
+                    <th scope="col" className="px-3 py-2 font-medium">Status</th>
+                    <th scope="col" className="w-8 px-3 py-2"><span className="sr-only">Open</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line/70">
+                  {sorted.map((person) => {
+                    const { done, target } = parseProgress(person.progress)
+                    const h = health[person.personId]
+                    const pill = statusPill(person)
+                    const state = h ? STATE_LABEL[h.state] : undefined
+                    return (
+                      <tr key={person.personId} className="group hover:bg-bone">
+                        <td className="px-4 py-2.5 sm:px-5">
+                          <Link href={`/team/${person.personId}`} className="flex items-center gap-2.5">
+                            <Initials name={person.personName} tone={pill.tone} />
+                            <span className="min-w-0">
+                              <span className="block truncate text-[13px] font-medium text-ink group-hover:underline">{person.personName}</span>
+                              <span className="block truncate text-[11px] text-stone">{person.workingAs.length > 0 ? person.workingAs.join(', ') : 'No identity assigned'}</span>
+                            </span>
+                          </Link>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <Meter value={done} max={target} className="min-w-[60px] flex-1" />
+                            <span className="w-12 text-right tabular-nums text-graphite">{done}/{target}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          {h ? (
+                            <span className="flex items-center gap-1.5">
+                              <span className={cn('tabular-nums font-medium', h.health >= 70 ? 'text-status-success' : h.health >= 40 ? 'text-orange' : 'text-status-danger')}>{h.health}</span>
+                              {h.bottleneck && <span className="truncate text-[11px] text-stone">{h.bottleneck.replace(/_/g, ' ').toLowerCase()}</span>}
+                            </span>
+                          ) : h === null ? (
+                            <span className="text-stone">—</span>
+                          ) : (
+                            <span className="inline-block h-3 w-10 animate-pulse rounded bg-bone" aria-label="Loading health" />
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-wrap gap-1">
+                            <Pill tone={pill.tone}>{pill.label}</Pill>
+                            {state && pill.label !== 'Done' && state.tone !== 'success' && state.tone !== pill.tone && <Pill tone={state.tone}>{state.label}</Pill>}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <Link href={`/team/${person.personId}`} aria-label={`Open ${person.personName}`}>
+                            <ChevronRight className="size-4 text-stone group-hover:text-ink" aria-hidden="true" />
+                          </Link>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
 
-      {/* Weighted Performance Overview */}
-      {commandCenter?.team && commandCenter.team.length > 0 && (
-        <AdminPerformanceOverview
-          repIds={commandCenter.team.map((t) => t.personId)}
-          repNames={Object.fromEntries(commandCenter.team.map((t) => [t.personId, t.personName]))}
-        />
-      )}
-
-      {/* Team roster */}
-      {commandCenter?.team && commandCenter.team.length > 0 && (
-        <div className="rounded-2xl border border-line bg-bone-raised/20 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-line/40">
-            <span className="text-sm font-medium text-ink">Team Roster</span>
-            <span className="text-[11px] text-stone">{commandCenter.team.length} members</span>
-          </div>
-          <div className="divide-y divide-line/30">
-            {[...commandCenter.team]
-              .sort((a, b) => {
-                if (a.status === 'behind' && b.status !== 'behind') return -1
-                if (b.status === 'behind' && a.status !== 'behind') return 1
-                return b.remaining - a.remaining
-              })
-              .map((person, i) => (
-                <RepRow key={person.personId} person={person} index={i} />
+        <Panel title="Needs attention" subtitle="Half the day gone, under 60% done" action={attention.length > 0 ? <Pill tone="warning">{attention.length}</Pill> : undefined} flush>
+          {attention.length === 0 ? (
+            <div className="flex flex-col items-center px-4 py-8 text-center">
+              <CheckCircle2 className="size-6 text-status-success" aria-hidden="true" />
+              <p className="mt-2 text-[13px] font-medium text-ink">Everyone is on pace</p>
+              <p className="mt-1 text-[11px] text-stone">People show up here once they fall behind.</p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-line/70">
+              {attention.map((item, i) => (
+                <li key={`${item.repId}-${i}`}>
+                  <Link href={`/team/${item.repId}`} className="flex items-start gap-3 px-4 py-3 hover:bg-bone sm:px-5">
+                    <Initials name={item.repName} tone="warning" size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-medium text-ink">{item.repName}</p>
+                      <p className="text-[11px] text-graphite">{item.remaining} actions left · {item.identityName}</p>
+                    </div>
+                    <ChevronRight className="mt-1 size-4 shrink-0 text-stone" aria-hidden="true" />
+                  </Link>
+                </li>
               ))}
-          </div>
-        </div>
-      )}
-
-      {/* My activity (admin's own outreach) */}
-      {myDay && (
-        <div className="rounded-2xl border border-line bg-bone-raised/20 px-5 py-4">
-          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-stone mb-3">Your Outreach Today</p>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {(myDay.categories ?? []).map((cat) => (
-              <MiniStat
-                key={cat.key}
-                icon={catKeyToIcon(cat.key)}
-                label={cat.label}
-                value={cat.completed}
-                target={cat.target}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* ─── rep row ─── */
-interface TeamPerson {
-  personId: string
-  personName: string
-  workingAs: string[]
-  progress: string
-  remaining: number
-  status: string
-  dayCloseStatus: string | null
-}
-
-function RepRow({ person, index }: { person: TeamPerson; index: number }) {
-  const pct = completionPct(
-    parseInt(person.progress.split('/')[0]) || 0,
-    parseInt(person.progress.split('/')[1]) || 0,
-  )
-  const isComplete = person.status === 'completed' || person.remaining === 0
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.03 }}
-      className="flex items-center gap-4 px-5 py-3 hover:bg-bone-raised/30 transition-colors"
-    >
-      {/* Avatar + name */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
-        <div className={cn(
-          'flex size-9 items-center justify-center rounded-full text-xs font-semibold shrink-0',
-          isComplete ? 'bg-status-success/10 text-status-success' : person.status === 'behind' ? 'bg-orange/10 text-orange' : 'bg-cobalt/10 text-cobalt'
-        )}>
-          {person.personName.split(' ').map((n) => n[0]).join('').slice(0, 2)}
-        </div>
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-ink truncate">{person.personName}</p>
-          <p className="text-[11px] text-stone truncate">
-            {person.workingAs.length > 0 ? person.workingAs.join(', ') : 'No profile assigned'}
-          </p>
-        </div>
-      </div>
-
-      {/* Progress bar */}
-      <div className="hidden sm:block w-32 shrink-0">
-        <div className="h-1.5 rounded-full bg-line/40 overflow-hidden">
-          <motion.div
-            initial={{ width: 0 }}
-            animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.5, delay: index * 0.03 }}
-            className={cn('h-full rounded-full', isComplete ? 'bg-status-success' : person.status === 'behind' ? 'bg-orange' : 'bg-cobalt')}
-          />
-        </div>
-      </div>
-
-      {/* Status */}
-      <div className="flex items-center gap-2 shrink-0">
-        <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', statusColor(person.status))}>
-          {isComplete ? 'Done' : person.status === 'behind' ? `${person.remaining} left` : person.status}
-        </span>
-      </div>
-    </motion.div>
-  )
-}
-
-/* ─── stat card ─── */
-function StatCard({ icon, label, value, accent, sub }: {
-  icon: React.ReactNode; label: string; value: number | string; accent: string; sub?: string
-}) {
-  return (
-    <div className="rounded-xl border border-line bg-bone-raised/30 px-4 py-3.5 flex items-center gap-3">
-      <div className={cn(
-        'flex items-center justify-center rounded-lg p-2',
-        accent === 'cobalt' ? 'bg-cobalt/10 text-cobalt' :
-        accent === 'green' ? 'bg-status-success/10 text-status-success' :
-        accent === 'orange' ? 'bg-orange/10 text-orange' :
-        'bg-stone-100 text-stone-500'
-      )}>
-        {icon}
-      </div>
-      <div>
-        <p className="text-lg font-semibold text-ink">{value}</p>
-        <p className="text-[11px] text-stone/60">{label}{sub ? ` · ${sub}` : ''}</p>
+            </ul>
+          )}
+        </Panel>
       </div>
     </div>
   )
 }
 
-/* ─── mini stat ─── */
-function MiniStat({ icon, label, value, target }: { icon: React.ReactNode; label: string; value: number; target: number }) {
-  const pct = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 100
-  return (
-    <div className="rounded-lg border border-line/50 bg-bone px-3 py-2.5">
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-stone">{icon}</span>
-        <span className="text-[11px] text-stone">{label}</span>
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-base font-semibold text-ink">{value}</span>
-        {target > 0 && <span className="text-[10px] text-stone">/ {target}</span>}
-      </div>
-      {target > 0 && (
-        <div className="mt-1.5 h-1 rounded-full bg-line/40 overflow-hidden">
-          <div className={cn('h-full rounded-full transition-all', pct >= 80 ? 'bg-status-success' : pct >= 40 ? 'bg-cobalt' : 'bg-orange')} style={{ width: `${pct}%` }} />
-        </div>
-      )}
-    </div>
-  )
+/** Execution health per rep — fetched after paint so the table shows immediately. */
+function useTeamHealth(repIds: string[]): Record<string, Health | null> {
+  const [rows, setRows] = useState<Record<string, Health | null>>({})
+  const key = repIds.join(',')
+
+  useEffect(() => {
+    if (!key) return
+    let cancelled = false
+    for (const repId of key.split(',')) {
+      fetch(`/api/admin/performance?repId=${encodeURIComponent(repId)}`, { cache: 'no-store' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((d: { executionHealth?: number; state?: string; primaryBottleneck?: string | null } | null) => {
+          if (cancelled) return
+          setRows((prev) => ({
+            ...prev,
+            [repId]: d ? { health: d.executionHealth ?? 0, state: d.state ?? 'ON_TRACK', bottleneck: d.primaryBottleneck ?? null } : null,
+          }))
+        })
+        .catch(() => { if (!cancelled) setRows((prev) => ({ ...prev, [repId]: null })) })
+    }
+    return () => { cancelled = true }
+  }, [key])
+
+  return rows
 }

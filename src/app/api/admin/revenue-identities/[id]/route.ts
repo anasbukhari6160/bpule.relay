@@ -78,6 +78,28 @@ export async function PATCH(
     }
   }
 
+  if (typeof body.channel === 'string') {
+    if (!['linkedin', 'email', 'upwork', 'other'].includes(body.channel)) {
+      return NextResponse.json({ error: 'Unknown channel.' }, { status: 400 })
+    }
+    update.channel = body.channel
+  }
+
+  if (body.profileId !== undefined) {
+    if (body.profileId === null || body.profileId === '') {
+      update.profile_id = null
+    } else if (typeof body.profileId === 'string') {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', body.profileId)
+        .eq('organization_id', authCtx.orgId)
+        .maybeSingle()
+      if (!profile) return NextResponse.json({ error: 'Linked profile not found.' }, { status: 400 })
+      update.profile_id = profile.id
+    }
+  }
+
   const { data, error } = await supabase
     .from('revenue_identities')
     .update(update)

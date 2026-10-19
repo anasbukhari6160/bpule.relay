@@ -71,8 +71,22 @@ export async function POST(request: Request) {
     ? body.channel
     : 'other'
 
+  // Optional link to the Profile Intelligence record this identity sends as.
+  let profileId: string | null = null
+  if (typeof body.profileId === 'string' && body.profileId) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', body.profileId)
+      .eq('organization_id', authCtx.orgId)
+      .maybeSingle()
+    if (!profile) return NextResponse.json({ error: 'Linked profile not found.' }, { status: 400 })
+    profileId = profile.id as string
+  }
+
   const row: Record<string, unknown> = {
     organization_id: authCtx.orgId,
+    profile_id: profileId,
     slug,
     identity_name: identityName,
     title: typeof body.title === 'string' ? body.title : null,

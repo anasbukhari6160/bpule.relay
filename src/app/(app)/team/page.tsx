@@ -42,7 +42,7 @@ export default async function TeamPage() {
           description={canSeeTeam ? 'Invite reps and assign profiles to start tracking team performance.' : 'Your activity will appear here once you complete your first actions.'}
           action={
             canSeeTeam ? (
-              <Link href="/profiles" className="relay-cta text-[12px]">
+              <Link href="/admin/people" className="relay-cta text-[12px]">
                 Invite team
               </Link>
             ) : (

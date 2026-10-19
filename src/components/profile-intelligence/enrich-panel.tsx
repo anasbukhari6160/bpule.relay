@@ -163,15 +163,15 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
   const proposal = run?.proposal
 
   return (
-    <section data-testid="enrich-panel" className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+    <section data-testid="enrich-panel" className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Add / Import Data</p>
-          <p className="mt-1 text-[12px] text-[color:var(--console-mute)]">
+          <p className="mt-1 text-[12px] text-graphite">
             New sources are merged into this same profile. Nothing changes until you review and apply the diff.
           </p>
         </div>
-        <button onClick={phase === 'review' ? discard : onClose} className="text-[11px] text-[color:var(--console-mute)] hover:text-orange">
+        <button onClick={phase === 'review' ? discard : onClose} className="text-[11px] text-graphite hover:text-orange">
           {phase === 'review' ? 'Discard' : 'Close'}
         </button>
       </div>
@@ -187,13 +187,13 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
           >
             <input ref={inputRef} type="file" multiple accept={ACCEPTED} className="hidden" data-testid="enrich-file-input"
               onChange={(e) => e.target.files && setFiles(Array.from(e.target.files).slice(0, MAX_FILES))} />
-            <p className="text-[13px] text-[color:var(--console-text)]">Select sources for this profile</p>
-            <p className="mt-1 text-[11px] text-[color:var(--console-mute)]">PDF, DOCX, TXT, Markdown, CSV, XLSX · up to {MAX_FILES} files</p>
+            <p className="text-[13px] text-ink">Select sources for this profile</p>
+            <p className="mt-1 text-[11px] text-graphite">PDF, DOCX, TXT, Markdown, CSV, XLSX · up to {MAX_FILES} files</p>
             {files.length > 0 && <p className="mt-2 text-[12px] font-medium text-orange">{files.length} file{files.length > 1 ? 's' : ''} selected</p>}
           </div>
           {files.length > 0 && (
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <ul className="text-[11px] text-[color:var(--console-mute)]">
+              <ul className="text-[11px] text-graphite">
                 {files.map((f) => <li key={f.name}>{f.name} ({Math.max(1, Math.round(f.size / 1024))} KB)</li>)}
               </ul>
               <button onClick={upload} disabled={phase === 'uploading'}
@@ -206,7 +206,7 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
       )}
 
       {phase === 'extracting' && (
-        <p className="mt-4 text-[12px] text-[color:var(--console-text)]">
+        <p className="mt-4 text-[12px] text-ink">
           Extracting… {progress.total > 0 ? `${progress.done} of ${progress.total} sources` : 'checking sources'}
         </p>
       )}
@@ -227,15 +227,15 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
               ['Duplicates', proposal.summary.duplicatesIgnored],
             ].map(([label, n]) => (
               <div key={label as string} className="rounded border border-orange/10 px-2 py-1.5">
-                <span className="text-[color:var(--console-mute)]">{label}</span>
-                <span className="float-right font-medium text-[color:var(--console-text)]">{n as number}</span>
+                <span className="text-graphite">{label}</span>
+                <span className="float-right font-medium text-ink">{n as number}</span>
               </div>
             ))}
           </div>
 
           {(proposal.identity.otherPeople.length > 0 || proposal.identity.selectedPerson) && (
             <div data-testid="person-picker" className="rounded border border-orange/20 px-3 py-2 text-[11px]">
-              <p className="text-[color:var(--console-text)]">
+              <p className="text-ink">
                 {proposal.identity.selectedPerson
                   ? <>Importing data for <span className="font-medium">{proposal.identity.selectedPerson}</span> only.</>
                   : proposal.identity.matchedPeople.length > 0
@@ -250,10 +250,10 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
                   </button>
                 ))}
                 {proposal.identity.selectedPerson && (
-                  <button onClick={() => choosePerson(null)} className="px-2 py-0.5 text-[color:var(--console-mute)] hover:text-orange">Auto-match</button>
+                  <button onClick={() => choosePerson(null)} className="px-2 py-0.5 text-graphite hover:text-orange">Auto-match</button>
                 )}
               </div>
-              <p className="mt-1 text-[10px] text-[color:var(--console-mute)]">Only the chosen person&apos;s facts, projects, proof and reviews are imported. Everyone else is ignored.</p>
+              <p className="mt-1 text-[10px] text-graphite">Only the chosen person&apos;s facts, projects, proof and reviews are imported. Everyone else is ignored.</p>
             </div>
           )}
 
@@ -269,9 +269,9 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
             const collapsed = sec.key === 'duplicates'
             return (
               <details key={sec.key} open={!collapsed} data-testid={`diff-section-${sec.key}`} className="rounded border border-orange/10">
-                <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-[color:var(--console-text)]">
-                  {sec.title} <span className="text-[color:var(--console-mute)]">({items.length})</span>
-                  {sec.hint && <span className="ml-2 font-normal text-[11px] text-[color:var(--console-mute)]">{sec.hint}</span>}
+                <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-ink">
+                  {sec.title} <span className="text-graphite">({items.length})</span>
+                  {sec.hint && <span className="ml-2 font-normal text-[11px] text-graphite">{sec.hint}</span>}
                 </summary>
                 <ul className="divide-y divide-orange/5">
                   {items.map((c) => (
@@ -281,21 +281,21 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
                         checked={decisions[c.id] === 'apply' && c.actionable}
                         onChange={(e) => setDecisions((d) => ({ ...d, [c.id]: e.target.checked ? 'apply' : 'skip' }))} />
                       <div className="min-w-0 flex-1 text-[11px]">
-                        <p className="text-[color:var(--console-text)]">
+                        <p className="text-ink">
                           <span className="font-medium">{c.label}</span>
                           <span className="ml-1.5 rounded bg-orange/5 px-1 text-[9px] uppercase tracking-wide text-orange/80">{c.classification.replace('_', ' ')}</span>
                         </p>
                         {c.kind === 'scalar' && c.existingValue != null ? (
-                          <p className="mt-0.5 break-words text-[color:var(--console-mute)]">
+                          <p className="mt-0.5 break-words text-graphite">
                             <span className="line-through decoration-orange/30">{show(c.existingValue)}</span>
                             {c.existingAuthority && <span className="ml-1 text-[9px]">[{AUTH_LABEL[c.existingAuthority]}]</span>}
                             <span className="mx-1">→</span>
-                            <span className="text-[color:var(--console-text)]">{show(c.incomingValue)}</span>
+                            <span className="text-ink">{show(c.incomingValue)}</span>
                           </p>
                         ) : (
-                          <p className="mt-0.5 break-words text-[color:var(--console-text)]">{show(c.incomingValue)}</p>
+                          <p className="mt-0.5 break-words text-ink">{show(c.incomingValue)}</p>
                         )}
-                        <p className="mt-0.5 text-[10px] text-[color:var(--console-mute)]">
+                        <p className="mt-0.5 text-[10px] text-graphite">
                           {c.reason} · {AUTH_LABEL[c.incomingAuthority]} · {c.provenance.map((p) => p.filename).join(', ')}
                         </p>
                       </div>
@@ -307,13 +307,13 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
           })}
 
           {proposal.summary.derivedToRecompute.length > 0 && (
-            <p className="text-[11px] text-[color:var(--console-mute)]">
+            <p className="text-[11px] text-graphite">
               Will recompute: {proposal.summary.derivedToRecompute.join(', ')}. Leads, messages, assignments, revenue identity and runs are never modified.
             </p>
           )}
 
           <div className="flex items-center justify-end gap-3">
-            <button onClick={discard} disabled={phase === 'applying'} className="text-[12px] text-[color:var(--console-mute)] hover:text-orange">Discard import</button>
+            <button onClick={discard} disabled={phase === 'applying'} className="text-[12px] text-graphite hover:text-orange">Discard import</button>
             <button onClick={apply} disabled={phase === 'applying'} data-testid="enrich-apply"
               className="rounded bg-orange px-4 py-2 text-[12px] font-medium text-white hover:bg-orange/90 disabled:opacity-50">
               {phase === 'applying' ? 'Applying…' : selectedCount > 0 ? `Apply ${selectedCount} change${selectedCount === 1 ? '' : 's'}` : 'Record provenance only'}
@@ -323,12 +323,12 @@ export function EnrichPanel({ profileId, onApplied, onClose }: { profileId: stri
       )}
 
       {phase === 'done' && result && (
-        <div data-testid="enrich-done" className="mt-4 space-y-1 text-[12px] text-[color:var(--console-text)]">
+        <div data-testid="enrich-done" className="mt-4 space-y-1 text-[12px] text-ink">
           <p className="font-medium text-success">Imported into this profile.</p>
-          <p className="text-[11px] text-[color:var(--console-mute)]">
+          <p className="text-[11px] text-graphite">
             {Object.entries(result.result?.counts ?? {}).filter(([, n]) => (n as number) > 0).map(([k, n]) => `${String(k).replace(/_/g, ' ')}: ${n}`).join(' · ') || 'No new facts — provenance recorded.'}
           </p>
-          <p className="text-[11px] text-[color:var(--console-mute)]">Profile ID unchanged · all leads, messages and assignments untouched.</p>
+          <p className="text-[11px] text-graphite">Profile ID unchanged · all leads, messages and assignments untouched.</p>
           <button onClick={onClose} className="mt-2 text-[11px] text-orange hover:underline">Close</button>
         </div>
       )}

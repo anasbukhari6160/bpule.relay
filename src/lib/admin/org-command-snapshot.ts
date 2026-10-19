@@ -268,7 +268,7 @@ async function resolveSnapshot(): Promise<OrgCommandSnapshot> {
           id: `identity-${person.repId}`,
           title: `${person.repName} has no identity`,
           detail: 'Assign a revenue identity so they can execute.',
-          href: '/admin/revenue-identities',
+          href: '/profile-intelligence?tab=identities',
           severity: 'warning',
         })
       }
@@ -279,7 +279,7 @@ async function resolveSnapshot(): Promise<OrgCommandSnapshot> {
           id: `unassigned-${identity.id}`,
           title: `${identity.name} is unassigned`,
           detail: 'No rep can work this identity until someone is assigned.',
-          href: '/admin/revenue-identities',
+          href: '/profile-intelligence?tab=identities',
           severity: 'critical',
         })
       } else if (identity.targetCount === 0) {

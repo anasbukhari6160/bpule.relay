@@ -120,7 +120,7 @@ export default function SearchPage() {
     if (result.entityType === 'lead') return `/leads/${result.id}`
     if (result.entityType === 'upwork') return `/upwork/${result.id}`
     if (result.entityType === 'conversation') return `/leads/${result.id}`
-    if (result.entityType === 'identity') return '/admin/revenue-identities'
+    if (result.entityType === 'identity') return '/profile-intelligence?tab=identities'
     if (result.entityType === 'studio') return '/content'
     return '/profiles'
   }

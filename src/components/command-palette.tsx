@@ -20,7 +20,6 @@ import {
   BarChart3,
   UserCircle2,
   TrendingUp,
-  Layers,
 } from 'lucide-react'
 import { cn } from 'cn'
 
@@ -200,10 +199,10 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     {
       id: 'settings',
       label: 'Settings',
-      description: 'Account and preferences',
+      description: 'Account, send budget and preferences',
       icon: Settings,
       group: 'Navigation',
-      action: () => { router.push('/account'); onOpenChange(false) },
+      action: () => { router.push('/settings'); onOpenChange(false) },
     },
     {
       id: 'inbound',
@@ -228,14 +227,6 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       icon: TrendingUp,
       group: 'Studio',
       action: () => { router.push('/content-v2/growth'); onOpenChange(false) },
-    },
-    {
-      id: 'usage',
-      label: 'Usage',
-      description: 'AI usage and limits',
-      icon: Layers,
-      group: 'Navigation',
-      action: () => { router.push('/usage'); onOpenChange(false) },
     },
     {
       id: 'command-center',
@@ -263,11 +254,11 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     },
     {
       id: 'identities',
-      label: 'Revenue Identities',
-      description: 'Manage identities',
+      label: 'Sending identities',
+      description: 'Profiles and the identities reps send as',
       icon: UserCircle2,
       group: 'Admin',
-      action: () => { router.push('/admin/revenue-identities'); onOpenChange(false) },
+      action: () => { router.push('/profile-intelligence?tab=identities'); onOpenChange(false) },
     },
     {
       id: 'targets',

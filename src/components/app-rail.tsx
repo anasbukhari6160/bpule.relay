@@ -22,7 +22,6 @@ import {
   BarChart3,
   TrendingUp,
   Users,
-  Layers,
   Activity,
 } from 'lucide-react'
 import { cn } from 'cn'
@@ -38,6 +37,10 @@ const PRIMARY_NAV = [
   { href: '/leads', label: 'Leads', icon: Target, exact: false },
   { href: '/chats', label: 'Chats', icon: MessagesSquare, exact: false },
   { href: '/prospect', label: 'Prospect', icon: Search, exact: false },
+]
+
+// Personal scorecard — reps only. Admins track the team, not themselves.
+const REP_NAV = [
   { href: '/accountability', label: 'My Numbers', icon: TrendingUp, exact: true },
 ]
 
@@ -65,15 +68,13 @@ const MORE_NAV: Array<{
   { href: '/content-v2/growth', label: 'Relay Growth', icon: TrendingUp, exact: true, adminOnly: true, group: 'Create' },
   { href: '/profile-intelligence', label: 'Profiles', icon: UserCircle2, exact: false, group: 'Intelligence' },
   { href: '/facts', label: 'Proof', icon: Shield, exact: false, group: 'Intelligence' },
-  { href: '/admin/accountability', label: 'Accountability', icon: TrendingUp, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/command-center', label: 'Command', icon: Shield, exact: true, adminOnly: true, group: 'Admin' },
-  { href: '/admin/people', label: 'People', icon: Users, exact: true, adminOnly: true, group: 'Admin' },
+  { href: '/admin/accountability', label: 'Accountability', icon: TrendingUp, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/revenue-intelligence', label: 'Revenue', icon: BarChart3, exact: true, adminOnly: true, group: 'Admin' },
-  { href: '/admin/revenue-identities', label: 'Identities', icon: UserCircle2, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/targets', label: 'Targets', icon: Target, exact: true, adminOnly: true, group: 'Admin' },
+  { href: '/admin/people', label: 'People', icon: Users, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/ai-usage', label: 'AI Usage', icon: Activity, exact: true, adminOnly: true, group: 'Admin' },
-  { href: '/usage', label: 'Usage', icon: Layers, exact: false, group: 'Account' },
-  { href: '/account', label: 'Settings', icon: Settings, exact: false, group: 'Account' },
+  { href: '/settings', label: 'Settings', icon: Settings, exact: false, group: 'Account' },
 ]
 
 const ROLE_LABEL: Record<RepRole, string> = {
@@ -402,7 +403,7 @@ export function AppRail({
 
           {role === 'admin' && (
             <Link
-              href="/admin/revenue-identities"
+              href="/profile-intelligence?tab=identities"
               onClick={() => setIdentityOpen(false)}
               className="mt-1.5 block rounded border border-line px-2 py-1 text-center text-[11px] font-medium text-ink hover:bg-bone"
             >
@@ -450,7 +451,7 @@ export function AppRail({
             <p className="min-w-0 truncate text-[11px] font-medium text-ink">
               {activeIdentity.identityName}
               <span className="text-graphite">
-                {[activeIdentity.title, activeIdentity.channel?.toUpperCase()].filter(Boolean).join(' / ')}
+                {' · '}{[activeIdentity.title, activeIdentity.channel?.toUpperCase()].filter(Boolean).join(' / ')}
               </span>
             </p>
           </div>
@@ -479,7 +480,7 @@ export function AppRail({
               </button>
             </div>
             <nav className="flex-1 overflow-y-auto px-2.5 py-3" aria-label="Mobile">
-              <MobileNavSection items={PRIMARY_NAV} isActive={isActive} onNavigate={handleMobileNavigate} />
+              <MobileNavSection items={isAdmin ? PRIMARY_NAV : [...PRIMARY_NAV, ...REP_NAV]} isActive={isActive} onNavigate={handleMobileNavigate} />
               <div className="mt-3">
                 <MobileNavSection items={STUDIO_NAV} isActive={isActive} studio onNavigate={handleMobileNavigate} />
               </div>
@@ -525,7 +526,7 @@ export function AppRail({
         </div>
 
         <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-3">
-          <NavSection items={PRIMARY_NAV} isActive={isActive} />
+          <NavSection items={isAdmin ? PRIMARY_NAV : [...PRIMARY_NAV, ...REP_NAV]} isActive={isActive} />
           <div className="mt-3">
             <NavSection items={STUDIO_NAV} isActive={isActive} studio />
           </div>
@@ -595,7 +596,7 @@ export function AppRail({
             { href: '/dashboard', label: 'Today', icon: CalendarDays, exact: true },
             { href: '/leads', label: 'Leads', icon: Target, exact: false },
             { href: '/content', label: 'Studio', icon: PenLine, exact: false, studio: true },
-            { href: '/account', label: 'Account', icon: Settings, exact: false },
+            { href: '/settings', label: 'Settings', icon: Settings, exact: false },
           ].map(({ href, label, icon: Icon, exact, studio }) => {
             const active = isActive(href, exact)
             return (

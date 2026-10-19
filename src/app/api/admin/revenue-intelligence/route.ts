@@ -20,6 +20,9 @@ function dateRange(range: string): { start: string; end: string } {
     case '30d':
       start = new Date(now.getTime() - 30 * 24 * 3600000).toISOString()
       break
+    case '90d':
+      start = new Date(now.getTime() - 90 * 24 * 3600000).toISOString()
+      break
     default:
       start = new Date(now.getTime() - 30 * 24 * 3600000).toISOString()
   }
@@ -48,6 +51,7 @@ export async function GET(request: Request) {
     accountabilityResult,
     identitiesResult,
     extractionRunsResult,
+    repsResult,
   ] = await Promise.all([
     supabase.from('relay_events').select('id, event_type, entity_id, entity_type, actor_id, actor_type, revenue_identity_id, payload, occurred_at, source_event_id').eq('organization_id', authCtx.orgId).gte('occurred_at', start).lte('occurred_at', end).order('occurred_at', { ascending: false }).limit(5000),
     supabase.from('leads').select('id, company, contact_name, contact_title, status, score, verdict, canonical_score, canonical_intelligence, direction, source, owner_rep_id, revenue_identity_id, signal_type, signal_evidence, tags, created_at, updated_at').eq('organization_id', authCtx.orgId).gte('created_at', start).lte('created_at', end).order('created_at', { ascending: false }).limit(2000),
@@ -58,6 +62,7 @@ export async function GET(request: Request) {
     supabase.from('daily_accountability').select('id, rep_id, revenue_identity_id, activity_type, target_date, target_count, completed_count, status').eq('organization_id', authCtx.orgId).gte('target_date', startStr).lte('target_date', endStr),
     supabase.from('revenue_identities').select('id, slug, identity_name, title, channel, status').eq('organization_id', authCtx.orgId),
     supabase.from('extraction_runs').select('id, rep_id, success, latency_ms, model, error_message, created_at').eq('organization_id', authCtx.orgId).gte('created_at', start).lte('created_at', end).limit(5000),
+    supabase.from('reps').select('id, name').eq('organization_id', authCtx.orgId),
   ])
 
   const events = eventsResult.data ?? []
@@ -69,6 +74,7 @@ export async function GET(request: Request) {
   const accountability = accountabilityResult.data ?? []
   const identities = identitiesResult.data ?? []
   const extractionRuns = extractionRunsResult.data ?? []
+  const repNames = new Map((repsResult.data ?? []).map((r) => [r.id as string, r.name as string]))
 
   const leadMap = new Map(leads.map((l) => [l.id, l]))
   const identityMap = new Map(identities.map((i) => [i.id, i]))
@@ -294,6 +300,7 @@ export async function GET(request: Request) {
       timestamp: ev.occurred_at,
       eventType: ev.event_type,
       actorId: rep,
+      actorName: rep ? repNames.get(rep) ?? null : null,
       entityId: ev.entity_id,
       prospectName: lead?.contact_name ?? lead?.company ?? null,
       company: lead?.company ?? null,
@@ -304,6 +311,37 @@ export async function GET(request: Request) {
   })
 
   const sourcePerformance = [...sourceCounts.entries()].map(([source, counts]) => ({ source, ...counts }))
+
+  const identityCounts = new Map<string, { contacted: number; replies: number; wins: number; leads: number }>()
+  for (const lead of leads) {
+    if (!lead.revenue_identity_id) continue
+    const entry = identityCounts.get(lead.revenue_identity_id) ?? { contacted: 0, replies: 0, wins: 0, leads: 0 }
+    const stages = funnelStages.get(lead.id) ?? []
+    entry.leads++
+    if (stages.includes('CONTACTED')) entry.contacted++
+    if (stages.includes('REPLIED')) entry.replies++
+    if (stages.includes('WON')) entry.wins++
+    identityCounts.set(lead.revenue_identity_id, entry)
+  }
+  const identityPerformance = [...identityCounts.entries()].map(([id, counts]) => ({
+    id,
+    name: identityMap.get(id)?.identity_name ?? 'Unknown identity',
+    channel: identityMap.get(id)?.channel ?? 'other',
+    ...counts,
+  })).sort((a, b) => b.contacted - a.contacted)
+
+  const dailyMap = new Map<string, { outreach: number; replies: number; wins: number }>()
+  for (let t = new Date(startStr + 'T00:00:00Z').getTime(); t <= new Date(endStr + 'T00:00:00Z').getTime(); t += 86_400_000) {
+    dailyMap.set(new Date(t).toISOString().slice(0, 10), { outreach: 0, replies: 0, wins: 0 })
+  }
+  for (const ev of funnelEvents) {
+    const day = dailyMap.get(String(ev.occurred_at).slice(0, 10))
+    if (!day) continue
+    if (ev.event_type === 'OUTREACH_RECORDED' || ev.event_type === 'FOLLOWUP_RECORDED') day.outreach++
+    else if (ev.event_type === 'CLIENT_REPLIED') day.replies++
+    else if (ev.event_type === 'OUTCOME_RECORDED' && String(ev.payload?.outcome ?? ev.payload?.status ?? '') !== 'lost') day.wins++
+  }
+  const daily = [...dailyMap.entries()].map(([date, v]) => ({ date, ...v }))
 
   const providers = [...providerCounts.entries()].map(([provider, data]) => ({
     provider,
@@ -378,7 +416,9 @@ export async function GET(request: Request) {
       relayActions: Object.fromEntries(relayActionCounts),
       humanActions: Object.fromEntries(humanActionCounts),
     },
-    reps: [...repPerformance.entries()].map(([repId, data]) => ({ repId, ...data })),
+    reps: [...repPerformance.entries()].map(([repId, data]) => ({ repId, repName: repNames.get(repId) ?? 'Former teammate', ...data })),
+    identityPerformance,
+    daily,
     identities: identities.map((i) => ({ id: i.id, name: i.identity_name, slug: i.slug, title: i.title, channel: i.channel, status: i.status })),
     sourcePerformance,
     fitDistribution: Object.fromEntries(fitCounts),

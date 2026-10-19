@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { notifyError, notifySuccess } from '@/lib/ui/notify'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Send, Reply, MessageSquare, X, Copy, Check, Trophy, Clock,
@@ -314,8 +315,28 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
       {!isTerminal && decisionCtx && (
         <LeadDecisionContextCard
           context={decisionCtx}
-          onRefer={(senderId) => {
-            window.location.href = `/api/leads/${lead.id}/refer?toProfileId=${senderId}&reason=sender+mismatch`
+          onRefer={async (senderId) => {
+            try {
+              const res = await fetch(`/api/leads/${lead.id}/refer`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ toProfileId: senderId, reason: 'sender mismatch' }),
+              })
+              const data = await res.json().catch(() => ({}))
+              if (!res.ok) {
+                notifyError(typeof data.error === 'string' ? data.error : 'Could not refer this lead.', 'Referral failed')
+                return
+              }
+              if (data.switchedSender) {
+                notifySuccess('You are now sending as the better-matched profile.', 'Sender switched')
+                router.refresh()
+              } else {
+                notifySuccess('The lead moved to the rep who holds that profile.', 'Lead referred')
+                router.push('/leads')
+              }
+            } catch {
+              notifyError('Check your connection and try again.', 'Referral failed')
+            }
           }}
           onAskHelp={(senderId, helpType) => {
             window.location.href = `/leads/${lead.id}?help=${helpType}&to=${senderId}`

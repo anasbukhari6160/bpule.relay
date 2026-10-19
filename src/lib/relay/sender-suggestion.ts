@@ -133,9 +133,23 @@ export async function loadSenderCandidates(
     .is('archived_at', null)
   if (error) throw error
 
+  // Reps assigned a sending identity built from a profile can send as it too.
+  const { data: identityHolders } = await client
+    .from('identity_assignments')
+    .select('reps(id, name), revenue_identities(profile_id, status)')
+    .eq('organization_id', orgId)
+  const holdersByProfile = new Map<string, Array<{ id: string; name: string }>>()
+  for (const row of (identityHolders ?? []) as any[]) {
+    const identity = Array.isArray(row.revenue_identities) ? row.revenue_identities[0] : row.revenue_identities
+    const rep = Array.isArray(row.reps) ? row.reps[0] : row.reps
+    if (!identity?.profile_id || identity.status === 'archived' || !rep?.id) continue
+    holdersByProfile.set(identity.profile_id, [...(holdersByProfile.get(identity.profile_id) ?? []), rep])
+  }
+
   return (data ?? []).map((p: any) => {
     const holders = new Map<string, string>()
     for (const a of p.assignments ?? []) if (a.reps?.id) holders.set(a.reps.id, a.reps.name)
+    for (const r of holdersByProfile.get(p.id) ?? []) holders.set(r.id, r.name)
     const owner = Array.isArray(p.owner) ? p.owner[0] : p.owner
     if (owner?.id) holders.set(owner.id, owner.name)
     const skills = [

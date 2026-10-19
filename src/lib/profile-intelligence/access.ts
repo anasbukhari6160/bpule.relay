@@ -29,17 +29,33 @@ export function profileAccess(auth: AuthContext): ProfileAccess {
   }
 }
 
-/** Profile ids a rep may see: owned (profiles.rep_id) ∪ assigned (profile_assignments). */
+/**
+ * Profile ids a rep may see: owned (profiles.rep_id) ∪ assigned (profile_assignments)
+ * ∪ behind a sending identity assigned to them (identity_assignments →
+ * revenue_identities.profile_id). Admins usually assign identities, not
+ * profiles, so without the last leg a rep's Profiles page stays empty.
+ */
 export async function repVisibleProfileIds(client: SupabaseClient, auth: AuthContext): Promise<string[]> {
-  const [owned, assigned] = await Promise.all([
+  const [owned, assigned, viaIdentity] = await Promise.all([
     client.from('profiles').select('id').eq('organization_id', auth.orgId).eq('rep_id', auth.repId),
     client.from('profile_assignments').select('profile_id').eq('rep_id', auth.repId),
+    client
+      .from('identity_assignments')
+      .select('revenue_identities(profile_id, status)')
+      .eq('organization_id', auth.orgId)
+      .eq('rep_id', auth.repId),
   ])
   const ids = new Set<string>()
   for (const r of owned.data ?? []) ids.add(r.id as string)
   for (const r of assigned.data ?? []) if (r.profile_id) ids.add(r.profile_id as string)
+  for (const r of (viaIdentity.data ?? []) as Array<{ revenue_identities: IdentityLink | IdentityLink[] | null }>) {
+    const links = Array.isArray(r.revenue_identities) ? r.revenue_identities : [r.revenue_identities]
+    for (const link of links) if (link?.profile_id && link.status !== 'archived') ids.add(link.profile_id)
+  }
   return [...ids]
 }
+
+type IdentityLink = { profile_id: string | null; status: string | null }
 
 /** null = no restriction (managers); otherwise the explicit allow-list. */
 export async function visibleProfileIds(client: SupabaseClient, auth: AuthContext): Promise<string[] | null> {

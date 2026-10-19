@@ -61,28 +61,28 @@ export function MergeTool({ targetProfileId, targetName, onMerged }: { targetPro
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="text-[11px] text-[color:var(--console-mute)] hover:text-orange" data-testid="merge-open">
+      <button onClick={() => setOpen(true)} className="text-[11px] text-graphite hover:text-orange" data-testid="merge-open">
         Merge a duplicate profile into this one…
       </button>
     )
   }
 
   return (
-    <section data-testid="merge-tool" className="srf-console srf-console-edge overflow-hidden px-5 py-5 sm:px-6">
+    <section data-testid="merge-tool" className="rounded-xl border border-line bg-bone-raised overflow-hidden px-5 py-5 sm:px-6">
       <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em] text-orange-light">Merge duplicate → {targetName}</p>
-      <p className="mt-1 text-[11px] text-[color:var(--console-mute)]">
+      <p className="mt-1 text-[11px] text-graphite">
         Moves every lead, message, assignment, proof and source from the duplicate to this profile in one transaction, removes exact duplicates, then archives the duplicate. This profile&apos;s ID never changes. Nothing happens until you confirm the dry-run.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <select value={sourceId} onChange={(e) => { setSourceId(e.target.value); setPreview(null) }}
-          className="rounded border border-orange/20 bg-transparent px-2 py-1 text-[12px] text-[color:var(--console-text)]" aria-label="Duplicate profile">
+          className="rounded border border-orange/20 bg-transparent px-2 py-1 text-[12px] text-ink" aria-label="Duplicate profile">
           <option value="">Select duplicate profile…</option>
           {candidates.map((c) => <option key={c.id} value={c.id}>{c.fullName ?? c.displayName ?? c.id}{c.currentRole ? ` — ${c.currentRole}` : ''}</option>)}
         </select>
         <button onClick={runPreview} disabled={!sourceId || busy} className="rounded border border-orange/30 px-3 py-1 text-[12px] text-orange disabled:opacity-50">
           {busy && !preview ? 'Running dry-run…' : 'Dry-run'}
         </button>
-        <button onClick={() => setOpen(false)} className="text-[11px] text-[color:var(--console-mute)]">Cancel</button>
+        <button onClick={() => setOpen(false)} className="text-[11px] text-graphite">Cancel</button>
       </div>
 
       {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
@@ -94,16 +94,16 @@ export function MergeTool({ targetProfileId, targetName, onMerged }: { targetPro
             {preview.identity.warning && <> · {preview.identity.warning}</>}
           </p>
           <table className="w-full text-left">
-            <thead><tr className="text-[color:var(--console-mute)]"><th className="py-1">Reference</th><th>Moving from duplicate</th><th>Already on this profile</th></tr></thead>
+            <thead><tr className="text-graphite"><th className="py-1">Reference</th><th>Moving from duplicate</th><th>Already on this profile</th></tr></thead>
             <tbody>
               {moved.map(([k, v]) => (
-                <tr key={k} className="border-t border-orange/5 text-[color:var(--console-text)]">
+                <tr key={k} className="border-t border-orange/5 text-ink">
                   <td className="py-1">{k}</td><td>{v.source}</td><td>{(preview.report.counts_before[k] as { target: number }).target}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="text-[color:var(--console-mute)]">
+          <p className="text-graphite">
             Duplicates removed: {preview.report.removed_duplicates.length} ({preview.report.removed_duplicates.map((d: any) => d.table).join(', ') || 'none'}) · Empty fields filled: {Object.keys(preview.report.merged_fields).join(', ') || 'none'}
           </p>
           {!preview.identity.likelySamePerson && (
@@ -111,10 +111,10 @@ export function MergeTool({ targetProfileId, targetName, onMerged }: { targetPro
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> I confirm these are the same person.
             </label>
           )}
-          <label className="block text-[color:var(--console-mute)]">
-            Type <span className="font-medium text-[color:var(--console-text)]">{sourceName}</span> to confirm:
+          <label className="block text-graphite">
+            Type <span className="font-medium text-ink">{sourceName}</span> to confirm:
             <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} aria-label="Confirm duplicate name"
-              className="ml-2 rounded border border-orange/20 bg-transparent px-2 py-0.5 text-[12px] text-[color:var(--console-text)]" />
+              className="ml-2 rounded border border-orange/20 bg-transparent px-2 py-0.5 text-[12px] text-ink" />
           </label>
           <button onClick={execute} disabled={!canExecute || busy} data-testid="merge-execute"
             className="rounded bg-orange px-4 py-1.5 text-[12px] font-medium text-white disabled:opacity-40">
