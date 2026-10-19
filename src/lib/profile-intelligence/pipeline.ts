@@ -442,14 +442,18 @@ export async function synthesizeAiContext(
 function segmentByPeople(text: string, people: DetectedPerson[]): Map<string, string> {
   const segments = new Map<string, string>()
 
-  if (people.length === 1) {
-    segments.set(people[0].name, text)
+  // Filter out people with no name — AI can return incomplete objects.
+  const validPeople = people.filter((p) => p && typeof p.name === 'string' && p.name.trim())
+  if (validPeople.length === 0) return segments
+
+  if (validPeople.length === 1) {
+    segments.set(validPeople[0].name, text)
     return segments
   }
 
-  for (let i = 0; i < people.length; i++) {
-    const person = people[i]
-    const nextPerson = people[i + 1]
+  for (let i = 0; i < validPeople.length; i++) {
+    const person = validPeople[i]
+    const nextPerson = validPeople[i + 1]
     const start = person.sectionStart
     const end = nextPerson ? nextPerson.sectionStart : person.sectionEnd || text.length
     const segment = text.slice(start, Math.min(end, text.length))

@@ -198,13 +198,15 @@ async function createProfile(client: any, facts: ExtractedFacts, orgId: string, 
   const readiness = computeReadiness(facts)
   const aiContext = await synthesizeAiContext(facts, [], [], orgId).catch(() => null)
 
+  // Ensure we always have a name — the profiles table requires full_name.
+  const name = facts.fullName ?? facts.displayName ?? 'Unknown'
   const { data, error } = await client
     .from('profiles')
     .insert({
       organization_id: orgId,
       rep_id: repId,
-      full_name: facts.fullName ?? facts.displayName,
-      display_name: facts.displayName ?? facts.fullName,
+      full_name: name,
+      display_name: name,
       headline: facts.headline,
       current_role: facts.currentRole,
       company: facts.company,
@@ -454,6 +456,9 @@ async function applyExtractionToProfiles(
   const existingProfiles = await fetchExistingProfiles(client, orgId)
 
   for (const [personName, facts] of extraction.factsByPerson.entries()) {
+    // Skip entries with no valid person name (AI can produce these).
+    if (!personName || typeof personName !== 'string' || !personName.trim()) continue
+
     const candidate = {
       normalizedName: personName,
       email: null,
@@ -480,7 +485,8 @@ async function applyExtractionToProfiles(
         profileUrl: null,
       })
     } else {
-      const newProfile = await createProfile(client, facts, orgId, repId)
+      const finalName = facts.fullName ?? facts.displayName ?? personName
+      const newProfile = await createProfile(client, { ...facts, fullName: finalName, displayName: finalName }, orgId, repId)
       if (newProfile) {
         await client.from('profile_sources').update({ profile_id: newProfile }).eq('id', sourceId)
         await saveProjects(client, newProfile, extraction.projectsByPerson.get(personName) ?? [], orgId)
@@ -496,13 +502,23 @@ async function applyExtractionToProfiles(
           profileUrl: null,
         })
       } else {
-        // Profile creation failed — record why so the UI can show it.
         await client
           .from('profile_sources')
           .update({ extraction_status: 'failed', error_message: `Profile creation failed for "${personName}". Check DB constraints.` })
           .eq('id', sourceId)
         throw new Error(`Profile creation failed for "${personName}"`)
       }
+    }
+  }
+
+  // If no valid people had extractable facts, mark as partial failure.
+  if (extraction.factsByPerson.size > 0 && extraction.factsByPerson.size === extraction.factsByPerson.size) {
+    const createdCount = existingProfiles.length
+    if (createdCount === 0) {
+      await client
+        .from('profile_sources')
+        .update({ extraction_status: 'failed', error_message: 'No valid people found in document. Could not extract profile.' })
+        .eq('id', sourceId)
     }
   }
 
