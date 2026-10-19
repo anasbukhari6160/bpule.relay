@@ -83,7 +83,8 @@ export async function runExtractionPipeline(
   })
   const reviews = await reviewsPromise
   if (factsByPerson.size === 0 && people.length > 0) {
-    throw new Error(`Extraction failed for every person in the document. ${warnings.join(' ')}`.trim())
+    const detail = warnings.length > 0 ? warnings.join(' ') : 'AI model returned no extractable facts (possible rate limit or malformed response).'
+    throw new Error(`Extraction failed for every person in the document. ${detail}`.trim())
   }
 
   // Advisory only: a failed quality check must not discard a good extraction.
@@ -215,9 +216,9 @@ async function extractFacts(text: string, orgId: string): Promise<ExtractedFacts
   })
 
   const facts = result.data
-  if (facts.primarySkills) facts.primarySkills = normalizeSkills(facts.primarySkills)
-  if (facts.secondarySkills) facts.secondarySkills = normalizeSkills(facts.secondarySkills)
-  if (facts.technologies) facts.technologies = normalizeSkills(facts.technologies)
+  if (Array.isArray(facts.primarySkills)) facts.primarySkills = normalizeSkills(facts.primarySkills)
+  if (Array.isArray(facts.secondarySkills)) facts.secondarySkills = normalizeSkills(facts.secondarySkills)
+  if (Array.isArray(facts.technologies)) facts.technologies = normalizeSkills(facts.technologies)
 
   if (facts.yearsExperience === undefined && facts.professionalSummary) {
     facts.yearsExperience = extractYearsExperience(facts.professionalSummary)
@@ -273,7 +274,7 @@ async function extractProjects(text: string, orgId: string): Promise<ExtractedPr
     promptVersion: 'v2',
   })
 
-  return (result.data.projects || []).map((p) => ({
+  return (Array.isArray(result.data?.projects) ? result.data.projects : []).map((p) => ({
     name: p.name,
     clientCompany: p.clientCompany ?? null,
     role: p.role ?? null,
@@ -309,7 +310,7 @@ async function buildProofs(text: string, facts: ExtractedFacts, projects: Extrac
     promptVersion: 'v2',
   })
 
-  return (result.data.proofs || []).map((p) => ({
+  return (Array.isArray(result.data?.proofs) ? result.data.proofs : []).map((p) => ({
     claim: p.claim,
     whyItMatters: p.whyItMatters,
     supportingEvidence: p.supportingEvidence,
@@ -338,7 +339,7 @@ async function extractReviews(text: string, people: DetectedPerson[], orgId: str
     promptVersion: 'v2',
   })
 
-  return (result.data.reviews || []).map((r) => ({
+  return (Array.isArray(result.data?.reviews) ? result.data.reviews : []).map((r) => ({
     reviewText: r.reviewText,
     assignedPersonName: r.assignedPersonName ?? null,
     reviewerName: r.reviewerName ?? null,
