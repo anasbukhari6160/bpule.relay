@@ -64,6 +64,7 @@ export async function runExtractionPipeline(
   }
 
   const segmentText = segmentByPeople(rawContent, people)
+  const segmentedCount = segmentText.size
 
   const factsByPerson = new Map<string, ExtractedFacts>()
   const projectsByPerson = new Map<string, ExtractedProject[]>()
@@ -82,9 +83,13 @@ export async function runExtractionPipeline(
     proofsByPerson.set(personName, person.proofs)
   })
   const reviews = await reviewsPromise
-  if (factsByPerson.size === 0 && people.length > 0) {
-    const detail = warnings.length > 0 ? warnings.join(' ') : 'AI model returned no extractable facts (possible rate limit or malformed response).'
-    throw new Error(`Extraction failed for every person in the document. ${detail}`.trim())
+  if (factsByPerson.size === 0 && segmentedCount > 0) {
+    const detail = warnings.length > 0 ? warnings.join(' | ') : 'no warnings recorded'
+    throw new Error(`Extraction failed for ${segmentedCount} person(s). Warnings: ${detail}. Raw detected: ${people.length} people.`.)
+  }
+  if (segmentedCount === 0 && people.length > 0) {
+    const sample = people.slice(0, 3).map((p) => JSON.stringify({ name: p.name, role: p.role })).join('; ')
+    throw new Error(`No valid people names. Detected ${people.length} but all filtered. Sample: ${sample}`)
   }
 
   // Advisory only: a failed quality check must not discard a good extraction.
