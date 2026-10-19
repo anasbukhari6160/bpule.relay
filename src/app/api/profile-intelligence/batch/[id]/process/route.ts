@@ -56,7 +56,7 @@ export async function POST(
   if (!nextSource) {
     const { data: batchSources } = await client
       .from('profile_sources')
-      .select('extraction_status')
+      .select('id, original_filename, parsing_status, extraction_status, error_message')
       .eq('import_batch_id', batchId)
 
     const allDone = batchSources?.every((s) => ['extracted', 'failed', 'unsupported', 'partial_failure'].includes(s.extraction_status))
