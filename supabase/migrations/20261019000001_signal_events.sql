@@ -30,7 +30,7 @@ DROP POLICY IF EXISTS "Signal events readable by org members" ON public.signal_e
 CREATE POLICY "Signal events readable by org members" ON public.signal_events
   FOR SELECT USING (
     organization_id IN (
-      SELECT organization_id FROM public.reps WHERE user_id = auth.uid()
+      SELECT organization_id FROM public.reps WHERE auth_user_id = auth.uid()
     )
   );
 

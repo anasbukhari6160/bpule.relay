@@ -20,7 +20,7 @@ CREATE POLICY "Performance config readable by org admins" ON public.performance_
   FOR SELECT USING (
     organization_id IN (
       SELECT organization_id FROM public.reps
-      WHERE user_id = auth.uid() AND (role = 'admin' OR role = 'owner')
+      WHERE auth_user_id = auth.uid() AND (role = 'admin' OR role = 'owner')
     )
   );
 
@@ -29,6 +29,6 @@ CREATE POLICY "Performance config writable by org admins" ON public.performance_
   FOR ALL USING (
     organization_id IN (
       SELECT organization_id FROM public.reps
-      WHERE user_id = auth.uid() AND (role = 'admin' OR role = 'owner')
+      WHERE auth_user_id = auth.uid() AND (role = 'admin' OR role = 'owner')
     )
   );
