@@ -303,10 +303,19 @@ export function hasEmbeddingProvider(): boolean {
   return Boolean(embeddingApiKey())
 }
 
-/** Per-rep daily send ceiling (Part 7 rule). */
-export function dailySendLimit(): number {
+/**
+ * Per-rep daily send ceiling (Part 7 rule).
+ *
+ * Override per-org via organizations.settings JSONB:
+ *   { "dailyConnectionLimit": 50, "dailySendLimit": 30 }
+ *
+ * Falls back to env var, then default.
+ */
+export function dailySendLimit(orgSettings?: Record<string, unknown>): number {
+  const orgLimit = orgSettings?.dailySendLimit
+  if (typeof orgLimit === 'number' && orgLimit > 0) return Math.min(orgLimit, 200)
   const raw = Number(process.env.SCOUT_DAILY_SEND_LIMIT ?? '15')
-  return Number.isFinite(raw) && raw > 0 ? raw : 15
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 200) : 15
 }
 
 /**
@@ -315,17 +324,24 @@ export function dailySendLimit(): number {
  *   dm / followup  -> dailySendLimit()      (15 by default)
  *   connection / upwork -> dailyConnectionSendLimit()   (20 by default)
  *
+ * Override per-org via organizations.settings JSONB:
+ *   { "dailyConnectionLimit": 50, "dailySendLimit": 30 }
+ *
  * Inbound reply drafting has no ceiling.
  */
-export function dailyConnectionSendLimit(): number {
+export function dailyConnectionSendLimit(orgSettings?: Record<string, unknown>): number {
+  // Per-org override takes priority
+  const orgLimit = orgSettings?.dailyConnectionLimit
+  if (typeof orgLimit === 'number' && orgLimit > 0) return Math.min(orgLimit, 200)
+  // Fall back to env var, then default
   const raw = Number(process.env.SCOUT_DAILY_CONNECTION_LIMIT ?? '20')
-  return Number.isFinite(raw) && raw > 0 ? raw : 20
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 200) : 20
 }
 
-export function messageTypeLimit(type: string): number {
+export function messageTypeLimit(type: string, orgSettings?: Record<string, unknown>): number {
   return type === 'connection' || type === 'upwork'
-    ? dailyConnectionSendLimit()
-    : dailySendLimit()
+    ? dailyConnectionSendLimit(orgSettings)
+    : dailySendLimit(orgSettings)
 }
 
 /** Published team targets. */

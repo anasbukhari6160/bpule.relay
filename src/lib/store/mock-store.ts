@@ -1051,7 +1051,7 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         }).length
       })()
 
-      const limit = messageTypeLimit(type)
+      const limit = messageTypeLimit(type, {})
       if (todaySends >= limit) {
         return {
           allowed: false,

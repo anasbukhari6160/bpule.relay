@@ -444,11 +444,23 @@ export class SupabaseStore implements ScoutStore {
   }
 
   private _rulebookCache: OrganizationRulebook | null | undefined = undefined
+  private _orgSettingsCache: Record<string, unknown> | undefined = undefined
 
   async getRulebook(): Promise<OrganizationRulebook | null> {
     if (this._rulebookCache !== undefined) return this._rulebookCache
     this._rulebookCache = await loadRulebook(this.client, this.orgId)
     return this._rulebookCache
+  }
+
+  async getOrgSettings(): Promise<Record<string, unknown>> {
+    if (this._orgSettingsCache !== undefined) return this._orgSettingsCache
+    const { data } = await this.client
+      .from('organizations')
+      .select('settings')
+      .eq('id', this.orgId)
+      .maybeSingle()
+    this._orgSettingsCache = (data?.settings as Record<string, unknown>) ?? {}
+    return this._orgSettingsCache
   }
 
   private _ratesCache: RateBucket[] | undefined = undefined
@@ -1186,14 +1198,15 @@ export class SupabaseStore implements ScoutStore {
       }
     }
 
+    const orgSettings = await this.getOrgSettings()
     const todaySends = await this.countTodaysSends(type)
-    const limit = messageTypeLimit(type)
+    const limit = messageTypeLimit(type, orgSettings)
     if (todaySends >= limit) {
       return {
         allowed: false,
         todaySends,
         limit,
-        message: `Daily ceiling of ${limit} reached for ${type} messages. ${type === 'dm' || type === 'followup' ? 'Other message types still have budget.' : 'Other message types still have budget.'}`,
+        message: `Daily ceiling of ${limit} reached for ${type} messages. Other message types still have budget.`,
       }
     }
 
