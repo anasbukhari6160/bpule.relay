@@ -114,29 +114,25 @@ export async function emitAction(params: EmitActionParams): Promise<string | nul
   }
 
   // With idempotency key: use upsert with ignoreDuplicates for safe retries.
-  // Falls back to plain insert when the idempotency_key column is not yet migrated.
+  // Falls back to plain insert when the migration has not been applied yet
+  // (missing column or missing unique index).
   if (params.idempotencyKey) {
     const { error } = await getClient()
       .from('action_events')
       .upsert(payload, { onConflict: 'organization_id,idempotency_key', ignoreDuplicates: true })
-    if (error) {
-      // Column may not exist yet — retry without idempotency.
-      if (error.message.includes('idempotency_key') || error.message.includes('schema cache')) {
-        const { data, error: insertError } = await getClient()
-          .from('action_events')
-          .insert({ ...payload, idempotency_key: undefined })
-          .select('id')
-          .single()
-        if (insertError) {
-          console.error('[Action Ledger] Failed to emit:', insertError.message)
-          return null
-        }
-        return data?.id ?? null
-      }
-      console.error('[Action Ledger] Failed to emit:', error.message)
+    if (!error) return null // idempotency upsert does not return the row id
+
+    // Migration not yet applied — fall back to plain insert without idempotency.
+    const { data, error: insertError } = await getClient()
+      .from('action_events')
+      .insert({ ...payload, idempotency_key: undefined })
+      .select('id')
+      .single()
+    if (insertError) {
+      console.error('[Action Ledger] Failed to emit:', insertError.message)
       return null
     }
-    return null // idempotency upsert does not return the row id
+    return data?.id ?? null
   }
 
   const { data, error } = await getClient()
