@@ -51,7 +51,7 @@ export function ProfileIntelligenceDashboard({ orgId, isAdmin, canManage = isAdm
     }
 
     poll()
-    pollRef.current = setInterval(poll, 3000)
+    pollRef.current = setInterval(poll, 5000)
   }, [stopPolling])
 
   const handleBatchCreated = useCallback((batch: ProfileImportBatch) => {

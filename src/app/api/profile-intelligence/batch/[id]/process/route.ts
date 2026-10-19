@@ -92,9 +92,10 @@ export async function POST(
   }
 
   try {
+    // Mark as extracting so concurrent polls skip this source.
     await client
       .from('profile_sources')
-      .update({ parsing_status: 'parsing', updated_at: new Date().toISOString() })
+      .update({ parsing_status: 'parsing', extraction_status: 'extracting', updated_at: new Date().toISOString() })
       .eq('id', nextSource.id)
 
     const { data: fileData } = await client.storage
@@ -104,7 +105,7 @@ export async function POST(
     if (!fileData) {
       await client
         .from('profile_sources')
-        .update({ parsing_status: 'failed', error_message: 'File not found in storage.' })
+        .update({ parsing_status: 'failed', extraction_status: 'failed', error_message: 'File not found in storage.' })
         .eq('id', nextSource.id)
       return NextResponse.json({ batch_id: batchId, done: false, status: 'parsing', error: 'File not found.' })
     }
@@ -125,9 +126,29 @@ export async function POST(
       .eq('id', nextSource.id)
   }
 
+  // Refresh batch counters so the frontend sees progress.
+  const { data: reCounted } = await client
+    .from('profile_sources')
+    .select('extraction_status')
+    .eq('import_batch_id', batchId)
+
+  const extractedCount = reCounted?.filter((s) => s.extraction_status === 'extracted').length ?? 0
+  const failedCount = reCounted?.filter((s) => ['failed', 'partial_failure'].includes(s.extraction_status)).length ?? 0
+
+  await client
+    .from('profile_import_batches')
+    .update({
+      processed_files: (reCounted?.length ?? 0) - (reCounted?.filter((s) => s.extraction_status === 'pending').length ?? 0),
+      failed_files: failedCount,
+      detected_people: extractedCount,
+      created_profiles: extractedCount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', batchId)
+
   const { data: updatedBatch } = await client
     .from('profile_import_batches')
-    .select('status, total_files, processed_files, failed_files, detected_people, created_profiles, merged_profiles')
+    .select('*')
     .eq('id', batchId)
     .single()
 
@@ -315,6 +336,11 @@ async function processDocumentSource(
 
   const extraction = await runExtractionPipeline(parsed, parsed.content, orgId)
 
+  // Apply extraction to profiles BEFORE marking as extracted — if profile
+  // creation fails, the source status reflects reality and the frontend
+  // doesn't show a false "success".
+  await applyExtractionToProfiles(client, extraction, orgId, repId, source.id)
+
   await client
     .from('profile_sources')
     .update({
@@ -323,8 +349,6 @@ async function processDocumentSource(
       extracted_at: new Date().toISOString(),
     })
     .eq('id', source.id)
-
-  await applyExtractionToProfiles(client, extraction, orgId, repId, source.id)
 }
 
 async function processSpreadsheetSource(
