@@ -215,6 +215,12 @@ export interface UpworkJob {
   urgencySignal: string | null
   score: number | null
   verdict: UpworkJobVerdict | null
+  /** Canonical 0-100 job score (upwork_score_v1); `score` is its /10 projection. */
+  canonicalScore?: number | null
+  scoreVersion?: string | null
+  scoreBreakdown?: unknown
+  jobFacts?: unknown
+  profileMatch?: unknown
   status: UpworkJobStatus
   extractedFields: Record<string, unknown> | null
   rawInput: string | null

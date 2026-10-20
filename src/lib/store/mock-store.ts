@@ -1604,11 +1604,37 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
     async listUpworkJobs() {
       return upworkJobs.filter((j) => j.ownerRepId === rep.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     },
+    async updateUpworkJobFields(id, f) {
+      const job = upworkJobs.find((j) => j.id === id)
+      if (!job) return
+      if (f.title !== undefined) job.title = f.title.trim()
+      if (f.description !== undefined) job.description = f.description.trim()
+      if (f.budgetMin !== undefined) job.budgetMin = f.budgetMin ?? null
+      if (f.budgetMax !== undefined) job.budgetMax = f.budgetMax ?? null
+      if (f.hourlyRateMin !== undefined) job.hourlyRateMin = f.hourlyRateMin ?? null
+      if (f.hourlyRateMax !== undefined) job.hourlyRateMax = f.hourlyRateMax ?? null
+      if (f.proposalCount !== undefined) job.proposalCount = f.proposalCount ?? null
+      if (f.connectsCost !== undefined) job.connectsCost = f.connectsCost ?? 0
+      if (f.requiredSkills !== undefined) job.requiredSkills = f.requiredSkills ?? []
+      if (f.urgencySignal !== undefined) job.urgencySignal = f.urgencySignal ?? null
+      if (f.rawInput !== undefined) job.rawInput = f.rawInput ?? null
+      if (f.tags !== undefined) job.tags = f.tags ?? []
+      if (f.screeningQuestions !== undefined) job.screeningQuestions = f.screeningQuestions ?? []
+      if (f.applicationRequirements !== undefined) job.applicationRequirements = f.applicationRequirements ?? []
+      if (f.engagementType !== undefined) job.engagementType = f.engagementType ?? null
+      if (f.weeklyHours !== undefined) job.weeklyHours = f.weeklyHours ?? null
+      if (f.duration !== undefined) job.duration = f.duration ?? null
+      if (f.experienceLevel !== undefined) job.experienceLevel = f.experienceLevel ?? null
+    },
     async updateUpworkJobScore(id, score) {
       const job = upworkJobs.find((j) => j.id === id)
       if (job) {
         job.score = score.total
         job.verdict = score.verdict
+        if (score.canonicalScore != null) {
+          job.canonicalScore = score.canonicalScore
+          job.extractedFields = { ...(job.extractedFields ?? {}), scoreVersion: score.scoreVersion ?? null, scoreBreakdown: score.scoreBreakdown ?? null, jobFacts: score.jobFacts ?? null, profileMatch: score.profileMatch ?? null }
+        }
       }
     },
     async updateUpworkJob(id, updates) {

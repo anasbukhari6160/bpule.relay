@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
 import { computeUpworkScore } from '@/lib/score/upwork-rubric'
+import type { UpworkJob } from '@/lib/domain/types'
 
+/**
+ * POST /api/upwork/jobs
+ *
+ * Saves (or, when `jobId` is given, updates the row the extract step already
+ * created) and scores the job with the canonical Upwork scorer. The score is
+ * read from the raw paste first; explicit form values override parsed facts.
+ */
 export async function POST(request: Request) {
   let body: Record<string, unknown>
   try {
@@ -31,24 +39,43 @@ export async function POST(request: Request) {
 
   const requiredSkills = Array.isArray(body.requiredSkills)
     ? (body.requiredSkills as unknown[]).filter((t): t is string => typeof t === 'string')
-    : []
+    : typeof body.requiredSkills === 'string'
+      ? body.requiredSkills.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
+      : []
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null)
+  const rawInput = typeof body.rawInput === 'string' && body.rawInput.trim() ? body.rawInput : null
 
-  const job = await store.createUpworkJob({
+  const fields = {
     title,
     description,
-    budgetMin: typeof body.budgetMin === 'number' ? body.budgetMin : null,
-    budgetMax: typeof body.budgetMax === 'number' ? body.budgetMax : null,
-    hourlyRateMin: typeof body.hourlyRateMin === 'number' ? body.hourlyRateMin : null,
-    hourlyRateMax: typeof body.hourlyRateMax === 'number' ? body.hourlyRateMax : null,
-    proposalCount: typeof body.proposalCount === 'number' ? Math.round(body.proposalCount) : (body.proposalCount != null ? Math.round(Number(body.proposalCount)) : null),
-    connectsCost: typeof body.connectsCost === 'number' ? Math.round(body.connectsCost) : (body.connectsCost != null ? Math.round(Number(body.connectsCost)) : 0),
+    budgetMin: num(body.budgetMin),
+    budgetMax: num(body.budgetMax),
+    hourlyRateMin: num(body.hourlyRateMin),
+    hourlyRateMax: num(body.hourlyRateMax),
+    proposalCount: num(body.proposalCount) != null ? Math.round(num(body.proposalCount)!) : null,
+    connectsCost: num(body.connectsCost) != null ? Math.round(num(body.connectsCost)!) : 0,
     requiredSkills,
-    urgencySignal: typeof body.urgencySignal === 'string' ? body.urgencySignal : null,
-    rawInput: typeof body.rawInput === 'string' ? body.rawInput : null,
-    tags: Array.isArray(body.tags)
-      ? (body.tags as unknown[]).filter((t): t is string => typeof t === 'string')
-      : [],
-  })
+    urgencySignal: typeof body.urgencySignal === 'string' && body.urgencySignal.trim() ? body.urgencySignal.trim() : null,
+    rawInput,
+    tags: Array.isArray(body.tags) ? (body.tags as unknown[]).filter((t): t is string => typeof t === 'string') : [],
+    screeningQuestions: Array.isArray(body.screeningQuestions) ? (body.screeningQuestions as unknown[]).filter((t): t is string => typeof t === 'string') : undefined,
+    applicationRequirements: Array.isArray(body.applicationRequirements) ? (body.applicationRequirements as unknown[]).filter((t): t is string => typeof t === 'string') : undefined,
+    engagementType: typeof body.engagementType === 'string' && body.engagementType ? body.engagementType : undefined,
+    weeklyHours: typeof body.weeklyHours === 'string' && body.weeklyHours ? body.weeklyHours : undefined,
+    duration: typeof body.duration === 'string' && body.duration ? body.duration : undefined,
+    experienceLevel: typeof body.experienceLevel === 'string' && body.experienceLevel ? body.experienceLevel : undefined,
+  }
+
+  // Update the row the extract step created instead of inserting a twin.
+  const existingId = typeof body.jobId === 'string' && body.jobId ? body.jobId : null
+  const existing: UpworkJob | null = existingId ? await store.getUpworkJob(existingId) : null
+  let job: UpworkJob
+  if (existing) {
+    await store.updateUpworkJobFields(existing.id, fields)
+    job = (await store.getUpworkJob(existing.id)) ?? existing
+  } else {
+    job = await store.createUpworkJob(fields)
+  }
 
   const score = computeUpworkScore({
     budgetMin: job.budgetMin,
@@ -59,11 +86,24 @@ export async function POST(request: Request) {
     requiredSkills: job.requiredSkills,
     urgencySignal: job.urgencySignal,
     description: job.description,
+    rawInput: job.rawInput,
+    title: job.title,
   })
 
-  await store.updateUpworkJobScore(job.id, score)
+  await store.updateUpworkJobScore(job.id, {
+    total: score.total,
+    verdict: score.verdict,
+    canonicalScore: score.canonical.score,
+    scoreVersion: score.canonical.version,
+    scoreBreakdown: { dimensions: score.canonical.dimensions, reasons: score.canonical.reasons, watchOut: score.canonical.watchOut },
+    jobFacts: score.canonical.facts,
+  })
 
-  return NextResponse.json({ job: { ...job, score: score.total, verdict: score.verdict }, score }, { status: 201 })
+  return NextResponse.json({
+    job: { ...job, score: score.total, verdict: score.verdict, canonicalScore: score.canonical.score },
+    score: { total: score.total, verdict: score.verdict, breakdown: score.breakdown },
+    canonical: { score: score.canonical.score, qualification: score.canonical.qualification, reasons: score.canonical.reasons, watchOut: score.canonical.watchOut, version: score.canonical.version },
+  }, { status: 201 })
 }
 
 export async function GET() {

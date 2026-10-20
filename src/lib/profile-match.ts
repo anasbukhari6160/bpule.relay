@@ -92,7 +92,7 @@ export function computeProfileMatch(
   )
 
   const missing = oppCaps.filter(cap =>
-    !profileSkills.some(skill => skill.includes(cap) || cap.includes(cap) || fuzzyMatch(cap, skill))
+    !profileSkills.some(skill => skill.includes(cap) || cap.includes(skill) || fuzzyMatch(cap, skill))
   )
 
   // Industry bonus

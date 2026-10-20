@@ -2,6 +2,11 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createScoutStore } from '@/lib/store'
 import { computeUpworkScore } from '@/lib/score/upwork-rubric'
+import { matchProfilesToJob } from '@/lib/upwork/score'
+import { loadSenderProfiles } from '@/lib/relay/routing-context'
+import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
+import type { RoutingResult } from '@/lib/relay/sender-routing-engine'
 import { MessageCircle, DollarSign, Users, Tag, FileText } from 'lucide-react'
 import { cn } from 'cn'
 import { UpworkJobActions } from '@/components/upwork-job-actions'
@@ -37,7 +42,19 @@ export default async function UpworkJobPage({
     requiredSkills: job.requiredSkills,
     urgencySignal: job.urgencySignal,
     description: job.description,
+    rawInput: job.rawInput,
+    title: job.title,
   })
+
+  // Profile match is a separate ranking: it never changes the job score.
+  let profileMatch: RoutingResult | null = null
+  try {
+    const auth = await getAuthContext()
+    if (auth) {
+      const senders = await loadSenderProfiles(createServiceSupabase(), auth.orgId, auth.repId)
+      if (senders.length) profileMatch = matchProfilesToJob(score.canonical.facts, senders, null)
+    }
+  } catch { profileMatch = null }
 
   const verdict = score.verdict ? VERDICT_STYLE[score.verdict] : VERDICT_STYLE.skip
 
@@ -52,7 +69,7 @@ export default async function UpworkJobPage({
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <HeroMetric label="Verdict" value={<span className={cn('rounded px-2 py-0.5 text-[11px] font-medium', verdict.bg, verdict.text)}>{verdict.label}</span>} />
-          <HeroMetric label="Score" value={<span className="text-[18px] font-medium text-ink">{score.total} / 10</span>} />
+          <HeroMetric label="Score" value={<span className="text-[18px] font-medium text-ink">{score.total} / 10 <span className="text-[11px] font-normal text-graphite">({score.canonical.score}/100)</span></span>} />
           <HeroMetric label="Connects" value={<span className="text-[18px] font-medium text-ink">{job.connectsCost}</span>} />
         </div>
 
@@ -118,6 +135,31 @@ export default async function UpworkJobPage({
             </div>
           )}
         </div>
+
+        {(score.canonical.reasons.length > 0 || score.canonical.watchOut.length > 0) && (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2" data-testid="upwork-why">
+            {score.canonical.reasons.length > 0 && (
+              <ul className="space-y-0.5 text-[12px] text-ink">{score.canonical.reasons.map((r) => <li key={r}>+ {r}</li>)}</ul>
+            )}
+            {score.canonical.watchOut.length > 0 && (
+              <ul className="space-y-0.5 text-[12px] text-status-warning">{score.canonical.watchOut.map((r) => <li key={r}>! {r}</li>)}</ul>
+            )}
+          </div>
+        )}
+
+        {profileMatch && profileMatch.rankings.length > 0 && (
+          <div className="mt-4 rounded border border-line bg-bone px-4 py-3" data-testid="upwork-profile-match">
+            <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-stone">Profile match (separate from the job score)</p>
+            <ul className="mt-2 space-y-1">
+              {profileMatch.rankings.slice(0, 4).map((r, i) => (
+                <li key={r.senderId} className="flex items-center justify-between gap-3 text-[12px]">
+                  <span className="truncate text-ink">{i + 1}. {r.name ?? 'Unnamed'}{r.reasons[0] ? <span className="text-graphite"> · {r.reasons[0]}</span> : null}</span>
+                  <span className={cn('shrink-0 font-mono font-medium', r.profileMatch >= 70 ? 'text-status-success' : r.profileMatch >= 40 ? 'text-orange' : 'text-stone')}>{r.profileMatch}%</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Breakdown */}
         <div className="mt-6 grid gap-2 border-t border-line pt-5 sm:grid-cols-2">

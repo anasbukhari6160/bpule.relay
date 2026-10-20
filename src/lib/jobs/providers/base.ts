@@ -35,7 +35,9 @@ export function defineProvider(def: ProviderDefinition): JobProvider {
       id: def.source,
       name: providerName(def.source),
       requiresCredentials: def.requiresCredentials,
-      configured: def.isConfigured(),
+      // Evaluated on every read so credentials added or removed after import
+      // (tests, hot reload, rotated env) are seen immediately.
+      get configured() { return def.isConfigured() },
     },
     parseResponse: (raw: unknown, params: JobSearchParams) => def.parseResponse(raw, params),
     buildUrl: (params: JobSearchParams, page?: number) => def.buildUrl(params, page ?? 1),

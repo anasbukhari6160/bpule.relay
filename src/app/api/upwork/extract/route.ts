@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
 import { extractUpworkJob, type ExtractedUpworkJob } from '@/lib/upwork-v2'
+import { readUpworkJobFacts } from '@/lib/upwork/facts'
+import { computeUpworkScore } from '@/lib/score/upwork-rubric'
 
 export const maxDuration = 120
 
@@ -47,6 +49,7 @@ export async function POST(request: Request) {
           const errorMessages: Record<string, string> = {
             INVALID_INPUT: 'Job text is too short or invalid.',
             AI_PROVIDER_FAILED: 'AI service temporarily unavailable. Please retry.',
+            AI_PROVIDER_FAILURE: 'AI service temporarily unavailable. Please retry.',
             SCHEMA_FAILURE: 'Could not parse job structure. Please try again or enter manually.',
             TIMEOUT: 'Extraction timed out. Please try with shorter text.',
           }
@@ -61,50 +64,83 @@ export async function POST(request: Request) {
         }
 
         const job = result.job
+        // Numbers come from the source, never from the model: the deterministic
+        // reader is the authority for rates, proposals, connects, client history
+        // and start timing. The AI extraction only fills descriptive fields.
+        const facts = readUpworkJobFacts(rawText)
+        const hourlyMin = facts.rate.type === 'hourly' ? facts.rate.hourlyMin : job.hourlyRateMin ?? null
+        const hourlyMax = facts.rate.type === 'hourly' ? facts.rate.hourlyMax : job.hourlyRateMax ?? null
+        const fixedBudget = facts.rate.type === 'fixed' ? facts.rate.fixedBudget : facts.rate.type === 'monthly' ? facts.rate.monthlyBudget : (facts.rate.type === 'unknown' ? job.budget ?? null : null)
+        const skills = [...new Set([...(job.skills ?? []).map((x) => x.toLowerCase().trim()), ...facts.skills])].filter(Boolean)
         const tags = buildTags(job)
-        const urgencySignal = deriveUrgency(job)
+        const urgencySignal = deriveUrgency(job, facts.start.urgency)
+        const proposalCount = facts.proposals.count ?? job.proposalCount ?? null
+        const connectsCost = facts.connects ?? job.connectsCost ?? 0
+        const screeningQuestions = (job.screeningQuestions?.length ? job.screeningQuestions : facts.screeningQuestions) ?? []
+        const applicationRequirements = (job.applicationRequirements?.length ? job.applicationRequirements : facts.applicationRequirements) ?? []
         const savedJob = await store.createUpworkJob({
           title: job.title,
           description: job.description,
-          budgetMin: job.budget ?? null,
+          budgetMin: fixedBudget,
           budgetMax: null,
-          hourlyRateMin: job.hourlyRateMin ?? null,
-          hourlyRateMax: job.hourlyRateMax ?? null,
-          requiredSkills: job.skills ?? [],
+          hourlyRateMin: hourlyMin,
+          hourlyRateMax: hourlyMax,
+          requiredSkills: skills,
           urgencySignal,
           rawInput: body.rawText,
           tags,
-          screeningQuestions: job.screeningQuestions ?? [],
-          applicationRequirements: job.applicationRequirements ?? [],
-          engagementType: job.engagementType ?? null,
-          weeklyHours: job.weeklyHours ?? null,
-          duration: job.duration ?? null,
-          experienceLevel: job.experienceLevel ?? null,
-          proposalCount: job.proposalCount ?? undefined,
-          connectsCost: job.connectsCost ?? 0,
+          screeningQuestions,
+          applicationRequirements,
+          engagementType: job.engagementType ?? facts.engagement ?? null,
+          weeklyHours: job.weeklyHours ?? facts.weeklyHours.label ?? null,
+          duration: job.duration ?? facts.duration.label ?? null,
+          experienceLevel: job.experienceLevel ?? facts.experience.level ?? null,
+          proposalCount: proposalCount != null ? Math.round(proposalCount) : undefined,
+          connectsCost,
         })
+
+        // Score once, canonically, and persist it with the row.
+        const score = computeUpworkScore({
+          budgetMin: fixedBudget, budgetMax: null, hourlyRateMin: hourlyMin, hourlyRateMax: hourlyMax,
+          proposalCount: proposalCount != null ? Math.round(proposalCount) : null, requiredSkills: skills, urgencySignal,
+          description: job.description, rawInput: body.rawText, title: job.title,
+        })
+        try {
+          await store.updateUpworkJobScore(savedJob.id, {
+            total: score.total, verdict: score.verdict, canonicalScore: score.canonical.score, scoreVersion: score.canonical.version,
+            scoreBreakdown: { dimensions: score.canonical.dimensions, reasons: score.canonical.reasons, watchOut: score.canonical.watchOut }, jobFacts: facts,
+          })
+        } catch (scoreErr) {
+          console.warn('[upwork-extract] score persist failed:', scoreErr instanceof Error ? scoreErr.message : scoreErr)
+        }
 
         send({
           type: 'done',
+          jobId: savedJob.id,
           extracted: {
             title: job.title,
             description: job.description,
-            budgetMin: job.budget?.toString() ?? '',
+            budgetMin: fixedBudget?.toString() ?? '',
             budgetMax: '',
-            hourlyRateMin: job.hourlyRateMin?.toString() ?? '',
-            hourlyRateMax: job.hourlyRateMax?.toString() ?? '',
-            requiredSkills: (job.skills ?? []).join(', '),
-            urgencySignal,
+            hourlyRateMin: hourlyMin?.toString() ?? '',
+            hourlyRateMax: hourlyMax?.toString() ?? '',
+            requiredSkills: skills,
+            urgencySignal: urgencySignal ?? '',
             tags,
-            screeningQuestions: job.screeningQuestions ?? [],
-            applicationRequirements: job.applicationRequirements ?? [],
-            engagementType: job.engagementType ?? '',
-            weeklyHours: job.weeklyHours ?? '',
-            duration: job.duration ?? '',
-            experienceLevel: job.experienceLevel ?? '',
-            proposalCount: job.proposalCount != null ? String(job.proposalCount) : '',
-            connectsCost: job.connectsCost != null ? String(job.connectsCost) : '0',
+            screeningQuestions,
+            applicationRequirements,
+            engagementType: job.engagementType ?? facts.engagement ?? '',
+            weeklyHours: job.weeklyHours ?? facts.weeklyHours.label ?? '',
+            duration: job.duration ?? facts.duration.label ?? '',
+            experienceLevel: job.experienceLevel ?? facts.experience.level ?? '',
+            proposalCount: proposalCount != null ? String(Math.round(proposalCount)) : '',
+            connectsCost: String(connectsCost),
           },
+          facts: {
+            rate: facts.rate, client: facts.client, proposals: facts.proposals, start: facts.start, posted: facts.posted,
+            suspicious: facts.suspicious, completeness: facts.completeness, rejectedSignals: facts.rejectedSignals, language: facts.language,
+          },
+          score: { total: score.total, verdict: score.verdict, canonical: score.canonical.score, qualification: score.canonical.qualification, reasons: score.canonical.reasons, watchOut: score.canonical.watchOut, version: score.canonical.version },
           degraded: result.degraded,
           demoMode: false,
         })
@@ -145,11 +181,16 @@ function buildTags(job: ExtractedUpworkJob): string[] {
   return [...new Set(tags)]
 }
 
-function deriveUrgency(job: ExtractedUpworkJob): string {
+/**
+ * Urgency is a fact or nothing. A job with no start-timing evidence gets
+ * null, not a default "medium" that used to award every job urgency points.
+ */
+function deriveUrgency(job: ExtractedUpworkJob, start: 'asap' | 'soon' | 'scheduled' | 'ongoing' | 'none'): string | null {
   const text = job.description.toLowerCase()
-  if (/\b(urgent|asap|immediately|right now|this week)\b/.test(text)) return 'urgent'
+  if (start === 'asap' || /\b(urgent|asap|immediately|right now|this week)\b/.test(text)) return 'urgent'
   if (/\b(incident response|emergency|production (?:down|issue|problem))\b/.test(text)) return 'high'
   if (/\b(pre[- ]?launch|commercial launch|going live|production (?:ready|preparation))\b/.test(text)) return 'high'
-  if (/\b(ongoing|maintenance|support)\b/.test(text)) return 'medium'
-  return 'medium'
+  if (start === 'soon') return 'high'
+  if (start === 'scheduled') return 'medium'
+  return null
 }

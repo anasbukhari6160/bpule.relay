@@ -59,6 +59,7 @@ export default function NewUpworkJobPage() {
   const [error, setError] = useState<string | null>(null)
   const rawRef = useRef<HTMLTextAreaElement | null>(null)
 
+  const [extractedJobId, setExtractedJobId] = useState<string | null>(null)
   const score = useMemo(() => {
     return computeUpworkScore({
       budgetMin: form.budgetMin ? Number(form.budgetMin) : null,
@@ -69,6 +70,8 @@ export default function NewUpworkJobPage() {
       requiredSkills: form.requiredSkills.split(/[,;]/).map((s) => s.trim().toLowerCase()).filter(Boolean),
       urgencySignal: form.urgencySignal.trim() || null,
       description: form.description,
+      rawInput: form.rawInput,
+      title: form.title,
     })
   }, [form])
 
@@ -97,7 +100,7 @@ export default function NewUpworkJobPage() {
 
       type ExtractEvent =
         | { type: 'status'; message: string }
-        | { type: 'done'; extracted: Partial<FormState> & { tags: string[] }; demoMode: boolean }
+        | { type: 'done'; jobId?: string; extracted: Partial<Omit<FormState, 'requiredSkills'>> & { tags: string[]; requiredSkills?: string[] | string }; demoMode: boolean }
         | { type: 'error'; message: string }
 
       await readSse<ExtractEvent>(res, {
@@ -109,6 +112,7 @@ export default function NewUpworkJobPage() {
           }
           if (event.type === 'done') {
             const ex = event.extracted
+            if (event.jobId) setExtractedJobId(event.jobId)
             setForm((f) => ({
               ...f,
               title: ex.title?.trim() || f.title,
@@ -147,6 +151,7 @@ export default function NewUpworkJobPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          jobId: extractedJobId,
           title: form.title.trim(),
           description: form.description.trim(),
           budgetMin: form.budgetMin ? Number(form.budgetMin) : null,
@@ -277,6 +282,13 @@ export default function NewUpworkJobPage() {
               <span className="text-sm text-slate">/ 10</span>
             </div>
             <p className="mt-1 text-sm font-medium text-ink">{score.verdict.replace(/_/g, ' ')}</p>
+            <p className="mt-0.5 text-xs text-slate">Canonical {score.canonical.score}/100 · {score.canonical.qualification.replace(/_/g, ' ').toLowerCase()}</p>
+            {score.canonical.reasons.length > 0 && (
+              <ul className="mt-2 space-y-0.5 text-xs text-ink">{score.canonical.reasons.slice(0, 3).map((r) => <li key={r}>+ {r}</li>)}</ul>
+            )}
+            {score.canonical.watchOut.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-xs text-status-warning">{score.canonical.watchOut.slice(0, 3).map((r) => <li key={r}>! {r}</li>)}</ul>
+            )}
             <p className="mt-0.5 max-w-xs text-sm leading-relaxed text-ink">{verdictCall(score.verdict)}</p>
             {score.total >= 3 && score.total < 6 ? (
               <p className="mt-1 text-xs text-status-warning">

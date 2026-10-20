@@ -2721,16 +2721,52 @@ export class SupabaseStore implements ScoutStore {
     return (data ?? []).map(mapUpworkJob)
   }
 
+  async updateUpworkJobFields(id: string, f: Partial<Parameters<ScoutStore['createUpworkJob']>[0]>): Promise<void> {
+    const row: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (f.title !== undefined) row.title = f.title.trim()
+    if (f.description !== undefined) row.description = f.description.trim()
+    if (f.budgetMin !== undefined) row.budget_min = f.budgetMin != null ? Math.round(Number(f.budgetMin)) : null
+    if (f.budgetMax !== undefined) row.budget_max = f.budgetMax != null ? Math.round(Number(f.budgetMax)) : null
+    if (f.hourlyRateMin !== undefined) row.hourly_rate_min = f.hourlyRateMin != null ? Math.round(Number(f.hourlyRateMin)) : null
+    if (f.hourlyRateMax !== undefined) row.hourly_rate_max = f.hourlyRateMax != null ? Math.round(Number(f.hourlyRateMax)) : null
+    if (f.proposalCount !== undefined) row.proposal_count = f.proposalCount != null ? Math.round(Number(f.proposalCount)) : null
+    if (f.connectsCost !== undefined) row.connects_cost = f.connectsCost != null ? Math.round(Number(f.connectsCost)) : 0
+    if (f.requiredSkills !== undefined) row.required_skills = f.requiredSkills ?? []
+    if (f.urgencySignal !== undefined) row.urgency_signal = f.urgencySignal ?? null
+    if (f.rawInput !== undefined) row.raw_input = f.rawInput ?? null
+    if (f.tags !== undefined) row.tags = f.tags ?? []
+    if (f.screeningQuestions !== undefined) row.screening_questions = f.screeningQuestions ?? []
+    if (f.applicationRequirements !== undefined) row.application_requirements = f.applicationRequirements ?? []
+    if (f.engagementType !== undefined) row.engagement_type = f.engagementType ?? null
+    if (f.weeklyHours !== undefined) row.weekly_hours = f.weeklyHours ?? null
+    if (f.duration !== undefined) row.duration = f.duration ?? null
+    if (f.experienceLevel !== undefined) row.experience_level = f.experienceLevel ?? null
+    const { error } = await this.client.from('upwork_jobs').update(row).eq('id', id).eq('owner_rep_id', this.rep.id)
+    if (error) throw error
+  }
+
   async updateUpworkJobScore(
     id: string,
-    score: { total: number; verdict: UpworkJob['verdict'] },
+    score: { total: number; verdict: UpworkJob['verdict']; canonicalScore?: number | null; scoreVersion?: string | null; scoreBreakdown?: unknown; jobFacts?: unknown; profileMatch?: unknown },
   ): Promise<void> {
+    const base = { score: score.total, verdict: score.verdict }
+    const canonical = score.canonicalScore != null
+      ? { canonical_score: score.canonicalScore, score_version: score.scoreVersion ?? null, score_breakdown: score.scoreBreakdown ?? null, job_facts: score.jobFacts ?? null, profile_match: score.profileMatch ?? null, scored_at: new Date().toISOString() }
+      : {}
     const { error } = await this.client
       .from('upwork_jobs')
-      .update({ score: score.total, verdict: score.verdict })
+      .update({ ...base, ...canonical })
       .eq('id', id)
       .eq('owner_rep_id', this.rep.id)
-    if (error) throw error
+    if (!error) return
+    // Canonical columns may not exist yet (migration not applied): persist the legacy pair.
+    if (Object.keys(canonical).length && /column|schema cache/i.test(error.message)) {
+      const retry = await this.client.from('upwork_jobs').update(base).eq('id', id).eq('owner_rep_id', this.rep.id)
+      if (retry.error) throw retry.error
+      console.warn('[upwork] canonical score columns missing — apply 20261021000000_upwork_canonical_score.sql')
+      return
+    }
+    throw error
   }
 
   async updateUpworkJob(
@@ -8321,6 +8357,11 @@ function mapUpworkJob(r: Row): UpworkJob {
     urgencySignal: (r.urgency_signal as string) ?? null,
     score: (r.score as number) ?? null,
     verdict: (r.verdict as UpworkJob['verdict']) ?? null,
+    canonicalScore: (r.canonical_score as number) ?? null,
+    scoreVersion: (r.score_version as string) ?? null,
+    scoreBreakdown: r.score_breakdown ?? null,
+    jobFacts: r.job_facts ?? null,
+    profileMatch: r.profile_match ?? null,
     status: (r.status as UpworkJob['status']) ?? 'new',
     extractedFields: (r.extracted_fields as Record<string, unknown>) ?? null,
     rawInput: (r.raw_input as string) ?? null,
