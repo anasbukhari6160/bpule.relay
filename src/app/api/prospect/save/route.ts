@@ -11,7 +11,8 @@ import { recomputePacketFromStored, v3PacketToCanonical, buildMinimalV2Canonical
 import { isPacketCurrent } from '@/lib/intelligence-v3/versions'
 import { qualifyCanonicalScore, toStoredQualification, verdictForQualification } from '@/lib/scoring/qualification'
 import { createServiceSupabase } from '@/lib/supabase/service'
-import { createSample, captureScore, captureRouting } from '@/lib/dataset/service'
+import { createSample, captureScore, captureRouting, captureMessageGeneration } from '@/lib/dataset/service'
+import { recordShadowDecisions } from '@/lib/scoring-v4/shadow'
 import { getLeadDisplayScore } from '@/lib/scoring/display-score'
 import { resolveAccessibleIdentity } from '@/lib/workspace/resolve-active-identity'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
@@ -286,6 +287,18 @@ export async function POST(request: Request) {
       console.error('[dataset] createDatasetSampleForLead failed:', err instanceof Error ? err.message : err)
     })
 
+    // Shadow scoring (SCORING_SHADOW_ENGINES): candidate engines beside the
+    // production decision. Never changes the lead, never blocks the save.
+    void recordShadowDecisions({
+      client: createServiceSupabase(),
+      organizationId: lead.organizationId,
+      platform: 'linkedin',
+      leadId: lead.id,
+      rawText: normalizedRawInput,
+      canonicalIntelligence: canonical,
+      productionSenderId: senderProfileId ?? null,
+    })
+
     // BUG-22: Do NOT save the generated note as a draft message. The note is
     // already persisted in extractionProfile.connectionNote. Saving it as a
     // draft would make it appear in the timeline, and "Send Without Note"
@@ -371,6 +384,17 @@ async function createDatasetSampleForLead(
       scoringVersion: typeof (canonical as Record<string, unknown>)?.scoreVersion === 'string' ? (canonical as Record<string, unknown>).scoreVersion as string : undefined,
       buyerIntentVersion: typeof buyerIntent?.version === 'string' ? buyerIntent.version : undefined,
       modelVersion: typeof packet?.decisionModel === 'string' ? packet.decisionModel : undefined,
+    })
+  }
+
+  // Capture the generated connection note (MESSAGE_GENERATION). Before this
+  // the note was passed in and dropped, so the funnel never saw a draft.
+  if (connectionNote && connectionNote.trim()) {
+    await captureMessageGeneration(client, sampleId, {
+      connectionNote: connectionNote.trim(),
+      generatedText: connectionNote.trim(),
+      messageStage: 'connection',
+      senderProfileId: typeof body.senderProfileId === 'string' ? body.senderProfileId : undefined,
     })
   }
 

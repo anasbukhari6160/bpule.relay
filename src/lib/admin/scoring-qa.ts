@@ -16,6 +16,12 @@ import { isPacketCurrent, SCORING_VERSION } from '@/lib/intelligence-v3/versions
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
 import type { RejectedSignal } from '@/lib/intelligence-v3/source-facts-model'
 import { parsePacket } from '@/lib/relay/routing-context'
+import { computeShadowCandidates } from '@/lib/scoring-v4/shadow'
+import { opportunityKey } from '@/lib/scoring-v4/opportunity-key'
+import { ENGINE_IDS } from '@/lib/scoring-v4/engines/registry'
+import type { EngineId } from '@/lib/scoring-v4/engines/types'
+
+const QA_CANDIDATE_ENGINES: EngineId[] = ENGINE_IDS.filter((e) => e !== 'v3')
 
 export interface QaDecisionRow {
   id: string
@@ -46,6 +52,23 @@ export interface QaDecisionRow {
   stale: boolean
   rejectedSignals: RejectedSignal[]
   decisionRunId: string | null
+  /** Candidate-engine results for the same row (Phase 34: production vs candidate). */
+  candidates: QaCandidate[]
+  /** Unique-opportunity key so a lead and its captured prospect can be grouped. */
+  opportunityKey: string | null
+}
+
+export interface QaCandidate {
+  engine: EngineId
+  version: string
+  score: number
+  display: number
+  qualification: CanonicalQualification
+  action: string
+  confidence: number
+  accountValue: number
+  intentValue: number
+  fit: string | null
 }
 
 export interface QaFilters {
@@ -76,11 +99,24 @@ export function projectDecisionRow(input: {
   currentSenderId: string | null
   bestSenderId?: string | null
   bestSenderMatch?: number | null
+  /** Raw source, used only to derive candidate features; never returned. */
+  rawInput?: string | null
 }): QaDecisionRow {
   const packet = parsePacket(input.canonicalIntelligence)
   const ci = (typeof input.canonicalIntelligence === 'string' ? safeParse(input.canonicalIntelligence) : input.canonicalIntelligence) as Record<string, unknown> | null
   const score = input.canonicalScore ?? packet?.score ?? null
   const band = score === null ? null : qualifyCanonicalScore(score)
+  let candidates: QaCandidate[] = []
+  if (packet) {
+    try {
+      const shadow = computeShadowCandidates(packet, input.rawInput ?? null, { engines: QA_CANDIDATE_ENGINES })
+      candidates = shadow.rows.map((r) => ({
+        engine: r.engine, version: r.candidate.version, score: r.candidate.score, display: displayScoreForCanonical(r.candidate.score),
+        qualification: r.candidate.qualification, action: r.candidateAction, confidence: r.candidate.confidence,
+        accountValue: r.candidate.accountValue, intentValue: r.candidate.intentValue, fit: shadow.features?.fit.level ?? null,
+      }))
+    } catch { candidates = [] }
+  }
   return {
     id: input.id,
     kind: input.kind,
@@ -110,6 +146,8 @@ export function projectDecisionRow(input: {
     stale: !isPacketCurrent(packet?.versions),
     rejectedSignals: packet?.sourceFacts?.rejectedSignals ?? [],
     decisionRunId: packet?.decisionRunId ?? null,
+    candidates,
+    opportunityKey: opportunityKey(input.rawInput),
   }
 }
 
@@ -220,7 +258,7 @@ export async function loadRecentDecisions(client: SupabaseClient, orgId: string,
   const [{ data: leads }, { data: prospects }] = await Promise.all([
     client
       .from('leads')
-      .select('id, company, contact_name, owner_rep_id, created_at, canonical_score, canonical_intelligence, sender_profile_id, best_profile_id, best_profile_match_score')
+      .select('id, company, contact_name, owner_rep_id, created_at, canonical_score, canonical_intelligence, sender_profile_id, best_profile_id, best_profile_match_score, raw_input')
       .eq('organization_id', orgId)
       .not('canonical_intelligence', 'is', null)
       .gte('created_at', opts.since)
@@ -228,7 +266,7 @@ export async function loadRecentDecisions(client: SupabaseClient, orgId: string,
       .limit(limit),
     client
       .from('captured_prospects')
-      .select('id, extracted_company, extracted_name, owner_rep_id, created_at, canonical_score, canonical_intelligence, sender_profile_id')
+      .select('id, extracted_company, extracted_name, owner_rep_id, created_at, canonical_score, canonical_intelligence, sender_profile_id, raw_input')
       .eq('organization_id', orgId)
       .eq('status', 'captured')
       .not('canonical_intelligence', 'is', null)
@@ -242,6 +280,7 @@ export async function loadRecentDecisions(client: SupabaseClient, orgId: string,
       id: l.id as string, kind: 'lead', company: (l.company as string) ?? null, contactName: (l.contact_name as string) ?? null, repId: (l.owner_rep_id as string) ?? null,
       createdAt: l.created_at as string, canonicalScore: (l.canonical_score as number) ?? null, canonicalIntelligence: l.canonical_intelligence,
       currentSenderId: (l.sender_profile_id as string) ?? null, bestSenderId: (l.best_profile_id as string) ?? null, bestSenderMatch: (l.best_profile_match_score as number) ?? null,
+      rawInput: (l.raw_input as string) ?? null,
     }))
   }
   for (const p of (prospects ?? []) as Array<Record<string, unknown>>) {
@@ -249,6 +288,7 @@ export async function loadRecentDecisions(client: SupabaseClient, orgId: string,
       id: p.id as string, kind: 'prospect', company: (p.extracted_company as string) ?? null, contactName: (p.extracted_name as string) ?? null, repId: (p.owner_rep_id as string) ?? null,
       createdAt: p.created_at as string, canonicalScore: (p.canonical_score as number) ?? null, canonicalIntelligence: p.canonical_intelligence,
       currentSenderId: (p.sender_profile_id as string) ?? null,
+      rawInput: (p.raw_input as string) ?? null,
     }))
   }
   rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt))

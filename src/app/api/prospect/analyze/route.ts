@@ -6,6 +6,7 @@ import { sseStream } from '@/lib/sse/sse'
 import { buildProfileIntelligence, matchProofToLead } from '@/lib/relay/profile-intelligence'
 import type { SenderSuggestion } from '@/lib/relay/sender-suggestion'
 import { loadSenderProfiles, routeLead } from '@/lib/relay/routing-context'
+import { recordShadowDecisions } from '@/lib/scoring-v4/shadow'
 import type { RoutingResult } from '@/lib/relay/sender-routing-engine'
 import { deriveRecommendedAction, ROUTING_MISMATCH_DELTA, type DeriveActionOutput, type RecommendedAction } from '@/lib/intelligence-v3/action/recommended-action'
 import { opportunityVersionTag } from '@/lib/intelligence-v3/versions'
@@ -647,6 +648,19 @@ export async function POST(request: Request) {
         // already analyzed, so re-analyzing the same paste can't be farmed
         if (captured.isNewCapture) {
           await store.recordProspectExtracted(captured.revenueIdentityId)
+        }
+        // Shadow scoring (SCORING_SHADOW_ENGINES): candidate engines beside
+        // the production decision. Never shown to the rep, never blocks.
+        if (captured.isNewCapture) {
+          void getAuthContext().then((auth) => auth && recordShadowDecisions({
+            client: createServiceSupabase(),
+            organizationId: auth.orgId,
+            platform: 'linkedin',
+            capturedProspectId: captured.id,
+            rawText: rawText,
+            canonicalIntelligence: canonical,
+            productionSenderId: bestSender?.id ?? null,
+          })).catch(() => { /* shadow is best-effort */ })
         }
       } catch {
         // Non-fatal: captured prospect must not block analysis

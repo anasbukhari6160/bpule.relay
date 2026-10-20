@@ -157,6 +157,7 @@ export function ScoringQaCenter() {
                     </div>
                     <p className="mt-0.5 truncate text-[11px] text-graphite">
                       {r.action ?? '—'} · CP {r.commercialPotential ?? '—'} · fit {r.fit ?? '—'} · timing {r.timing ?? '—'} · access {r.access ?? '—'} · {r.kind} · {new Date(r.createdAt).toLocaleDateString()}
+                      {r.candidates.length > 0 && <span className="text-stone"> · candidates {r.candidates.map((c) => `${c.engine.replace('_', ' ')} ${c.display}/10`).join(', ')}</span>}
                     </p>
                   </div>
                   <span className="text-stone">{open ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}</span>
@@ -173,6 +174,20 @@ export function ScoringQaCenter() {
                       <Field k="Source facts" v={r.versions?.sourceFactsVersion ?? '—'} />
                       <Field k="Routing" v={r.versions?.routingVersion ?? '—'} />
                     </div>
+                    {r.candidates.length > 0 && (
+                      <div data-testid="qa-candidates">
+                        <p className="mb-1 text-[9px] uppercase tracking-wide text-stone">Production vs candidate engines (shadow — never shown to reps)</p>
+                        <table className="w-full text-[11px]">
+                          <thead><tr className="text-left text-stone"><th className="pr-2">Engine</th><th className="pr-2">Score</th><th className="pr-2">/10</th><th className="pr-2">Band</th><th className="pr-2">Action</th><th className="pr-2">Account</th><th className="pr-2">Intent</th><th className="pr-2">Fit</th><th>Conf</th></tr></thead>
+                          <tbody>
+                            <tr className="font-medium text-ink"><td className="pr-2">production</td><td className="pr-2">{r.canonicalScore ?? '—'}</td><td className="pr-2">{r.displayScore ?? '—'}</td><td className="pr-2">{r.qualification ?? '—'}</td><td className="pr-2">{r.action ?? '—'}</td><td className="pr-2">{r.commercialPotential ?? '—'}</td><td className="pr-2">{r.buyerIntent ?? '—'}</td><td className="pr-2">{r.fit ?? '—'}</td><td>{r.confidence ?? '—'}</td></tr>
+                            {r.candidates.map((c) => (
+                              <tr key={c.engine} className={cn('text-graphite', c.qualification !== r.qualification && 'text-orange')}><td className="pr-2">{c.engine}</td><td className="pr-2">{c.score}</td><td className="pr-2">{c.display}</td><td className="pr-2">{c.qualification}</td><td className="pr-2">{c.action}</td><td className="pr-2">{c.accountValue}</td><td className="pr-2">{c.intentValue}</td><td className="pr-2">{c.fit ?? '—'}</td><td>{c.confidence}</td></tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                     <RejectedSignalInspector signals={r.rejectedSignals} compact />
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <ScoringFeedback

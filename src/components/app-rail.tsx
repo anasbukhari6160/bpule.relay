@@ -79,6 +79,7 @@ const MORE_NAV: Array<{
   { href: '/admin/people', label: 'People', icon: Users, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/ai-usage', label: 'AI Usage', icon: Activity, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/dataset', label: 'Dataset', icon: Database, exact: true, adminOnly: true, group: 'Admin' },
+  { href: '/admin/training-data', label: 'Training data', icon: Database, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/settings', label: 'Settings', icon: Settings, exact: false, group: 'Account' },
 ]
 
