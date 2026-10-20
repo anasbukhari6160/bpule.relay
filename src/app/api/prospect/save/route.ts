@@ -281,7 +281,9 @@ export async function POST(request: Request) {
     const lead = result.lead!
 
     // Dataset: create a permanent, versioned intelligence sample for this analysis.
-    void createDatasetSampleForLead(lead, canonical, canonicalScore, connectionNote, body).catch(() => { /* never break save */ })
+    void createDatasetSampleForLead(lead, canonical, canonicalScore, connectionNote, body).catch((err) => {
+      console.error('[dataset] createDatasetSampleForLead failed:', err instanceof Error ? err.message : err)
+    })
 
     // BUG-22: Do NOT save the generated note as a draft message. The note is
     // already persisted in extractionProfile.connectionNote. Saving it as a
