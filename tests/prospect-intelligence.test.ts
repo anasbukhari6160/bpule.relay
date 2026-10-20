@@ -461,7 +461,7 @@ describe('Connection Note Quality Gate', () => {
     expect(result.failures.some((f) => f.toLowerCase().includes('"we"'))).toBe(true)
   })
 
-  it('rejects notes over 300 characters', () => {
+  it('rejects notes over 120 characters', () => {
     const longNote = 'Hi Sarah, ' + 'this is a very long note. '.repeat(15) + 'Let\'s connect!'
     const result = evaluateConnectionNote({
       text: longNote,
@@ -488,7 +488,7 @@ describe('Connection Note Quality Gate', () => {
 
   it('passes a well-crafted connection note', () => {
     const result = evaluateConnectionNote({
-      text: 'Hey Sarah, the Rails scaling work at ExampleCo caught my eye. I built a similar multi-tenant setup for a fintech product last year. Worth comparing notes.',
+      text: 'Hey Sarah, the Rails work at ExampleCo stood out. I shipped a similar setup last year.',
       profile,
       prospectName: 'Sarah',
       prospectCompany: 'ExampleCo',
@@ -549,7 +549,7 @@ describe('Connection Note Repair', () => {
     expect(result.text).not.toMatch(/!/)
   })
 
-  it('shortens notes over 300 chars', () => {
+  it('shortens notes over 120 chars', () => {
     const longNote = 'Hey Sarah, ' + 'this is a very long note with lots of detail. '.repeat(10) + 'Let\'s connect and explore synergies together!'
     const result = validateAndRepair({
       text: longNote,
@@ -558,7 +558,7 @@ describe('Connection Note Repair', () => {
       prospectCompany: 'ExampleCo',
       matchedProof: [],
     })
-    expect(result.charCount).toBeLessThanOrEqual(300)
+    expect(result.charCount).toBeLessThanOrEqual(120)
   })
 })
 

@@ -793,7 +793,7 @@ export async function POST(request: Request) {
           mode: 'warm_conversational',
           assessment: revenue.assessment,
           messageJob: revenue.messageJob,
-          wordBudget: { min: 15, max: 35, label: 'connection' },
+          wordBudget: { min: 14, max: 22, label: 'connection' },
         }
       }
 
@@ -811,7 +811,7 @@ export async function POST(request: Request) {
           `**Direction:** ${angle.systemDirective}`,
           ``,
           `**Hard rules:**`,
-          `- Max ${CONNECTION_NOTE_MAX_CHARS} characters for LinkedIn connection notes`,
+          `- 100 to ${CONNECTION_NOTE_MAX_CHARS} characters. Never exceed ${CONNECTION_NOTE_MAX_CHARS}.`,
           `- Specific observation + genuine overlap + simple reason to connect`,
           `- NO questions. NO "curious about", "how do you", "would love to learn"`,
           `- NO pitch. NO service description. NO "I can help", "we build"`,

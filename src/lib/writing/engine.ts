@@ -632,8 +632,8 @@ export function evaluateMessageStage(
 
   if (stage === 'connection') {
     // Connection notes must be short
-    if (text.length > 300) {
-      issues.push(`Connection note too long (${text.length}/300 chars)`)
+    if (text.length > 120) {
+      issues.push(`Connection note too long (${text.length}/120 chars)`)
     }
     if (text.length < 15) {
       issues.push('Connection note too short to be meaningful')

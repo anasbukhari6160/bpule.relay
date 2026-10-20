@@ -19,7 +19,7 @@ export type ArtifactLimitKey = 'dm' | 'connection' | 'upwork' | 'followup' | 're
 
 export const ARTIFACT_LIMITS: Record<ArtifactLimitKey, ArtifactLimit> = {
   dm: { kind: 'words', max: 55, label: 'words' },
-  connection: { kind: 'chars', max: 300, label: 'characters' },
+  connection: { kind: 'chars', max: 120, label: 'characters' },
   upwork: { kind: 'words', max: 350, label: 'words' },
   followup: { kind: 'words', max: 40, label: 'words' },
   reply: { kind: 'words', max: 200, label: 'words' },

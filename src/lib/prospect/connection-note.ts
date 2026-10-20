@@ -8,7 +8,8 @@ import type { Profile, MatchedProof } from '@/lib/domain/types'
  * Their purpose is to earn an acceptance — not to close a deal.
  */
 
-export const CONNECTION_NOTE_MAX_CHARS = 300
+/** LinkedIn connection notes stay in the 100–120 character range. 120 is the hard cap. */
+export const CONNECTION_NOTE_MAX_CHARS = 120
 
 export interface ConnectionNoteResult {
   text: string

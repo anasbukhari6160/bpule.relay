@@ -49,6 +49,16 @@ interface DecisionDetail {
   decisionRunId?: string | null
 }
 
+interface SenderRankView {
+  senderId: string
+  name: string | null
+  role: string | null
+  profileMatch: number
+  reasons: string[]
+  accessibleToRep: boolean
+  primaryProof: string | null
+}
+
 type AnalyzeEvent =
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
@@ -82,6 +92,7 @@ type AnalyzeEvent =
       draftFailed: boolean
       demoMode: boolean
       alternativeSenders: Array<{ profile: Profile; matchScore: number; topProof: string | null }>
+      senderRouting?: { rankings?: SenderRankView[] } | null
   senderSuggestion?: { profileId: string; name: string | null; role: string | null; platform: string | null; score: number; currentBestScore: number; matchedTerms: string[]; topProof: string | null; holders: string[]; reason: string } | null
       qualification: ProspectQualificationAssessment
       revenue?: RevenueLoopSnapshot
@@ -114,6 +125,7 @@ interface AnalysisState {
   quality: { passed: boolean; failures: string[]; wasRepaired: boolean }
   strategy: { whyConnect: string; relevantObservation: string; forbidden: string[]; candidateAngles: string[] }
   alternativeSenders: Array<{ profile: Profile; matchScore: number; topProof: string | null }>
+  senderRankings: SenderRankView[]
   senderSuggestion?: { profileId: string; name: string | null; role: string | null; platform: string | null; score: number; currentBestScore: number; matchedTerms: string[]; topProof: string | null; holders: string[]; reason: string } | null
   draftFailed: boolean
   demoMode: boolean
@@ -302,6 +314,7 @@ export default function ProspectCheckPage() {
                 quality: event.quality ?? { passed: true, failures: [], wasRepaired: false },
                 strategy: event.strategy,
                 alternativeSenders: event.alternativeSenders,
+                senderRankings: Array.isArray(event.senderRouting?.rankings) ? event.senderRouting.rankings.slice(0, 5) : [],
                 senderSuggestion: event.senderSuggestion ?? null,
                 draftFailed: event.draftFailed,
                 demoMode: event.demoMode,
@@ -772,16 +785,12 @@ export default function ProspectCheckPage() {
             </div>
           )}
 
-          {result.score && result.bestSender && (
-            <div>
-              <div className="flex items-center justify-between">
+          {result.score && (result.bestSender || result.senderRankings.length > 0) && (
+            <div data-testid="sender-section" className="rounded-lg border border-line bg-bone-raised/30 p-3">
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <User className="size-3.5 text-orange" aria-hidden="true" />
-                  <h3 className="text-[12px] font-medium text-ink">
-                    {workspace.active && result.bestSender?.id === workspace.active.profileId
-                      ? `Sending as ${workspace.active.identityName}`
-                      : `Best sender: ${result.bestSender.label ?? 'Unnamed'}`}
-                  </h3>
+                  <h3 className="text-[12px] font-medium text-ink">Sender</h3>
                 </div>
                 {Array.isArray(result.alternativeSenders) && result.alternativeSenders.length > 0 && (
                   <button
@@ -794,16 +803,28 @@ export default function ProspectCheckPage() {
                   </button>
                 )}
               </div>
-              {Array.isArray(result.bestSenderProof) && result.bestSenderProof.length > 0 && (
-                <p className="mt-1 text-[11px] text-graphite">
-                  {result.bestSenderProof[0].safeClaim.slice(0, 100)}
-                  {result.bestSenderProof.length > 1 ? ` +${result.bestSenderProof.length - 1} more` : ''}
+              <p className="mt-1.5 text-[13px] font-medium text-ink">
+                Best profile: {result.senderRankings[0]?.name ?? result.bestSender?.label ?? 'Unnamed'}
+                {typeof result.senderRankings[0]?.profileMatch === 'number' ? ` · ${result.senderRankings[0].profileMatch}% match` : ''}
+              </p>
+              {(result.senderRankings[0]?.reasons[0] ?? result.bestSenderProof[0]?.safeClaim) && (
+                <p className="mt-0.5 text-[11px] text-graphite">
+                  {(result.senderRankings[0]?.reasons[0] ?? result.bestSenderProof[0]?.safeClaim ?? '').slice(0, 140)}
                 </p>
               )}
-              {Array.isArray(result.bestSenderProof) && result.bestSenderProof.length === 0 && (
-                <p className="mt-1 text-[11px] text-status-warning">
-                  No verified proof matches for this sender.
-                </p>
+              {result.senderRankings.length > 1 && (
+                <ul className="mt-2 space-y-1">
+                  {result.senderRankings.slice(0, 5).map((ranking, index) => (
+                    <li key={ranking.senderId} className="flex items-center gap-2 text-[11px]">
+                      <span className="w-4 text-stone">{index + 1}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium text-ink">
+                        {ranking.name ?? 'Unnamed'}
+                        {ranking.role ? <span className="font-normal text-graphite"> · {ranking.role}</span> : null}
+                      </span>
+                      <span className="shrink-0 text-graphite">{ranking.profileMatch}%</span>
+                    </li>
+                  ))}
+                </ul>
               )}
 
               {result.senderSuggestion && (

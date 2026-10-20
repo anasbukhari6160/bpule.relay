@@ -62,7 +62,7 @@ describe('Em-dash name formatting detection', () => {
 describe('Connection note quality', () => {
   it('passes a specific, natural connection note', () => {
     const result = evaluateMessageStage(
-      'Hi John, saw you are taking Dexta Mobility into commercial ops. The customer/valet/ERP setup caught my eye. Worth connecting.',
+      'Hi John, saw you taking Dexta into commercial ops. The ERP setup caught my eye.',
       'connection',
       { prospectName: 'John Smith' },
     )
@@ -89,7 +89,7 @@ describe('Connection note quality', () => {
     expect(result.issues.some(i => i.includes('meeting too early'))).toBe(true)
   })
 
-  it('fails a connection note over 300 chars', () => {
+  it('fails a connection note over 120 chars', () => {
     const result = evaluateMessageStage(
       'Hi John, '.repeat(50) + 'this is a very long connection note that exceeds the character limit for LinkedIn connection notes and should be rejected.',
       'connection',

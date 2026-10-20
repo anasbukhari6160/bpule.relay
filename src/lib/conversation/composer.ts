@@ -121,7 +121,7 @@ export function editPreferences(edits: ComposeContext['edits']): string {
 
 function intentLabel(intent: ComposeIntent): string {
   switch (intent) {
-    case 'connection': return `LinkedIn connection request note (hard limit ${CONNECTION_NOTE_LIMIT} characters)`
+    case 'connection': return `LinkedIn connection request note (100 to ${CONNECTION_NOTE_LIMIT} characters, never more)`
     case 'dm': return 'first direct message after they accepted the connection'
     case 'followup': return 'follow-up after the client has not answered my last message'
     case 'reply': return 'reply to the client\'s latest message'

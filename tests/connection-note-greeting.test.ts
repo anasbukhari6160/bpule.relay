@@ -137,7 +137,7 @@ describe('validateAndRepair - greeting normalization', () => {
 
   it('does NOT flag a note mentioning cloud spend in sender context', () => {
     const result = evaluateConnectionNote({
-      text: 'Hi Erick, cloud platform architecture at scale is what I work on daily. Helping teams reduce cloud spend without sacrificing reliability. Worth connecting.',
+      text: 'Hi Erick, I work on cloud architecture and help teams cut cloud spend. Worth connecting.',
       profile: null,
       prospectName: 'Erick Albuquerque',
       prospectCompany: 'Microsoft',
@@ -149,7 +149,7 @@ describe('validateAndRepair - greeting normalization', () => {
 
   it('does NOT flag a note mentioning budget-friendly approach', () => {
     const result = evaluateConnectionNote({
-      text: 'Hi Sarah, platform engineering at scale is what I work on. Budget-friendly approaches to infra automation. Worth connecting.',
+      text: 'Hi Sarah, I work on platform engineering. Budget-friendly infra automation. Worth connecting.',
       profile: null,
       prospectName: 'Sarah Chen',
       prospectCompany: 'Acme',

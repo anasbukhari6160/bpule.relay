@@ -178,7 +178,7 @@ describe('message checks', () => {
   it('cleans dashes and trims connection notes to the LinkedIn limit at a sentence end', () => {
     expect(cleanMessage('Hi Sam — great work!', 'dm')).toBe('Hi Sam, great work.')
     const long = `${'Short sentence here. '.repeat(20)}`
-    expect(cleanMessage(long, 'connection').length).toBeLessThanOrEqual(300)
+    expect(cleanMessage(long, 'connection').length).toBeLessThanOrEqual(120)
   })
 })
 
