@@ -16,18 +16,21 @@ interface SampleRow {
   id: string
   platform: string
   version: number
-  funnel_stage: string
+  funnelStage: string
   qualification: string | null
-  canonical_score: number | null
+  canonicalScore: number | null
+  displayScore: number | null
   confidence: number | null
-  recommended_action: string | null
-  final_outcome: string | null
-  label_status: string
-  label_source: string | null
-  training_approved: boolean
-  needs_review: boolean
-  capture_failures: unknown[]
-  created_at: string
+  recommendedAction: string | null
+  finalOutcome: string | null
+  labelStatus: string
+  labelSource: string | null
+  trainingApproved: boolean
+  trainingEligible: boolean
+  needsReview: boolean
+  captureFailures: unknown[]
+  createdAt: string
+  messageStage: string | null
 }
 
 const PLATFORMS = [
@@ -179,27 +182,29 @@ export function DatasetCenter() {
           <EmptyNote>No matching samples. Analyze a lead to create one.</EmptyNote>
         ) : (
           <div className="divide-y divide-line">
-            {samples.filter(s => !captureHealth || (Array.isArray(s.capture_failures) && s.capture_failures.length > 0)).map(s => (
+            {samples.filter(s => !captureHealth || (Array.isArray(s.captureFailures) && s.captureFailures.length > 0)).map(s => (
               <div key={s.id} className="flex items-center justify-between gap-4 py-2.5">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-medium text-ink">{s.platform} v{s.version}</span>
-                    <Pill tone={labelTone(s.label_status, s.training_approved)}>{s.training_approved ? 'APPROVED' : s.label_status}</Pill>
-                    {s.needs_review && <Pill tone="orange">Review</Pill>}
-                    {Array.isArray(s.capture_failures) && s.capture_failures.length > 0 && (
-                      <Pill tone="orange">{s.capture_failures.length} fail{s.capture_failures.length > 1 ? 's' : ''}</Pill>
+                    <Pill tone={labelTone(s.labelStatus, s.trainingApproved)}>{s.trainingApproved ? 'APPROVED' : s.labelStatus}</Pill>
+                    {s.needsReview && <Pill tone="orange">Review</Pill>}
+                    {s.trainingEligible && <Pill tone="success">Train</Pill>}
+                    {Array.isArray(s.captureFailures) && s.captureFailures.length > 0 && (
+                      <Pill tone="orange">{s.captureFailures.length} fail{s.captureFailures.length > 1 ? 's' : ''}</Pill>
                     )}
                   </div>
                   <p className="mt-0.5 text-[11px] text-stone">
-                    {s.funnel_stage} · {s.qualification ?? 'unqualified'}
-                    {s.canonical_score !== null && ` · ${s.canonical_score}/100`}
-                    {s.confidence !== null && ` · ${(s.confidence * 100).toFixed(0)}%`}
-                    {s.recommended_action && ` · ${s.recommended_action}`}
-                    {s.final_outcome && ` · ${s.final_outcome}`}
+                    {s.funnelStage} · {s.qualification ?? 'unqualified'}
+                    {s.canonicalScore !== null && s.canonicalScore !== undefined && ` · ${s.canonicalScore}/100`}
+                    {s.displayScore != null && ` · ${s.displayScore}/10`}
+                    {s.confidence != null && ` · ${(s.confidence * 100).toFixed(0)}%`}
+                    {s.recommendedAction && ` · ${s.recommendedAction}`}
+                    {s.finalOutcome && ` · ${s.finalOutcome}`}
                   </p>
                 </div>
                 <span className="shrink-0 text-[10px] text-stone">
-                  {new Date(s.created_at).toLocaleDateString()}
+                  {new Date(s.createdAt).toLocaleDateString()}
                 </span>
               </div>
             ))}
@@ -210,7 +215,7 @@ export function DatasetCenter() {
   )
 }
 
-function labelTone(status: string, approved: boolean): 'success' | 'orange' | 'neutral' {
+function labelTone(status?: string, approved?: boolean): 'success' | 'orange' | 'neutral' {
   if (approved) return 'success'
   if (status === 'HUMAN_REVIEWED' || status === 'OUTCOME_VERIFIED') return 'success'
   if (status === 'HUMAN_CORRECTED') return 'orange'
