@@ -18,6 +18,7 @@ import { buildEpisodes, eventNeedOwner, episodeContentKey } from './graph/episod
 import { buildCommercialEpisodesFromV2, convertCommercialEpisodeToV3 } from '@/lib/relay/commercial-episodes'
 import {
   getDecisionRegistry,
+  hardenProviderResult,
   type V3DecisionProvider,
   type V3ProviderContext,
   type V3ProviderResult,
@@ -206,6 +207,25 @@ export async function runV3Decision(
   // the verified source facts decide, confidence is LOW.
   if (!providerResult) {
     providerResult = deterministicDecision(providerContext)
+  }
+  // Scoring boundary: re-validate every answer whatever produced it, so an
+  // invalid enum or a non-finite probability fails closed to a safe default
+  // instead of scoring as NaN. Replacements are traced.
+  providerResult = hardenProviderResult(providerResult)
+  if (providerResult.normalizedFields && providerResult.normalizedFields.length > 0) {
+    void recordScopedTrace({
+      feature: 'v3_decision',
+      callSite: 'v3:decision:normalized',
+      provider: providerResult.providerId,
+      model: providerResult.modelVersion,
+      latencyMs: 0,
+      success: true,
+      fallback: true,
+      error: `answers normalized: ${providerResult.normalizedFields.join(', ')}`,
+      organizationId: options.trace?.organizationId,
+      repId: options.trace?.repId,
+      leadId: options.trace?.leadId,
+    })
   }
   const decisionMs = Date.now() - t3
 

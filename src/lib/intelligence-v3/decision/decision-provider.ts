@@ -55,6 +55,38 @@ export interface V3ProviderResult {
   latencyMs: number
   confidence: number  // provider's self-assessed confidence
   raw?: unknown       // raw response for debugging
+  /** Answer fields that failed validation and were replaced by safe defaults. */
+  normalizedFields?: string[]
+}
+
+/** Confidence a result is capped at once any of its answers had to be replaced. */
+export const NORMALIZED_ANSWER_CONFIDENCE_CAP = 0.3
+
+/**
+ * The scoring boundary never trusts a provider result as-is. Every answer
+ * is re-validated here, whatever produced it (a model, a replay, a stub, a
+ * cascade), so an invalid enum or a non-finite probability can never reach
+ * the score tables and come out as NaN. Any replaced field is listed on the
+ * result and caps the provider confidence; the assembler records it on the
+ * packet and the caller traces it.
+ */
+export function hardenProviderResult(result: V3ProviderResult): V3ProviderResult {
+  const raw = (result.answers ?? {}) as unknown as Record<string, unknown>
+  const answers = normalizeAnswers(raw)
+  const normalizedFields = (Object.keys(answers) as Array<keyof V3DecisionAnswers>)
+    .filter((key) => {
+      const before = raw[key]
+      const after = answers[key]
+      if (typeof after === 'number') return typeof before !== 'number' || !Number.isFinite(before) || before !== after
+      return before !== after
+    })
+    .map(String)
+  let confidence = typeof result.confidence === 'number' && Number.isFinite(result.confidence)
+    ? Math.max(0, Math.min(1, result.confidence))
+    : 0
+  if (normalizedFields.length > 0) confidence = Math.min(confidence, NORMALIZED_ANSWER_CONFIDENCE_CAP)
+  if (normalizedFields.length === 0 && confidence === result.confidence) return result
+  return { ...result, answers, confidence, normalizedFields: normalizedFields.length > 0 ? normalizedFields : result.normalizedFields }
 }
 
 

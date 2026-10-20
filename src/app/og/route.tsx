@@ -2,8 +2,12 @@ import { ImageResponse } from "next/og";
 import { siteConfig } from "@/lib/site-config";
 
 export const runtime = "nodejs";
-export const contentType = "image/png";
-export const size = {
+// `size` and `contentType` are metadata-file exports (opengraph-image.tsx).
+// A route handler may only export the HTTP methods and route config, and
+// Next's route typing fails the build on anything else. They stay as plain
+// constants: the image is still 1200x630 PNG via ImageResponse below.
+const contentType = "image/png";
+const size = {
   width: siteConfig.ogImage.width,
   height: siteConfig.ogImage.height,
 };
@@ -117,6 +121,6 @@ export async function GET() {
         </div>
       </div>
     ),
-    size,
+    { ...size, headers: { "Content-Type": contentType } },
   );
 }

@@ -26,7 +26,7 @@ import type {
 import type { V3EvidenceGraph } from '../graph/evidence-graph'
 import { scoreEpisode, isEmploymentHiringNotPurchase, isCandidateSeeking, type V3ScoreInput, type V3ScoreOutput } from '../scoring/score-v3'
 import { detectCommercialRequest, findContactInstruction, isVerbatimInSource } from '../source-facts'
-import type { V3ProviderResult } from './decision-provider'
+import { NORMALIZED_ANSWER_CONFIDENCE_CAP, type V3ProviderResult } from './decision-provider'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import { resolveVerifiedBuyerIntent, type VerifiedBuyerIntent } from '../buyer-intent'
 import { readSourceFacts, summarizeSourceFacts, type SourceFacts } from '../source-facts-model'
@@ -166,6 +166,9 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     providerConfidence: providerResult.confidence,
     fallbackUsed,
   })
+  if (providerResult.normalizedFields && providerResult.normalizedFields.length > 0) {
+    decisionAdjustments.push(`Model answers normalized (${providerResult.normalizedFields.join(', ')}): invalid values replaced by safe defaults; confidence capped.`)
+  }
   if (resolved.access.overrode) decisionAdjustments.push(`Access ${resolved.access.modelLevel ?? 'unspecified'} → ${resolved.access.level}: ${resolved.access.reasons[0] ?? 'source facts decide access'}.`)
   if (resolved.timing.urgencyRejected) decisionAdjustments.push(`Timing ${resolved.timing.modelTiming} → ${resolved.timing.buyerTiming}: no buyer deadline or current verified request in the source.`)
   if (resolved.fit.modelLevel && resolved.fit.level !== resolved.fit.modelLevel) decisionAdjustments.push(`Fit ${resolved.fit.modelLevel} → ${resolved.fit.level}: ${resolved.fit.note}.`)
@@ -203,18 +206,29 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
 
   const latentPotential = buyerIntent.verifiedBuyerRequest ? null : toLatentLevel(cpLevel)
 
+  // Hard guard at the packet boundary: a score that is not a finite number
+  // never leaves here. It fails closed (0, SKIP, no message, zero
+  // confidence) and says so in the adjustments, instead of surfacing NaN.
+  const scoreIsFinite = Number.isFinite(selectedScore.score)
+  if (!scoreIsFinite) decisionAdjustments.push('Score guard: the computed score was not a finite number; failed closed to 0 / SKIP.')
+  const guardedScore = scoreIsFinite ? Math.max(0, Math.min(100, selectedScore.score)) : 0
+  const answersNormalized = Boolean(providerResult.normalizedFields && providerResult.normalizedFields.length > 0)
+  const guardedConfidence = Number.isFinite(confidence.value)
+    ? Math.max(0, Math.min(answersNormalized ? NORMALIZED_ANSWER_CONFIDENCE_CAP : 1, confidence.value))
+    : 0
+
   const packet: V3LeadDecisionPacket = {
     version: 'relay_decision_v3',
     decisionRunId: generateDecisionRunId(),
     selectedEpisodeId: bestEpisode?.id ?? null,
     episodes: projectedEpisodes,
     decision,
-    score: selectedScore.score,
+    score: guardedScore,
     scoreVersion: SCORING_VERSION,
-    label: selectedScore.label,
-    qualification: selectedScore.qualification,
-    action: recommended.legacyAction,
-    messageEligible: recommended.messageEligible,
+    label: scoreIsFinite ? selectedScore.label : 'Score unavailable',
+    qualification: scoreIsFinite ? selectedScore.qualification : 'SKIP',
+    action: scoreIsFinite ? recommended.legacyAction : 'SKIP',
+    messageEligible: scoreIsFinite ? recommended.messageEligible : false,
     reasons: selectedScore.reasons,
     watchOut: selectedScore.watchOut,
     dimensions: selectedScore.dimensions,
@@ -223,7 +237,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     evidenceQuotes: bestEpisode ? episodeEvidenceQuotes(bestEpisode, graph, rawText) : [],
     evidenceRefs: bestEpisode?.evidenceRefs ?? [],
     proofStrength: 0,
-    confidence: confidence.value,
+    confidence: guardedConfidence,
     decisionProvider: providerResult.providerId,
     decisionModel: providerResult.modelVersion,
     shadowComparison,
