@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { hasUnfilledValues, UNFILLED_VALUES_MESSAGE } from '@/lib/relay/unfilled-values'
 import { createScoutStore } from '@/lib/store'
 import type { MessageType } from '@/lib/domain/types'
 import { computeEditDelta, classifySendDisposition, inferFeedbackReasons } from '@/lib/relay/edit-learning'
@@ -26,6 +27,11 @@ export async function POST(
       { error: 'Paste the message text you actually sent.' },
       { status: 400 },
     )
+  }
+  // A note with an empty value ("a -month trial with / support") is never a
+  // sent message; refuse to log it even if the client skipped its own check.
+  if (sentText && body.rejected !== true && hasUnfilledValues(sentText)) {
+    return NextResponse.json({ error: UNFILLED_VALUES_MESSAGE }, { status: 400 })
   }
 
   const rawType = body.type?.trim() ?? ''

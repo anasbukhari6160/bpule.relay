@@ -17,6 +17,7 @@ import type {
 } from '@/lib/domain/types'
 import type { FollowupDue, QueueData, UpworkSnapshot } from '@/lib/store/types'
 import { analyzeReply } from './conversation-engine'
+import { resolveConversationIntent } from '@/lib/conversation/intent'
 import { buildReplyStrategy } from './conversation-engine'
 import { buildRevenueStrategy, sourceFromLead, toUiSnapshot } from './revenue-strategy'
 import { priorityForCanonicalScore, qualifyCanonicalScore } from '@/lib/scoring/qualification'
@@ -84,6 +85,25 @@ function freshnessPenalty(createdAt: string): number {
 /**
  * Build the full Relay queue from all available data.
  */
+/**
+ * True when no outreach task may be built for the lead: its status is
+ * terminal, or the client's own messages amount to a decline ("not
+ * interested", "please don't follow up"). A later genuine buying message
+ * reopens the thread, which resolveConversationIntent already handles.
+ */
+export function leadClosedForOutreach(
+  lead: Pick<Lead, 'status'>,
+  messages: ReadonlyArray<Pick<Message, 'direction' | 'sentText' | 'draftText'>>,
+): boolean {
+  if (lead.status === 'won' || lead.status === 'lost' || lead.status === 'dead' || lead.status === 'no') return true
+  const clientTexts = messages
+    .filter((m) => m.direction === 'inbound')
+    .map((m) => (m.sentText ?? m.draftText ?? '').trim())
+    .filter(Boolean)
+  if (clientTexts.length === 0) return false
+  return resolveConversationIntent(clientTexts).declined
+}
+
 export function buildRelayQueue(input: QueueInput): RelayQueue {
   const tasks: RelayTask[] = []
 
@@ -96,8 +116,12 @@ export function buildRelayQueue(input: QueueInput): RelayQueue {
     }
   }
 
-  // 2. Reply needed
+  // 2. Reply needed. A lead that is closed, or whose client said "not
+  // interested / don't follow up", owes no reply and gets no urgent task
+  // (REL-QA-014). The store's replies list is keyed on status alone, so the
+  // decline is read from the thread here.
   for (const lead of input.queueData.replies) {
+    if (leadClosedForOutreach(lead, input.messagesByLead.get(lead.id) ?? [])) continue
     tasks.push(buildReplyTask(lead, input))
   }
 
@@ -120,8 +144,9 @@ export function buildRelayQueue(input: QueueInput): RelayQueue {
     }
   }
 
-  // 3. Follow-up due
+  // 3. Follow-up due. Same rule: no follow-up to a closed or declined lead.
   for (const f of input.followupsDue) {
+    if (leadClosedForOutreach(f.lead, input.messagesByLead.get(f.lead.id) ?? [])) continue
     tasks.push(buildFollowupTask(f.lead, f.daysSinceContact, input))
   }
 

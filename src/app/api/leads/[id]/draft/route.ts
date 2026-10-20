@@ -1,4 +1,5 @@
 import type { ExtractedLead, OutreachStrategy, SafeFact, MatchedProof, Profile } from '@/lib/domain/types'
+import { selectSenderProfile } from '@/lib/workspace/select-sender-profile'
 import { computeScore } from '@/lib/score/rubric'
 import { canonicalToLegacyScoreResult } from '@/lib/intelligence-v2/orchestrator'
 import { streamDraft } from '@/lib/ai/draft-stream'
@@ -92,22 +93,17 @@ export async function POST(
     ])
 
     const leadRevenueIdentityId = detail.revenueIdentityId ?? null
-    // Priority: explicit param → lead's stored sender_profile_id → revenue identity match → first profile
-    let selectedProfile =
-      profiles.find((p) => p.id === profileId) ??
-      profiles.find((p) => p.id === detail.senderProfileId) ??
-      profiles[0] ?? null
-
-    if (leadRevenueIdentityId && !profileId) {
-      const identityProfile = profiles.find((p) => (p as Profile & { revenueIdentityId?: string }).revenueIdentityId === leadRevenueIdentityId)
-      if (identityProfile) selectedProfile = identityProfile
-    }
-
-    if (profileId && leadRevenueIdentityId && selectedProfile) {
-      const profileRevenueIdentity = (selectedProfile as Profile & { revenueIdentityId?: string }).revenueIdentityId
-      if (profileRevenueIdentity && profileRevenueIdentity !== leadRevenueIdentityId) {
-        emit({ type: 'status', message: 'Warning: selected profile belongs to a different Revenue Identity than this lead.' })
-      }
+    // Priority: explicit param → lead's stored sender_profile_id → revenue
+    // identity match → first profile. The workspace identity is a fallback
+    // only; it never replaces the sender stored on the lead (REL-QA-015).
+    const selection = selectSenderProfile(
+      profiles as Array<Profile & { revenueIdentityId?: string | null }>,
+      { senderProfileId: detail.senderProfileId, revenueIdentityId: leadRevenueIdentityId },
+      profileId,
+    )
+    const selectedProfile = selection.profile
+    if (selection.crossWorkspace) {
+      emit({ type: 'status', message: 'Warning: selected profile belongs to a different Revenue Identity than this lead.' })
     }
 
     const profile = selectedProfile

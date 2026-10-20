@@ -151,8 +151,11 @@ export interface ReadSourceFactsOptions {
 const TITLE_SEP = /\s*(?:\||·|—|–|\s-\s|,)\s*/
 const AUTHORITY_PATTERNS: Array<{ level: AuthorityLevel; re: RegExp; decision: number; technical: number }> = [
   { level: 'RECRUITER', re: /\b(?:recruiter|talent\s+(?:acquisition|partner|specialist)|sourcer|headhunter|hiring\s+manager|rekruter(?:ka)?)\b/i, decision: 0.2, technical: 0.1 },
-  { level: 'FOUNDER', re: /\b(?:founder|co-?founder|cofounder|owner|managing\s+partner|ceo)\b|\bchief\s+executive\b/i, decision: 1.0, technical: 0.5 },
-  { level: 'EXECUTIVE', re: /\b(?:cto|cfo|coo|cpo|ciso|cio|chief\s+\w+\s+officer|president|managing\s+director|geschäftsführer|directeur\s+général|director\s+general|genel\s+müdür)\b/i, decision: 0.9, technical: 0.7 },
+  // German and French titles carry a feminine suffix ("Geschäftsführerin",
+  // "Gründerin", "Inhaberin"); "\b" does not end a word before "ä"/"ü", so
+  // the non-ASCII titles are matched with explicit boundaries.
+  { level: 'FOUNDER', re: /\b(?:founder|co-?founder|cofounder|owner|managing\s+partner|ceo|inhaber(?:in)?|mitgr[üu]nder(?:in)?|gr[üu]nder(?:in)?|fondateur|fondatrice|gerente\s+general)(?![\p{L}])|\bchief\s+executive\b/iu, decision: 1.0, technical: 0.5 },
+  { level: 'EXECUTIVE', re: /(?<![\p{L}])(?:cto|cfo|coo|cpo|ciso|cio|chief\s+\w+\s+officer|president|managing\s+director|gesch[äa]ftsf[üu]hrer(?:in)?|gesch[äa]ftsleiter(?:in)?|vorstand|directeur\s+g[ée]n[ée]ral|director\s+general|genel\s+m[üu]d[üu]r)(?![\p{L}])/iu, decision: 0.9, technical: 0.7 },
   { level: 'VP_HEAD', re: /\b(?:vp|vice\s+president|head\s+of|svp|evp)\b/i, decision: 0.75, technical: 0.6 },
   { level: 'DIRECTOR', re: /\bdirector\b/i, decision: 0.65, technical: 0.5 },
   { level: 'MANAGER', re: /\b(?:manager|team\s+lead|engineering\s+lead|tech\s+lead|lead\s+engineer|product\s+owner)\b/i, decision: 0.5, technical: 0.6 },
@@ -238,7 +241,29 @@ export function mostRecentPostAgeDays(rawText: string): number | null {
       return null
     })
     .filter((a): a is number => a !== null && a <= 365 * 5)
-  const all = [...ages, ...inline]
+  // German relative ages: "vor 5 Tagen", "5 Tage •", "• 2 Wochen", "3 Std.",
+  // or a line that is only "5 Tage". A bare duration inside prose ("2 Jahre
+  // 3 Monate" tenure) needs the "vor" prefix or a marker, as in English.
+  const german = [...rawText.matchAll(/(?:^|(vor)\s+|[•·]\s*)(\d+)\s*(std|stunden?|tag(?:e|en)?|wochen?|monat(?:e|en)?|jahr(?:e|en)?)\.?(?=\s*(?:[•·]|$))?/gim)]
+    .filter((m) => {
+      const prefixed = Boolean(m[1]) || /^[•·]/.test(m[0])
+      const after = rawText.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 3)
+      const suffixed = /^\s*(?:[•·]|$)/m.test(after)
+      const lineStart = (m.index ?? 0) === 0 || rawText[(m.index ?? 0) - 1] === '\n'
+      return prefixed || suffixed || lineStart
+    })
+    .map((m) => {
+      const n = Number(m[2])
+      const u = m[3].toLowerCase()
+      if (u.startsWith('st')) return 0
+      if (u.startsWith('t')) return n
+      if (u.startsWith('w')) return n * 7
+      if (u.startsWith('m')) return n * 30
+      if (u.startsWith('j')) return n * 365
+      return null
+    })
+    .filter((a): a is number => a !== null && a <= 365 * 5)
+  const all = [...ages, ...inline, ...german]
   return all.length > 0 ? Math.min(...all) : null
 }
 
@@ -458,7 +483,11 @@ export function readSourceFacts(rawText: string, options: ReadSourceFactsOptions
 
   // ── Access ────────────────────────────────────────────────────────────
   const profileUrl = text.match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[\w%-]+\/?|linkedin\.com\/in\/[\w%-]+/i)?.[0] ?? null
-  const canMessage = access.canMessage || /\bmessage\b/i.test(header.join('\n'))
+  // A stated invitation to write counts as a message route in any source
+  // language: "DM me", "message me", "gerne per Nachricht melden",
+  // "schreibt mir", "écrivez-moi".
+  const MESSAGE_INVITATION = /\b(?:dm|message|msg)\s+me\b|\bper\s+(?:nachricht|dm|pn)\b|\bnachricht\s+(?:an\s+mich|schicken|senden|schreiben)\b|\bschreib(?:t|en)?\s+mir\b|\bmeldet?\s+euch\b|\bgerne\s+(?:per\s+)?(?:nachricht|dm)\b|\b[ée]crivez-moi\b|\benvoyez-moi\s+un\s+message\b/iu
+  const canMessage = access.canMessage || /\bmessage\b/i.test(header.join('\n')) || MESSAGE_INVITATION.test(text)
   const accessFacts: AccessFacts = {
     connectionDegree: access.connectionDegree,
     canMessage,

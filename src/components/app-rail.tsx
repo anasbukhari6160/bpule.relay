@@ -62,6 +62,7 @@ const MORE_NAV: Array<{
   adminOnly?: boolean
   group: string
 }> = [
+  { href: '/leads/import', label: 'Import CSV', icon: Target, exact: true, group: 'Work' },
   { href: '/upwork', label: 'Jobs', icon: Briefcase, exact: false, group: 'Work' },
   { href: '/relay', label: 'Conversations', icon: MessageSquare, exact: false, group: 'Work' },
   { href: '/inbound', label: 'Inbox', icon: Search, exact: false, group: 'Work' },

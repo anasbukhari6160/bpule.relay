@@ -35,6 +35,7 @@ const DEFAULT_RULEBOOK: OrganizationRulebook = {
   confidenceSendThreshold: 72,
 }
 import { classifyRoleFromTitle, mapLocationToRegion } from '@/lib/leads/targeting-pure'
+import { mergeExtractedFields, type ExtractedFields } from '@/lib/leads/extraction-merge'
 import { readSse } from '@/lib/sse/client'
 import { duplicateNotice } from '@/lib/ui/api-error-toast'
 import { pasteGuard } from '@/lib/prospect/paste-guard'
@@ -225,27 +226,38 @@ export default function NewLeadPage() {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
+  // What the previous extraction wrote into each field. A field still equal
+  // to that value belongs to the old source and is replaced (or cleared)
+  // when a new source is extracted; a field the rep edited is kept. Without
+  // this, re-extracting a different person left the old name, title and
+  // location next to the new company.
+  const lastExtractedRef = useRef<ExtractedFields | null>(null)
+
   function applyExtracted(ex: ExtractedLead) {
+    const fresh: ExtractedFields = {
+      // "Unknown company" is the absence of a company, not a name to fill in.
+      company: ex.company?.trim() && !/^unknown( company)?$/i.test(ex.company.trim()) ? ex.company.trim() : '',
+      contactName: ex.name?.trim() ?? '',
+      contactTitle: ex.title?.trim() ?? '',
+      titleRaw: ex.titleRaw?.trim() || ex.title?.trim() || '',
+      locationRaw: ex.locationRaw?.trim() ?? '',
+      aboutSummary: ex.aboutSummary?.trim() ?? '',
+      experienceSummary: ex.experienceSummary?.trim() ?? '',
+      url: ex.url?.trim() ?? '',
+      verbatimQuote: ex.verbatimQuote?.trim() ?? '',
+    }
     setForm((f) => ({
       ...f,
-      // "Unknown company" is the absence of a company, not a name to fill in.
-      company: (ex.company?.trim() && !/^unknown( company)?$/i.test(ex.company.trim()) ? ex.company.trim() : '') || f.company.trim() || f.company,
-      contactName: ex.name?.trim() || f.contactName.trim() || f.contactName,
-      contactTitle: f.contactTitle.trim() || ex.title?.trim() || f.contactTitle,
-      titleRaw: f.titleRaw.trim() || ex.titleRaw?.trim() || ex.title?.trim() || f.titleRaw,
-      locationRaw: ex.locationRaw?.trim() || f.locationRaw,
-      aboutSummary: ex.aboutSummary?.trim() || f.aboutSummary,
-      experienceSummary: ex.experienceSummary?.trim() || f.experienceSummary,
-      recentPosts: ex.recentPosts ?? f.recentPosts,
+      ...mergeExtractedFields(f, fresh, lastExtractedRef.current),
+      recentPosts: ex.recentPosts ?? [],
       roleCategory: ex.roleCategory ?? classifyRoleFromTitle(ex.titleRaw ?? ex.title) ?? f.roleCategory,
-      url: ex.url?.trim() || f.url.trim() || f.url,
       signalType: ex.signalType ?? f.signalType,
       signalEvidence: ex.signalEvidence ?? f.signalEvidence,
       extractionConfidence: ex.extractionConfidence ?? f.extractionConfidence,
       confidenceNotes: ex.confidenceNotes ?? f.confidenceNotes,
-      verbatimQuote: ex.verbatimQuote?.trim() ?? f.verbatimQuote,
       tags: ex.tags ?? [],
     }))
+    lastExtractedRef.current = fresh
     setSignalOrigin('AI_EXTRACTED')
     setExtracted(true)
   }

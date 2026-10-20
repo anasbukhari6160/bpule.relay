@@ -630,7 +630,8 @@ export async function produceV3Intelligence(
       eventSource = events.length > 0 ? 'deterministic' : 'none'
     }
 
-    const bridgeInput = buildV3BridgeInput(v2Canonical, rawText, events, options.referenceDate ?? new Date())
+    const referenceDate = options.referenceDate ?? new Date()
+    const bridgeInput = buildV3BridgeInput(v2Canonical, rawText, events, referenceDate)
     const v3Result = await runV3Decision(bridgeInput, {
       onStatus: (msg) => emitV3Status(msg, onStatus),
       v2Canonical,
@@ -641,7 +642,10 @@ export async function produceV3Intelligence(
       deterministicOnly,
       referenceDate: options.referenceDate,
     })
-    return v3Result.packet
+    // The events and reference date travel with the packet so a later
+    // replay (save, shadow run) scores the same inputs and lands on the
+    // same number instead of re-extracting events deterministically.
+    return { ...v3Result.packet, events, decidedAt: referenceDate.toISOString() }
   }
 
   try {
@@ -704,10 +708,18 @@ export async function recomputePacketFromStored(
       confidence: stored.decision.providerConfidence,
     }),
   }
+  // Replay the events the shown decision was made from, at the date it was
+  // made. Re-extracting events deterministically here produced a different
+  // episode set than the model path, so the saved score drifted from the
+  // Prospect score (54 -> 55 across a band boundary). Packets saved before
+  // events were persisted still fall back to deterministic extraction.
+  const storedEvents = Array.isArray(stored.events) && stored.events.length > 0 ? stored.events : undefined
+  const storedDate = stored.decidedAt ? new Date(stored.decidedAt) : undefined
   const result = await produceV3Intelligence(rawText, {
     decisionProvider: replay,
     orgCapabilities: opts.orgCapabilities,
-    referenceDate: opts.referenceDate,
+    referenceDate: opts.referenceDate ?? (storedDate && !Number.isNaN(storedDate.getTime()) ? storedDate : undefined),
+    events: storedEvents,
     // Deterministic events only — never a second extraction call on save.
     skipEventModel: true,
   })

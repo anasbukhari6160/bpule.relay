@@ -111,7 +111,7 @@ Warsaw, Poland`,
     expect(result.intelligence.company.name).toBe('B2Bnetwork')
   })
 
-  it('company mentioned only via a connector phrase without "works for" (e.g. "lead recruiting operations for X") is honestly left unextracted rather than guessed — a known, accepted extraction gap, not a fabrication risk', async () => {
+  it('reads the employer from a connector phrase ("lead recruiting operations for X, a ... startup")', async () => {
     const result = await runIntelligencePipeline(
       `Alex Rivera
 Recruiter
@@ -120,12 +120,23 @@ About
 I lead recruiting operations for CometHire, a fast-growing HR tech startup.`,
       {},
     )
-    // This documents a real, currently-unresolved extraction gap (the
-    // "lead ... for X" phrasing has no dedicated pattern) — intentionally
-    // asserting the CURRENT behavior rather than silently threading a
-    // broader regex that risks false positives elsewhere. If a future fix
-    // adds this pattern, update this test to expect 'CometHire' and add
-    // the corresponding false-positive-safety tests above.
+    // This used to document an accepted gap (expected null). The extractor
+    // now reads a capitalized organization after "for" when the sentence
+    // goes on to describe it as a company, which is correct here. The guard
+    // below keeps the broader reading from inventing a company out of a
+    // lower-case object ("for fast-growing startups").
+    expect(result.intelligence.company.name).toBe('CometHire')
+  })
+
+  it('does not invent a company from a lower-case "for ..." object', async () => {
+    const result = await runIntelligencePipeline(
+      `Alex Rivera
+Recruiter
+
+About
+I lead recruiting operations for fast-growing startups across Europe.`,
+      {},
+    )
     expect(result.intelligence.company.name).toBeNull()
   })
 })

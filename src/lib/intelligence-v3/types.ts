@@ -1,6 +1,7 @@
 import { QUALIFICATION_BANDS, qualifyCanonicalScore } from '@/lib/scoring/qualification'
 import type { ScoringVersions } from './versions'
 import type { SourceFactsSummary } from './source-facts-model'
+import type { ExtractedEvent } from './event-extractor'
 
 /**
  * Decision Intelligence V3 — Type Definitions
@@ -266,6 +267,14 @@ export interface V3LeadDecisionPacket {
   selectedEpisodeId: string | null
   /** All episodes found */
   episodes: V3OpportunityEpisode[]
+  /**
+   * The events this decision was made from. Save replays the packet with
+   * these events instead of re-extracting them, so the persisted score is
+   * the one the rep was shown.
+   */
+  events?: ExtractedEvent[]
+  /** When the decision was made. The replay's reference date for staleness. */
+  decidedAt?: string
   /** The bounded decision from the model */
   decision: V3BoundedDecision
   /** Calibrated opportunity score 0-100 */

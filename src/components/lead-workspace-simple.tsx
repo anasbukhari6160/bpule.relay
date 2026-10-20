@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { hasUnfilledValues, UNFILLED_VALUES_MESSAGE } from '@/lib/relay/unfilled-values'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Send, Reply, MessageSquare, X, Copy, Check, Trophy, Clock,
@@ -68,6 +69,10 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
     return () => { cancelled = true }
   }, [lead.id])
   const phase = relationshipState.phase
+  // The server refuses contact actions on a no/dead lead. Do not offer them.
+  const leadLocked = lead.status === 'no' || lead.status === 'dead'
+  // A SKIP verdict never recommends outreach; connecting is a manual override.
+  const skipVerdict = lead.verdict === 'skip'
   const isTheirMove = relationshipState.kind === 'their_move' && phase !== 'replied'
   const isTerminal = relationshipState.kind === 'won' || relationshipState.kind === 'lost'
   // BUG-18: an unanswered inbound exists when the newest inbound is newer than
@@ -431,11 +436,16 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                 <button onClick={() => { setMode(null); setDraftText('') }} className="text-stone hover:text-ink"><XCircle className="size-4" /></button>
               </div>
               <Textarea value={sentText || draftText} onChange={(e) => setSentText(e.target.value)} rows={5} className="text-[13px]" placeholder="Edit before sending..." />
+              {hasUnfilledValues(sentText || draftText) && (
+                <p role="alert" className="flex items-start gap-1.5 text-[12px] text-status-danger">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" /> {UNFILLED_VALUES_MESSAGE}
+                </p>
+              )}
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => logSend(sentText || draftText, mode)} disabled={sending || !(sentText || draftText).trim()}>
+                <Button size="sm" onClick={() => logSend(sentText || draftText, mode)} disabled={sending || !(sentText || draftText).trim() || hasUnfilledValues(sentText || draftText)}>
                   <Send className="size-3" /> {sending ? 'Sending...' : 'Log as sent'}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText((sentText || draftText).trim())}>
+                <Button size="sm" variant="ghost" disabled={hasUnfilledValues(sentText || draftText)} onClick={() => navigator.clipboard.writeText((sentText || draftText).trim())}>
                   <Copy className="size-3" /> Copy
                 </Button>
               </div>
@@ -451,14 +461,21 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
 
           {!generating && !(mode && draftText) && (
             <div className="px-5 py-4 space-y-3">
-              {phase === 'connection_due' && !lead.connectionAcceptedAt && (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button size="sm" onClick={() => generateDraft('connection')} disabled={loggingConnection} className="w-full justify-center sm:flex-1">
-                    <Send className="size-3.5" /> Generate connection note
-                  </Button>
-                  <Button size="sm" variant="outline" className="w-full justify-center sm:w-auto" loading={loggingConnection} disabled={loggingConnection} onClick={() => void sendWithoutNote()}>
-                    Send without note
-                  </Button>
+              {phase === 'connection_due' && !lead.connectionAcceptedAt && !leadLocked && (
+                <div className="space-y-2">
+                  {skipVerdict && (
+                    <p className="text-[11px] text-ink-muted">
+                      Verdict is skip. Outreach is not recommended; the actions below are a manual override.
+                    </p>
+                  )}
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button size="sm" variant={skipVerdict ? 'outline' : undefined} onClick={() => generateDraft('connection')} disabled={loggingConnection} className="w-full justify-center sm:flex-1">
+                      <Send className="size-3.5" /> {skipVerdict ? 'Connect anyway (override)' : 'Generate connection note'}
+                    </Button>
+                    <Button size="sm" variant="outline" className="w-full justify-center sm:w-auto" loading={loggingConnection} disabled={loggingConnection} onClick={() => void sendWithoutNote()}>
+                      Send without note
+                    </Button>
+                  </div>
                 </div>
               )}
               {actionError && (
@@ -498,9 +515,15 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               )}
               <div className="flex flex-wrap gap-2 pt-2 border-t border-line/30">
                 {phase === 'connection_sent' && !lead.connectionAcceptedAt && (
-                  <Button size="sm" variant="outline" onClick={markAccepted} loading={markingAccepted}>
-                    <Trophy className="size-3" /> Mark accepted
-                  </Button>
+                  leadLocked ? (
+                    <p className="text-[11px] text-ink-muted">
+                      Lead is closed ({lead.status}). The connection can&apos;t be marked accepted while it is locked.
+                    </p>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={markAccepted} loading={markingAccepted}>
+                      <Trophy className="size-3" /> Mark accepted
+                    </Button>
+                  )
                 )}
                 {phase === 'follow_up_due' && !hasUnansweredInbound && (
                   <Button size="sm" variant="outline" onClick={() => generateDraft('followup')}>

@@ -4,7 +4,6 @@ import { createScoutStore } from '@/lib/store'
 import { safeErrorResponse } from '@/lib/errors'
 import { loadConversation, logSentMessage } from '@/lib/conversation/service'
 import type { ComposeIntent } from '@/lib/conversation/types'
-import { captureSent, findLatestSampleForLead } from '@/lib/dataset/service'
 
 export const maxDuration = 60
 
@@ -33,13 +32,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const outcome = await logSentMessage(store, id, text, intent, body.idempotencyKey ?? null)
     if (!outcome.ok) return NextResponse.json({ error: outcome.error }, { status: outcome.status ?? 400 })
-
-    // Dataset: capture SENT event (best-effort, never breaks send).
-    const sentText = typeof body.text === 'string' ? body.text : ''
-    const repId = store.getCurrentRepId()
-    const sampleId = await findLatestSampleForLead(store.getSupabaseClient(), store.organizationId, id)
-    if (sampleId) void captureSent(store.getSupabaseClient(), sampleId, sentText, repId).catch(() => {})
-
     const loaded = await loadConversation(store, id)
     return NextResponse.json(loaded?.view ?? { ok: true })
   } catch (error) {

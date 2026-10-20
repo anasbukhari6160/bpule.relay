@@ -351,9 +351,18 @@ function stabilizePassA(rawText: string, sourceUrls: string[], modelPassA: PassA
     },
   }
 
-  if (!out.person.fullName && heuristic.person.fullName) out.person.fullName = heuristic.person.fullName
-  if (!out.person.firstName && heuristic.person.firstName) out.person.firstName = heuristic.person.firstName
-  if (!out.person.title && heuristic.person.title) out.person.title = heuristic.person.title
+  // Neither the model nor the heuristic may put a greeting ("Hi,") in the
+  // name field or a sentence fragment ("I'm a freelance React developer
+  // with") in the title. An unknown identity stays blank.
+  out.person.fullName = sanitizePersonName(out.person.fullName)
+  out.person.firstName = sanitizePersonName(out.person.firstName)
+  out.person.title = sanitizePersonTitle(out.person.title)
+  if (!out.person.fullName && heuristic.person.fullName) out.person.fullName = sanitizePersonName(heuristic.person.fullName)
+  if (!out.person.firstName && heuristic.person.firstName) out.person.firstName = sanitizePersonName(heuristic.person.firstName)
+  if (!out.person.title && heuristic.person.title) out.person.title = sanitizePersonTitle(heuristic.person.title)
+  if (out.person.firstName && out.person.fullName && !out.person.fullName.toLowerCase().startsWith(out.person.firstName.toLowerCase())) {
+    out.person.firstName = out.person.fullName.split(/\s+/)[0] ?? null
+  }
   if (!out.person.seniority && heuristic.person.seniority) out.person.seniority = heuristic.person.seniority
   if (!out.person.location && heuristic.person.location) out.person.location = heuristic.person.location
   if (!out.person.linkedinUrl && heuristic.person.linkedinUrl) out.person.linkedinUrl = heuristic.person.linkedinUrl
@@ -1201,6 +1210,51 @@ const LINKEDIN_NAME_BLOCKLIST = [
   'report', 'block', 'remove', 'accept', 'decline', 'pending',
   'invitation sent', 'mutual connections', 'connections', 'connection',
 ]
+
+const GREETING_WORDS = /^(?:hi|hey|hello|dear|greetings|good\s+(?:morning|afternoon|evening|day)|hallo|hola|bonjour|salut|team|there|all|everyone|sir|madam|ma'am)$/i
+
+/**
+ * A person name is one to four name tokens. Greetings ("Hi,"), labels and
+ * sentence fragments are not names; the field stays blank instead.
+ */
+export function sanitizePersonName(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.replace(/[\s,.;:!?-]+$/u, '').replace(/^[\s,.;:!?-]+/u, '').trim()
+  if (!trimmed) return null
+  const words = trimmed.split(/\s+/)
+  if (words.length > 4) return null
+  if (words.length <= 2 && words.every((w) => GREETING_WORDS.test(w.replace(/[,.!]$/, '')))) return null
+  if (GREETING_WORDS.test(words[0]) && words.length === 1) return null
+  // A name has no sentence words in it: "I'm", "with", "looking for".
+  if (/\b(?:i'?m|i am|we are|we're|with|looking|currently|available|offering)\b/i.test(trimmed)) return null
+  if (!/^[\p{L}][\p{L}'’.-]*(?:\s+[\p{L}(")][\p{L}'’.()"-]*){0,3}$/u.test(trimmed)) return null
+  return trimmed
+}
+
+/**
+ * A title is a bounded role phrase. A first-person sentence fragment ("I'm
+ * a freelance React developer with") is reduced to the role it names
+ * ("Freelance React Developer") or dropped.
+ */
+export function sanitizePersonTitle(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  let text = value.trim().replace(/^(?:headline|title|current\s*role)\s*:\s*/i, '')
+  if (!text) return null
+  const firstPerson = text.match(/^(?:(?:hi|hey|hello)[,!]?\s*)?(?:i\s*(?:'m|am)|we\s*(?:'re|are)|i\s+work\s+as)\s+(?:an?\s+|the\s+)?(.+)$/i)
+  if (firstPerson?.[1]) {
+    text = firstPerson[1]
+      .split(/\b(?:with|who|that|and|based|currently|looking|available|from|at|for|,|\.|;|\s[-–—]\s)\b/i)[0]
+      .trim()
+    if (!text || text.split(/\s+/).length > 6) return null
+    return text.split(/\s+/).map((w) => (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')
+  }
+  // Drops anything that still reads as prose: trailing connectives or a
+  // sentence longer than a headline.
+  if (/\b(?:with|and|or|the|a|an|to|of|for|in)$/i.test(text)) text = text.replace(/\s+\b(?:with|and|or|the|a|an|to|of|for|in)$/i, '').trim()
+  if (/^(?:hi|hey|hello)\b/i.test(text)) return null
+  if (text.split(/\s+/).length > 14) return null
+  return text || null
+}
 
 function extractName(lines: string[]): string | null {
   for (const [index, line] of lines.slice(0, 8).entries()) {

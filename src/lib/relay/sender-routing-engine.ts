@@ -150,8 +150,12 @@ function scoreSenderAgainstLead(
   const risks: string[] = []
   let score = 0
 
-  const leadTerms = [...new Set(lead.rawTerms.map(norm).filter((t) => t.length > 1))]
-  const capabilityTerms = [...new Set(lead.capabilities.map(norm).filter((t) => t.length > 1))]
+  // A term is a technology or capability token, never a sentence fragment:
+  // "i am a freelance react developer with" is message text, not a skill,
+  // and must not appear in a "skill overlap" reason.
+  const isSkillToken = (t: string) => t.length > 1 && t.split(' ').length <= 4 && !/^(?:i|we|you|my|our)\b|\b(?:am|are|is|with|looking|currently)\b/.test(t)
+  const leadTerms = [...new Set(lead.rawTerms.map(norm).filter(isSkillToken))]
+  const capabilityTerms = [...new Set(lead.capabilities.map(norm).filter(isSkillToken))]
   const allTerms = [...leadTerms, ...capabilityTerms]
   const matched = new Set<string>()
 

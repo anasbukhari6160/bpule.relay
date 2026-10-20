@@ -105,6 +105,9 @@ export function stageForChannel(channel: string): MessageStage {
   }
 }
 
+import { hasUnfilledValues } from './unfilled-values'
+export { hasUnfilledValues }
+
 export function evaluateMessage(
   text: string,
   strategy: OutreachStrategy | null,
@@ -126,6 +129,14 @@ export function evaluateMessage(
     score -= stageResult.issues.length * 10
   }
 
+
+  // 0. Unfilled values. "a -month free trial with / support" is a draft
+  //    written around facts that were never extracted; it must not be
+  //    copied or logged.
+  if (hasUnfilledValues(text)) {
+    failures.push('Contains an empty value or broken placeholder (e.g. "-month", "with /", "{{...}}")')
+    score -= 50
+  }
 
   // 1. Surveillance-like opening
   if (/^(hey|hi|hello)\s+\w+,?\s*(i noticed|i saw|i came across|i was looking at|i found your)/i.test(lower)) {

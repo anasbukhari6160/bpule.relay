@@ -94,13 +94,22 @@ export async function POST(req: NextRequest) {
         ?? canonical.intelligence.opportunityTrigger
         ?? packet?.sourceFacts?.buyerRequest
         ?? 'Not specified — ask clarifying questions',
+      // The label names what the message is, never just "unknown" when the
+      // readers found something. A verified request is a buyer; a stated
+      // request that the intent model did not verify is still a request to
+      // check; a first-person freelancer or job seeker is a seller, not a
+      // buyer, however well their skills fit.
       intent: buyerIntent?.buyerIntentLevel === 'HIGH'
         ? 'Explicit buyer request (verified)'
         : buyerIntent?.buyerIntentLevel === 'MEDIUM'
           ? 'Buyer request (verified)'
-          : buyerIntent?.verifiedHiringNeed
-            ? 'Hiring employees — not a request for services'
-            : canonical.intelligence.opportunityTrigger ?? 'Unknown — needs research',
+          : packet?.sourceFacts?.candidateSeeking || packet?.sourceFacts?.sellerActivity
+            ? 'Offering services / seeking work — a seller or job seeker, not a buyer'
+            : buyerIntent?.verifiedHiringNeed
+              ? 'Hiring employees — not a request for services'
+              : packet?.sourceFacts?.buyerRequest
+                ? 'Request for services stated — verify budget and who owns the need'
+                : canonical.intelligence.opportunityTrigger ?? 'Unknown — needs research',
       fitScore: canonical.canonicalScore,
       displayScore: displayScoreForCanonical(canonical.canonicalScore),
       fitRelevance: band.label,
