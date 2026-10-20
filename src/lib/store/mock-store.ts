@@ -837,6 +837,13 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         verbatimQuote: input.verbatimQuote?.trim() || null,
         score: input.score ?? null,
         verdict: input.verdict ?? null,
+        // Canonical decision travels with the lead in demo mode too, so the
+        // lead page shows the same score the prospect page showed.
+        canonicalScore: input.canonicalScore ?? null,
+        canonicalIntelligence: input.canonicalIntelligence ?? null,
+        scoreBreakdown: input.scoreBreakdown ?? null,
+        scoreVersion: input.scoreVersion ?? null,
+        scoredAt: input.scoredAt ?? null,
         status: 'new',
         playId: input.signalType ? pickPlayForSignal(plays, input.signalType)?.id ?? null : null,
         tags: input.tags ?? ['FAKE', 'demo'],

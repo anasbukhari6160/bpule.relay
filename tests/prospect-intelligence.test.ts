@@ -378,7 +378,11 @@ describe('Prospect Scoring — Case H: Impressive but irrelevant', () => {
 describe('Connection Note Quality Gate', () => {
   const profile = makeProfile()
 
-  it('rejects "I came across your profile" opening', () => {
+  // Openers like "I came across your profile", "let's connect", praise and
+  // exclamation marks are allowed at the gate since bf4c086; the repair
+  // pass normalises "!" and emoji instead of rejecting the note.
+
+  it('allows an "I came across your profile" opening', () => {
     const result = evaluateConnectionNote({
       text: 'Hi Sarah, I came across your profile and would love to connect.',
       profile,
@@ -386,31 +390,33 @@ describe('Connection Note Quality Gate', () => {
       prospectCompany: 'ExampleCo',
       matchedProof: [],
     })
-    expect(result.passed).toBe(false)
-    expect(result.failures.some((f) => f.toLowerCase().includes('surveillance') || f.toLowerCase().includes('banned'))).toBe(true)
+    expect(result.passed).toBe(true)
   })
 
-  it('rejects excessive praise', () => {
-    const result = evaluateConnectionNote({
+  it('allows praise at the gate and normalises the exclamation mark on repair', () => {
+    const input = {
       text: 'Hi Sarah, your amazing work at ExampleCo is incredible. Would love to connect!',
       profile,
       prospectName: 'Sarah',
       prospectCompany: 'ExampleCo',
       matchedProof: [],
-    })
-    expect(result.passed).toBe(false)
-    expect(result.failures.some((f) => f.toLowerCase().includes('praise') || f.toLowerCase().includes('exclamation'))).toBe(true)
+    }
+    expect(evaluateConnectionNote(input).passed).toBe(true)
+    const repaired = validateAndRepair(input)
+    expect(repaired.text).not.toContain('!')
+    expect(repaired.text).toMatch(/Would love to connect\.$/)
   })
 
-  it('rejects generic "let\'s connect" CTA', () => {
-    const result = evaluateConnectionNote({
+  it('allows a bare "let\'s connect" CTA', () => {
+    const input = {
       text: 'Hi Sarah, let\'s connect!',
       profile,
       prospectName: 'Sarah',
       prospectCompany: 'ExampleCo',
       matchedProof: [],
-    })
-    expect(result.passed).toBe(false)
+    }
+    expect(evaluateConnectionNote(input).passed).toBe(true)
+    expect(validateAndRepair(input).text).toBe("Hi Sarah, let's connect.")
   })
 
   it('rejects sales pitch in connection note', () => {
@@ -437,16 +443,18 @@ describe('Connection Note Quality Gate', () => {
     expect(result.failures.some((f) => f.toLowerCase().includes('budget'))).toBe(true)
   })
 
-  it('rejects emojis', () => {
-    const result = evaluateConnectionNote({
+  it('strips emojis on repair even when the gate passes', () => {
+    const result = validateAndRepair({
       text: 'Hi Sarah, great to see your work 👋 Let\'s connect.',
       profile,
       prospectName: 'Sarah',
       prospectCompany: 'ExampleCo',
       matchedProof: [],
     })
-    expect(result.passed).toBe(false)
-    expect(result.failures.some((f) => f.toLowerCase().includes('emoji'))).toBe(true)
+    expect(result.passed).toBe(true)
+    expect(result.text).not.toContain('👋')
+    expect(result.text).toBe("Hi Sarah, great to see your work Let's connect.")
+    expect(result.repaired).not.toBeNull()
   })
 
   it('rejects "we" for solo sender', () => {
@@ -474,7 +482,9 @@ describe('Connection Note Quality Gate', () => {
     expect(result.withinLimit).toBe(false)
   })
 
-  it('rejects generic notes that could be sent to 100 prospects', () => {
+  it('rejects the generic "explore synergies" note on the cliché gate', () => {
+    // The "could send to 100 prospects" heuristic was dropped in bf4c086;
+    // this template still fails because "synergies" is an AI cliché.
     const result = evaluateConnectionNote({
       text: 'Hi, I came across your profile. I would love to connect and explore synergies.',
       profile,
@@ -483,7 +493,7 @@ describe('Connection Note Quality Gate', () => {
       matchedProof: [],
     })
     expect(result.passed).toBe(false)
-    expect(result.failures.some((f) => f.toLowerCase().includes('100'))).toBe(true)
+    expect(result.failures).toContain('AI cliché')
   })
 
   it('passes a well-crafted connection note', () => {

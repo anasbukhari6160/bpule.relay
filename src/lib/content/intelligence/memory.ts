@@ -50,7 +50,11 @@ export function checkMemoryForDuplicates(
     const rawSimilarity = computeSimilarity(normalized, memNorm)
     if (rawSimilarity < threshold * 0.5) continue
 
-    const decayedSimilarity = applyTimeDecay(rawSimilarity, memory.createdAt, now)
+    // A near-exact match is a repeat no matter how old it is; only looser
+    // overlaps fade with time.
+    const decayedSimilarity = rawSimilarity >= NEAR_EXACT_SIMILARITY
+      ? rawSimilarity
+      : applyTimeDecay(rawSimilarity, memory.createdAt, now)
 
     if (decayedSimilarity >= threshold) {
       similarMemories.push({
@@ -70,18 +74,25 @@ export function checkMemoryForDuplicates(
   return { isDuplicate, similarMemories, reason }
 }
 
+/** Raw similarity at or above this is treated as the same content and never decays. */
+const NEAR_EXACT_SIMILARITY = 0.9
+
+/** Memories younger than this keep full weight. */
+const DECAY_GRACE_DAYS = 30
+
 /**
  * Apply exponential time decay to a similarity score.
- * Memories decay to 50% weight at 14 days, 25% at 30 days.
+ * Full weight for the first 30 days, then a 14-day half-life.
  */
 function applyTimeDecay(similarity: number, createdAt: string | null, now: string): number {
   if (!createdAt) return similarity
 
   const ageMs = new Date(now).getTime() - new Date(createdAt).getTime()
   const ageDays = ageMs / (1000 * 60 * 60 * 24)
+  if (!Number.isFinite(ageDays) || ageDays <= DECAY_GRACE_DAYS) return similarity
 
-  // Half-life of 14 days
-  const decayFactor = Math.pow(0.5, ageDays / 14)
+  // Half-life of 14 days once past the grace window
+  const decayFactor = Math.pow(0.5, (ageDays - DECAY_GRACE_DAYS) / 14)
 
   // Floor at 0.2 — old memories still provide some signal
   const effectiveFactor = Math.max(0.2, decayFactor)

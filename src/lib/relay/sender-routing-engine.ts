@@ -157,8 +157,19 @@ function scoreSenderAgainstLead(
 
   const skillSet = new Set(sender.skills.map(norm))
   let skillHits = 0
+  // A sender skill matches a lead term when they are equal, when the skill
+  // contains the whole term as a word, or when the term contains the skill
+  // as a word AND the skill is not a shorter compound: "react" never counts
+  // as "react native", "java" never as "javascript".
+  const wordIn = (needle: string, hay: string) => new RegExp(`(^|[^a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(hay)
+  const skillMatches = (skill: string, term: string) => {
+    if (skill === term) return true
+    if (skill.length <= 2 || term.length <= 2) return false
+    if (skill.length > term.length) return wordIn(term, skill)
+    return wordIn(skill, term) && skill.split(' ').length === term.split(' ').length
+  }
   for (const t of allTerms) {
-    if (skillSet.has(t) || [...skillSet].some((s) => s.length > 2 && (s.includes(t) || t.includes(s)))) {
+    if (skillSet.has(t) || [...skillSet].some((s) => skillMatches(s, t))) {
       score += 4
       matched.add(t)
       skillHits++
@@ -210,7 +221,7 @@ function scoreSenderAgainstLead(
 
   // Accessibility risk
   if (!sender.accessibleToRep && sender.holders.length > 0) {
-    risks.push(`Not accessible — held by ${sender.holders.join(', ')}`)
+    risks.push(`Not accessible — held by ${sender.holders.map((h) => (typeof h === 'string' ? h : h.name)).join(', ')}`)
   }
 
   // Cap at 100

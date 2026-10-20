@@ -176,7 +176,9 @@ async function streamFinalDraft(
   let qualityGateReasons: string[] = []
   try {
     const { evaluateMessage, feelsSurveillance, isGeneric } = await import('@/lib/relay/message-forge')
-    const channel = input.type === 'upwork' ? 'upwork' : input.type === 'connection' ? 'connection' : 'dm'
+    // Forward the draft type as-is: evaluateMessage derives the stage gates
+    // (connection / first_dm / follow_up / reply) from the channel.
+    const channel = input.type
     const evaluation = evaluateMessage(primary.draftText, input.strategy ?? null, channel)
     const surveillance = feelsSurveillance(primary.draftText)
     const generic = isGeneric(primary.draftText, input.lead.company)

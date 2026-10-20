@@ -38,8 +38,18 @@ describe('Content Memory: duplicate detection', () => {
     const memories: ContentMemory[] = [
       { id: 'm1', organizationId: 'org1', personaId: 'p1', memoryType: 'hook_used', content: 'Shipped the caching fix today', sourceDraftId: null, sourceHistoryId: null, createdAt: '2024-01-01' },
     ]
-    const result = checkMemoryForDuplicates('Shipped the caching fix today', memories)
+    const result = checkMemoryForDuplicates('Shipped the caching fix today', memories, 0.7, { now: '2024-01-01' })
     expect(result.isDuplicate).toBe(true)
+  })
+
+  it('keeps flagging an exact duplicate regardless of age (no time decay for near-exact matches)', () => {
+    const memories: ContentMemory[] = [
+      { id: 'm1', organizationId: 'org1', personaId: 'p1', memoryType: 'hook_used', content: 'Shipped the caching fix today', sourceDraftId: null, sourceHistoryId: null, createdAt: '2024-01-01T00:00:00.000Z' },
+    ]
+    for (const now of ['2024-01-01T00:00:00.000Z', '2024-01-31T00:00:00.000Z', '2024-03-31T00:00:00.000Z']) {
+      const result = checkMemoryForDuplicates('Shipped the caching fix today', memories, 0.7, { now })
+      expect(result.isDuplicate, `exact duplicate should flag at now=${now}`).toBe(true)
+    }
   })
 
   it('allows sufficiently different content', () => {

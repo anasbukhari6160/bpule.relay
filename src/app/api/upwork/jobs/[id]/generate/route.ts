@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
+import { isDemoMode } from '@/lib/ai/config'
 import { getCurrentUser } from '@/lib/auth/current'
 import { createScoutStore } from '@/lib/store'
 import { generate } from '@/lib/ai/runtime'
 import { injectStyleCard } from '@/lib/style/inject'
 import { sanitizeDraft } from '@/lib/facts/sanitize'
+import { evaluateCoverLetter, evaluateScreeningAnswers, COVER_LETTER_WORDS } from '@/lib/upwork/application-gate'
 import { AI_TELL_PHRASES, BANNED_PHRASES } from '@/lib/writing/engine'
 import { rankProfilesForOpportunity, recommendBestProfile } from '@/lib/profile-match'
 import type { Profile } from '@/lib/domain/types'
@@ -24,7 +26,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params
-  if (!UUID_PATTERN.test(id)) {
+  // Demo-mode ids are not UUIDs; the guard protects the real store only.
+  if ((!UUID_PATTERN.test(id)) && !isDemoMode()) {
     return NextResponse.json({ error: 'Job id must be a UUID.' }, { status: 400 })
   }
 
@@ -120,7 +123,7 @@ export async function POST(
     '- Is the question at the end specific and useful?',
     '- Would a busy client stop scrolling and read this?',
     '',
-    '### WORD LIMIT: 120-180 words for the proposal body MAX. Short wins on Upwork.',
+    `### WORD LIMIT: ${COVER_LETTER_WORDS[0]}-${COVER_LETTER_WORDS[1]} words for the proposal body. Short wins on Upwork.`,
     '- Write like a human consultant, not a cover letter. Conversational, direct.',
     '- Reference your actual past projects/products by name if in your facts/proof.',
     '',
@@ -256,19 +259,40 @@ export async function POST(
     proposal = proposal.replace(re, '')
   }
 
-  // Fix double spaces
-  proposal = proposal.replace(/\s{2,}/g, ' ').trim()
+  // Collapse runs of spaces/tabs but keep paragraph breaks.
+  proposal = proposal.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
 
   // Sanitize against facts table
   const sanitized = sanitizeDraft(proposal, facts)
 
+  // Deterministic quality gate (the model's self-check is advisory only).
+  const stringsOf = (o: unknown): string[] => {
+    if (typeof o === 'string') return [o]
+    if (Array.isArray(o)) return o.flatMap(stringsOf)
+    if (o && typeof o === 'object') return Object.values(o as Record<string, unknown>).flatMap(stringsOf)
+    return []
+  }
+  const profileCtx = {
+    claimableText: [...stringsOf(profile ?? {}), ...facts.map((f) => `${f.label} ${f.value}`)],
+    proof: matched.map((m) => [m.projectSummary, (m as { reviewQuote?: string | null }).reviewQuote ?? ''].filter(Boolean).join(' ')),
+    allowedNumbers: facts.flatMap((f) => (`${f.value}`.match(/\d[\d,.]*\s*(?:%|k|x|\+)?/gi) ?? []).map((n) => n.replace(/\s+/g, '').toLowerCase())),
+  }
+  const jobCtx = { title: job.title, description: job.description, skills: job.requiredSkills ?? [], screeningQuestions }
+  const letterGate = evaluateCoverLetter(sanitized.text, jobCtx, profileCtx)
+  const answersGate = evaluateScreeningAnswers(best.questionAnswers ?? [], jobCtx, profileCtx, letterGate.text)
+
   return NextResponse.json({
     draft: {
-      text: sanitized.text,
-      questionAnswers: best.questionAnswers ?? [],
+      text: letterGate.text,
+      questionAnswers: answersGate.answers.map((a) => ({ question: a.question, answer: a.answer })),
       selfCheckPassed: best.self_check_passed,
       selfCheckNote: best.self_check_note,
       qualityScore: best.quality_score ?? 5,
+      quality: {
+        passed: letterGate.passed && answersGate.passed,
+        coverLetter: { passed: letterGate.passed, wordCount: letterGate.wordCount, jobReferences: letterGate.jobReferences, proofUsed: letterGate.proofUsed, issues: letterGate.issues },
+        screening: { passed: answersGate.passed, issues: answersGate.issues, answers: answersGate.answers.map((a) => ({ question: a.question, type: a.type, wordCount: a.wordCount, issues: a.issues })) },
+      },
       matchedProof: matchedProof ? { id: matchedProof.id, projectSummary: matchedProof.projectSummary } : null,
     },
     generationMode,

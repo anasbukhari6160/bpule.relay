@@ -51,6 +51,8 @@ export interface UpworkJobScore {
   reasons: string[]
   watchOut: string[]
   suspicious: string[]
+  /** A disqualifying fact bounded the score below the dimension sum. */
+  cap: { value: number; reason: string } | null
   facts: UpworkJobFacts
 }
 
@@ -179,6 +181,7 @@ export function scoreUpworkFacts(input: UpworkJobFacts, opts: Omit<UpworkScoreIn
   if (c.rating !== null) { cq += c.rating >= 4.8 ? 0.1 : c.rating >= 4.5 ? 0.05 : c.rating < 4 ? -0.1 : 0; bits.push(`${c.rating}★`) }
   if (c.avgHourlyPaid !== null && c.avgHourlyPaid >= 30) { cq += 0.05; bits.push(`pays ~$${c.avgHourlyPaid}/hr`) }
   if (c.paymentVerified === false) { cq = Math.min(cq, 0.3); watchOut.push('Payment method not verified') }
+  if (c.paymentVerified === false && facts.rate.type === 'fixed' && (facts.rate.fixedBudget ?? 0) >= 20000) watchOut.push('Large budget from an unverified client — confirm before investing time')
   if (c.isNew && c.paymentVerified === null) watchOut.push('New client with no history')
   if (c.hireRate !== null && c.hireRate < 30 && (c.jobsPosted ?? 0) >= 5) watchOut.push(`Low hire rate (${c.hireRate}%) — posts often, hires rarely`)
   if (cq >= 0.75) reasons.push(`Established client: ${bits.slice(0, 3).join(', ')}`)
@@ -240,8 +243,25 @@ export function scoreUpworkFacts(input: UpworkJobFacts, opts: Omit<UpworkScoreIn
   if (facts.completeness.score < 50) watchOut.push('Paste is incomplete — include the client section and rate')
 
   let score = Math.round(dims.reduce((s, d) => s + d.contribution, 0))
-  // Hard caps: a suspicious job never reaches apply.
-  if (facts.suspicious.length > 0) score = Math.min(score, 34)
+  // Hard caps — a single disqualifying fact bounds the whole score, so a
+  // strong client or low competition can never carry a $50 job to "apply".
+  const hardCaps: Array<[boolean, number, string]> = [
+    [facts.suspicious.length > 0, 34, 'suspicious signals'],
+    [facts.rate.type === 'fixed' && (facts.rate.fixedBudget ?? 0) < 300, 40, 'fixed budget under $300'],
+    [facts.rate.type === 'hourly' && (facts.rate.hourlyMax ?? 0) < 15, 40, 'hourly rate under $15'],
+    [facts.rate.type === 'hourly' && (facts.rate.hourlyMax ?? 0) < 25, 60, 'hourly rate under $25'],
+    [facts.rate.type === 'fixed' && (facts.rate.fixedBudget ?? 0) < 1000, 62, 'fixed budget under $1,000'],
+    [facts.scope.vague, 45, 'vague scope'],
+    [offStack.length > 0 && overlap.length === 0, 50, 'off-stack work'],
+    [required.length > 0 && overlap.length === 0, 60, 'no stack overlap'],
+    [c.paymentVerified === false, 60, 'payment not verified'],
+    [c.hireRate !== null && c.hireRate < 20 && (c.jobsPosted ?? 0) >= 10, 60, 'very low hire rate'],
+    [facts.posted.hoursAgo !== null && facts.posted.hoursAgo > 24 * 14, 65, 'posted over two weeks ago'],
+    [facts.rate.type === 'unknown', 72, 'no rate or budget'],
+    [(facts.proposals.range?.[0] ?? 0) >= 50, 65, '50+ proposals'],
+  ]
+  let capApplied: UpworkJobScore['cap'] = null
+  for (const [cond, cap, why] of hardCaps) if (cond && score > cap) { score = cap; capApplied = { value: cap, reason: why }; if (!watchOut.some((w) => w.includes(why))) watchOut.push(`Capped at ${cap}: ${why}`) }
   score = Math.max(0, Math.min(100, score))
   const band = qualifyCanonicalScore(score)
   return {
@@ -254,6 +274,7 @@ export function scoreUpworkFacts(input: UpworkJobFacts, opts: Omit<UpworkScoreIn
     reasons: [...new Set(reasons)].slice(0, 6),
     watchOut: [...new Set(watchOut)].slice(0, 8),
     suspicious: facts.suspicious,
+    cap: capApplied,
     facts,
   }
 }

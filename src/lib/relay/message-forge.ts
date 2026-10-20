@@ -91,11 +91,25 @@ export function generateStrategyCandidates(
  * Evaluate a generated message against hard quality gates.
  * Returns pass/fail with specific failure reasons.
  */
+export function stageForChannel(channel: string): MessageStage {
+  switch (channel.toLowerCase()) {
+    case 'connection':
+      return 'connection'
+    case 'followup':
+    case 'follow_up':
+      return 'follow_up'
+    case 'reply':
+      return 'reply'
+    default:
+      return 'first_dm'
+  }
+}
+
 export function evaluateMessage(
   text: string,
   strategy: OutreachStrategy | null,
   channel: string,
-  stage: MessageStage = 'first_dm',
+  stage?: MessageStage,
   stageContext: Parameters<typeof evaluateMessageStage>[2] = {},
 ): { passed: boolean; score: number; reasons: string[] } {
   const failures: string[] = []
@@ -103,9 +117,12 @@ export function evaluateMessage(
 
   const lower = text.toLowerCase()
 
-  const stageResult = evaluateMessageStage(text, stage, stageContext)
+  // The stage gates differ per message type; when the caller does not say,
+  // read it off the channel so a follow-up is never judged as a first DM.
+  const resolvedStage = stage ?? stageForChannel(channel)
+  const stageResult = evaluateMessageStage(text, resolvedStage, stageContext)
   if (!stageResult.passed) {
-    failures.push(...stageResult.issues.map(i => `[${stage}] ${i}`))
+    failures.push(...stageResult.issues.map(i => `[${resolvedStage}] ${i}`))
     score -= stageResult.issues.length * 10
   }
 

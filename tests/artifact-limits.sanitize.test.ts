@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { sanitizeDraft } from '@/lib/facts/sanitize'
 import { enforceArtifactLimit, countFor } from '@/lib/relay/artifact-limits'
-import { evaluateMessage } from '@/lib/relay/message-forge'
+import { evaluateMessage, stageForChannel } from '@/lib/relay/message-forge'
 
 describe('Bug 3: emoji stripping in sanitizeDraft', () => {
   it('strips emojis and reports hadEmoji', () => {
@@ -65,10 +65,30 @@ describe('Bug 4: evaluateMessage enforces all five types', () => {
   })
 
   it('accepts within-limit drafts across types', () => {
-    expect(evaluateMessage('Hey, want to chat?', null, 'dm').passed).toBe(true)
-    expect(evaluateMessage('Short note.', null, 'connection').passed).toBe(true)
-    expect(evaluateMessage('Short note.', null, 'upwork').passed).toBe(true)
+    // Each channel is judged by its own stage gates: a first DM must be at
+    // least 40 chars, a connection note at least 15.
+    const dm = 'Hey Sarah, is the Rails migration at Nomadz still the live constraint this quarter?'
+    expect(evaluateMessage(dm, null, 'dm').passed).toBe(true)
+    expect(evaluateMessage('Hi Sarah, the Rails work at Nomadz stood out.', null, 'connection').passed).toBe(true)
+    expect(evaluateMessage(dm, null, 'upwork').passed).toBe(true)
     expect(evaluateMessage('Short note.', null, 'followup').passed).toBe(true)
     expect(evaluateMessage('Short note.', null, 'reply').passed).toBe(true)
+  })
+
+  it('maps each channel to its message stage when no stage is given', () => {
+    expect(stageForChannel('dm')).toBe('first_dm')
+    expect(stageForChannel('upwork')).toBe('first_dm')
+    expect(stageForChannel('connection')).toBe('connection')
+    expect(stageForChannel('followup')).toBe('follow_up')
+    expect(stageForChannel('reply')).toBe('reply')
+
+    // The inferred stage shows up as the prefix on stage-gate failures.
+    expect(evaluateMessage('Hi', null, 'dm').reasons.some((r) => r.startsWith('[first_dm]'))).toBe(true)
+    expect(evaluateMessage('Hi', null, 'connection').reasons.some((r) => r.startsWith('[connection]'))).toBe(true)
+    expect(evaluateMessage('Just following up on my last note here.', null, 'followup').reasons.some((r) => r.startsWith('[follow_up]'))).toBe(true)
+    expect(evaluateMessage('Hi', null, 'reply').reasons.some((r) => r.startsWith('[reply]'))).toBe(true)
+
+    // An explicit stage still wins over the channel.
+    expect(evaluateMessage('Hi', null, 'dm', 'reply').reasons.some((r) => r.startsWith('[reply]'))).toBe(true)
   })
 })

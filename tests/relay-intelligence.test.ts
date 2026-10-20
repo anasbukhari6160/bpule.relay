@@ -332,13 +332,20 @@ describe('Message Forge Quality Gate', () => {
     expect(feelsSurveillance('Congrats on the Series A!')).toBe(true)
   })
 
-  it('repairs surveillance openings', () => {
+  it('repairs surveillance openings when enough of the message survives', () => {
     const repaired = repairMessage(
-      'Hey Sarah, I noticed Nomadz just closed a round.',
+      'Hey Sarah, I noticed the Solana integration at Nomadz is still the live constraint on the roadmap this quarter.',
       ['Opens with surveillance language'],
       strategy,
     )
     expect(repaired).not.toMatch(/i noticed/i)
+    expect(repaired).toMatch(/Solana integration at Nomadz/)
+  })
+
+  it('leaves a short surveillance opener unchanged rather than gutting it (< 8 words would remain)', () => {
+    const original = 'Hey Sarah, I noticed Nomadz just closed a round.'
+    const repaired = repairMessage(original, ['Opens with surveillance language'], strategy)
+    expect(repaired).toBe(original)
   })
 
   it('repairs generic CTAs', () => {

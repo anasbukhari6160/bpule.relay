@@ -174,7 +174,10 @@ function collapseLayout(text: string): { text: string; multiline: boolean } {
 
 function parseRate(raw: string): UpworkJobFacts['rate'] & { rejected: UpworkRejectedSignal[] } {
   const rejected: UpworkRejectedSignal[] = []
-  const { text, multiline } = collapseLayout(raw)
+  // The job's own rate is above the client block; "$38.50/hr avg hourly rate
+  // paid" belongs to the client and must never become the job rate.
+  const jobOnly = raw.replace(/about\s+the\s+client[\s\S]*$/i, '').replace(/\$\s*[\d,.]+\s*\/\s*hr\s+avg[^\n]*/gi, '')
+  const { text, multiline } = collapseLayout(jobOnly)
   const sane = (n: number, lo: number, hi: number) => Number.isFinite(n) && n >= lo && n <= hi
 
   // Hourly range, marker after: "$25 - $60 Hourly", "$25.00-$60.00/hr"
@@ -187,18 +190,15 @@ function parseRate(raw: string): UpworkJobFacts['rate'] & { rejected: UpworkReje
   const fixedAfter = new RegExp(String.raw`\$\s*${NUM}\s*(?:\n\s*)?${FIXED_MARK}`, 'i')
   const fixedBefore = new RegExp(String.raw`${FIXED_MARK}\s*[:\-–]?\s*(?:\n\s*)?\$\s*${NUM}`, 'i')
 
-  let m = text.match(hrRangeAfter) ?? text.match(hrRangeBefore)
-  if (m) {
-    const a = money(m[1], m[2]); const b = money(m[3], m[4])
-    if (sane(a, 3, 500) && sane(b, 3, 1000) && b >= a) return { type: 'hourly', hourlyMin: a, hourlyMax: b, fixedBudget: null, monthlyBudget: null, evidence: m[0].trim(), multiline, rejected }
-    rejected.push({ signal: 'hourly_rate', value: m[0].trim(), reason: 'Out of a plausible hourly range' })
+  // Every hourly range in the text, in order; the first plausible one wins.
+  for (const re of [hrRangeAfter, hrRangeBefore]) {
+    for (const m of text.matchAll(new RegExp(re.source, 'gi'))) {
+      const a = money(m[1], m[2]); const b = money(m[3], m[4])
+      if (sane(a, 3, 500) && sane(b, 3, 1000) && b >= a) return { type: 'hourly', hourlyMin: a, hourlyMax: b, fixedBudget: null, monthlyBudget: null, evidence: m[0].trim(), multiline, rejected }
+      rejected.push({ signal: 'hourly_rate', value: m[0].trim(), reason: 'Out of a plausible hourly range' })
+    }
   }
-  m = text.match(hrSingleAfter) ?? text.match(hrSingleBefore)
-  if (m) {
-    const a = money(m[1], m[2])
-    if (sane(a, 3, 500)) return { type: 'hourly', hourlyMin: a, hourlyMax: a, fixedBudget: null, monthlyBudget: null, evidence: m[0].trim(), multiline, rejected }
-  }
-  m = text.match(monthly)
+  let m = text.match(monthly)
   if (m) {
     const a = money(m[1], m[2])
     if (sane(a, 100, 100000)) return { type: 'monthly', hourlyMin: null, hourlyMax: null, fixedBudget: null, monthlyBudget: a, evidence: m[0].trim(), multiline, rejected }
@@ -207,6 +207,11 @@ function parseRate(raw: string): UpworkJobFacts['rate'] & { rejected: UpworkReje
   if (m) {
     const a = money(m[1], m[2])
     if (sane(a, 20, 5000000)) return { type: 'fixed', hourlyMin: null, hourlyMax: null, fixedBudget: a, monthlyBudget: null, evidence: m[0].trim(), multiline, rejected }
+  }
+  m = text.match(hrSingleAfter) ?? text.match(hrSingleBefore)
+  if (m) {
+    const a = money(m[1], m[2])
+    if (sane(a, 3, 500)) return { type: 'hourly', hourlyMin: a, hourlyMax: a, fixedBudget: null, monthlyBudget: null, evidence: m[0].trim(), multiline, rejected }
   }
   // A lone "$X" with no marker is NOT credited as a budget — it could be a
   // product price, a revenue figure or a bonus mention.
@@ -255,8 +260,8 @@ function parseExperience(text: string): UpworkJobFacts['experience'] {
 }
 
 function parseProposals(text: string): UpworkJobFacts['proposals'] {
-  const m = text.match(/\bproposals?\s*:?\s*\n?\s*(less\s+than\s+(\d+)|(\d+)\s*(?:to|-|–)\s*(\d+)|(\d+)\s*\+|(\d+))\b/i)
-    ?? text.match(/\b(less\s+than\s+(\d+)|(\d+)\s*(?:to|-|–)\s*(\d+)|(\d+)\s*\+)\s+proposals?\b/i)
+  const m = text.match(/\bproposals\s*:?\s*\n?\s*(less\s+than\s+(\d+)|(\d+)\s*(?:to|-|–)\s*(\d+)|(\d+)\s*\+|(\d+))(?!\d)/i)
+    ?? text.match(/\b(less\s+than\s+(\d+)|(\d+)\s*(?:to|-|–)\s*(\d+)|(\d+)\s*\+)\s+proposals\b/i)
   if (!m) return { count: null, range: null, evidence: null }
   if (m[2]) return { count: Number(m[2]) / 2, range: [0, Number(m[2])], evidence: m[0].trim() }
   if (m[3] && m[4]) return { count: (Number(m[3]) + Number(m[4])) / 2, range: [Number(m[3]), Number(m[4])], evidence: m[0].trim() }
@@ -319,7 +324,7 @@ function parseScreeningQuestions(text: string): string[] {
   const out: string[] = []
   const section = text.match(/(?:screening\s+questions?|you\s+will\s+be\s+asked\s+to\s+answer\s+the\s+following\s+questions?[^\n]*|questions?\s+to\s+answer\s+in\s+your\s+proposal)[^\n]*\n([\s\S]{0,2000}?)(?:\n\s*\n\s*\n|\n\s*(?:about\s+the\s+client|activity\s+on\s+this\s+job|skills\s+and\s+expertise)|$)/i)
   const lines = (section?.[1] ?? '').split('\n').map((l) => l.replace(/^\s*(?:\d+[.)]|[-•*])\s*/, '').trim()).filter((l) => l.length > 8)
-  for (const l of lines) if (l.endsWith('?') || /^(?:describe|explain|share|tell\s+us|provide|include|what|how|which|why|have\s+you|do\s+you|are\s+you|list)\b/i.test(l)) out.push(l)
+  for (const l of lines) if (l.endsWith('?') || /^(?:describe|explain|share|tell\s+us|provide|include|give|walk\s+(?:us|me)|outline|summari[sz]e|what|how|which|why|have\s+you|do\s+you|are\s+you|can\s+you|list)\b/i.test(l)) out.push(l)
   if (out.length === 0) {
     for (const l of text.split('\n').map((s) => s.trim())) if (/^(?:\d+[.)]\s*)?(?:what|how|which|why|have\s+you|do\s+you|are\s+you|can\s+you|describe)\b[^?\n]{8,160}\?$/i.test(l)) out.push(l.replace(/^\d+[.)]\s*/, ''))
   }
@@ -370,7 +375,6 @@ function parseSuspicious(text: string, rate: UpworkJobFacts['rate'], client: Upw
   if (/\b(?:guaranteed\s+(?:income|returns|profit)|earn\s+\$\d[\d,]*\s*(?:per|a)\s*(?:day|week)|investment\s+opportunity|crypto\s+(?:investment|trading\s+bot\s+guaranteed))\b/i.test(text)) out.push('Too-good-to-be-true earnings claim')
   if (/\b(?:install\s+(?:our|this)\s+(?:app|software)\s+(?:on\s+your|first)|download\s+(?:the\s+)?(?:apk|exe)\b|remote\s+access\s+to\s+your)\b/i.test(text)) out.push('Asks to install software or grant remote access')
   if (rate.type === 'hourly' && (rate.hourlyMax ?? 0) >= 150 && experience.level === 'entry') out.push('Very high hourly rate for an entry-level post')
-  if (rate.type === 'fixed' && (rate.fixedBudget ?? 0) >= 20000 && client.isNew && client.paymentVerified === false) out.push('Large budget from an unverified new client')
   if (/\b(?:data\s+entry|typing|copy\s+paste)\b/i.test(text) && rate.type === 'hourly' && (rate.hourlyMax ?? 0) >= 50) out.push('Trivial task with an implausible rate')
   return out
 }
@@ -427,7 +431,7 @@ export function readUpworkJobFacts(rawText: string): UpworkJobFacts {
 
   return {
     version: UPWORK_FACTS_VERSION,
-    language: detectSourceLanguage(text),
+    language: detectSourceLanguage(descriptionText || text),
     title: titleOf(text),
     rate: { type: rate.type, hourlyMin: rate.hourlyMin, hourlyMax: rate.hourlyMax, fixedBudget: rate.fixedBudget, monthlyBudget: rate.monthlyBudget, evidence: rate.evidence, multiline: rate.multiline },
     duration: parseDuration(text),

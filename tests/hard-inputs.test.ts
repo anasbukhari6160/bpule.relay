@@ -85,7 +85,8 @@ describe('Hard Input 2: Already discussed (duplicate)', () => {
       { id: 'm3', organizationId: 'org1', personaId: 'persona1', memoryType: 'topic_covered', content: 'production issue that turned out to be a configuration problem', sourceDraftId: 'draft-debug', sourceHistoryId: null, createdAt: '2024-12-01' },
       { id: 'm4', organizationId: 'org1', personaId: 'persona1', memoryType: 'hook_used', content: 'the app was reading old environment variables', sourceDraftId: 'draft-debug', sourceHistoryId: null, createdAt: '2024-12-01' },
     ]
-    const dupCheck = checkMemoryForDuplicates(input, memoriesWithStory, 0.5)
+    // Pin "now" to the fixture date so time decay cannot age this out.
+    const dupCheck = checkMemoryForDuplicates(input, memoriesWithStory, 0.5, { now: '2024-12-01' })
     expect(dupCheck.isDuplicate).toBe(true)
   })
 
@@ -261,7 +262,8 @@ describe('Hard Input 8: Cross-session (no recycling)', () => {
       ...baseMemories,
       { id: 'm3', organizationId: 'org1', personaId: 'persona1', memoryType: 'hook_used', content: 'lost a few hours debugging a deployment that was not actually broken', sourceDraftId: 'draft-debug', sourceHistoryId: null, createdAt: '2024-12-01' },
     ]
-    const dupCheck = checkMemoryForDuplicates(debuggingStory, memoriesWithStory, 0.6)
+    // Pin "now" to the fixture date so time decay cannot age this out.
+    const dupCheck = checkMemoryForDuplicates(debuggingStory, memoriesWithStory, 0.6, { now: '2024-12-01' })
     expect(dupCheck.isDuplicate).toBe(true)
   })
 

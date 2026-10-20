@@ -718,8 +718,9 @@ export function evaluateMessageStage(
     }
   }
 
-  // Detect "Hi John —" pattern (em dash after greeting+name)
-  if (/^(hi|hey|hello)\s+\w+\s*[—–-]\s*/i.test(text)) {
+  // Detect "Hi John —" pattern (em dash after greeting+name). A plain hyphen
+  // only counts with whitespace on both sides, so "Hi Anne-Marie," is fine.
+  if (/^(hi|hey|hello)\s+\w+(?:\s*[—–]\s*|\s+-\s+)/i.test(text)) {
     issues.push('Em dash after name — use comma: "Hi John,"')
   }
 

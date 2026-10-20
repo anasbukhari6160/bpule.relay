@@ -93,11 +93,21 @@ describe('Vertical Integration: Full Flow', () => {
     expect(strategy.messageGoal).toContain('reply')
 
     // 8. Evaluate a draft message
-    const testDraft = `Hey Sarah - is the Solana integration at Nomadz still the live constraint, or has that already moved?`
+    const testDraft = `Hey Sarah, is the Solana integration at Nomadz still the live constraint, or has that already moved?`
     const evaluation = evaluateMessage(testDraft, strategy, 'dm')
     expect(evaluation.passed).toBe(true)
     expect(isGeneric(testDraft, 'Nomadz')).toBe(false)
     expect(feelsSurveillance(testDraft)).toBe(false)
+
+    // A hyphenated first name is not an em-dash-after-name pattern
+    const hyphenatedDraft = `Hi Anne-Marie, is the Solana integration at Nomadz still the live constraint, or has that already moved?`
+    const hyphenatedEvaluation = evaluateMessage(hyphenatedDraft, strategy, 'dm')
+    expect(hyphenatedEvaluation.reasons.filter((r) => /em dash/i.test(r))).toEqual([])
+    expect(hyphenatedEvaluation.passed).toBe(true)
+
+    // A real spaced dash after the name is still flagged
+    const dashedDraft = `Hey Sarah - is the Solana integration at Nomadz still the live constraint, or has that already moved?`
+    expect(evaluateMessage(dashedDraft, strategy, 'dm').reasons.some((r) => /em dash/i.test(r))).toBe(true)
 
     // 9. Save draft
     const draft = await store.saveDraft({

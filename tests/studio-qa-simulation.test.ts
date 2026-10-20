@@ -153,9 +153,9 @@ describe('QA 2: Anti-repetition — content memory', () => {
 
   it('buildMemoryPromptBlock produces actionable prompt text', () => {
     const block = buildMemoryPromptBlock(existingMemories)
-    expect(block).toContain('RECENT CONTENT MEMORY')
+    expect(block).toMatch(/CONTENT MEMORY/)
     expect(block).toContain('kubernetes pod restart loops')
-    expect(block).toContain('do not repeat')
+    expect(block).toMatch(/avoid repeating|do not repeat/i)
   })
 
   it('extractMemoriesFromDraft captures topic and hook', () => {

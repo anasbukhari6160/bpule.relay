@@ -31,8 +31,9 @@ const CORPUS: CorpusTest[] = [
   { message: "what tech stack do you use?", expectedIntent: "question", expectedClassification: "REPLY_NOW", expectedAction: "REPLY_NOW" },
   { message: "do you have experience with AI?", expectedIntent: "question", expectedClassification: "REPLY_NOW", expectedAction: "REPLY_NOW" },
 
-  // Objections — classifier correctly identifies as rejection (NEGATIVE)
-  { message: "too expensive for us right now", expectedIntent: "not_interested", expectedClassification: "CLOSED", expectedAction: "CLOSED" },
+  // Objections — a price push-back is an objection to handle, not a rejection
+  { message: "too expensive for us right now", expectedIntent: "neutral", expectedClassification: "NEUTRAL", expectedAction: "REPLY_NOW" },
+  // "we already have a team" is a rejection (NEGATIVE)
   { message: "we already have a team for this", expectedIntent: "not_interested", expectedClassification: "CLOSED", expectedAction: "CLOSED" },
   // Deferred — classifier correctly identifies, live opportunity returns WAIT
   { message: "need to think about it", expectedIntent: "not_now", expectedClassification: "DEFERRED", expectedAction: "WAIT" },

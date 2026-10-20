@@ -92,8 +92,8 @@ const AI_CLICHES_CONNECTION = [
 // and a negative-capacity outcome (strain/bottleneck/stretch resources).
 const UNSUPPORTED_PROSPECT_PAIN = [
   /\bshipping\b.{0,40}\blagg/i,
-  /\broadmap\b.{0,40}\b(?:strain|stretch)/i,
-  /\b(?:strain|stretch)\w*.{0,40}\broadmap\b/i,
+  /\broadmaps?\b.{0,40}\b(?:strain|stretch)/i,
+  /\b(?:strain|stretch)\w*.{0,40}\broadmaps?\b/i,
   /\bengineering bottleneck/i,
   /\bresource shortage/i,
   /\bdevelopment capacity/i,
@@ -110,6 +110,31 @@ const GENERALIZED_PAIN_CLAIMS = [
   /\brapid\s+growth\s+can\s+stretch\b/i,
   /\b(?:companies|founders|teams)\s+(?:at\s+your\s+stage\s+)?(?:often|usually|typically)\s+(?:struggle|need|lack|run\s+into)\b/i,
 ]
+
+// Hard spam gates — always wrong in a connection note. Each group carries its
+// own label so the repair pass can target exactly what tripped.
+const SALES_PITCH = /\b(i can help|we can help you|let me help|happy to help you (?:ship|build|grow|scale))\b/i
+const AI_CLICHE = /\b(game[- ]?chang|revolutioni[sz]|cutting[- ]?edge|leverage (?:our|my) expertise|synerg|passionate about|thrilled to|excited to|delighted to)/i
+const FAKE_FAMILIARITY = /\b(i have been following|i have been watching|big fan of your)\b/i
+const SERVICE_DESCRIPTION = /\b(we can help|our team|we have|we are a|our (?:\w+\s+){0,2}expertise)\b/i
+
+// Inferring spending power from a funding event. Scoped to the inference
+// itself so "cut cloud spend" or "budget-friendly" in the sender's own
+// context stays clean.
+const FUNDING_INFERENCE = [
+  /\b(gives?|gave)\s+(you|them|the\s+team)\s+(some\s+)?budget\b/i,
+  /\bbudget\s+to\s+spend\b/i,
+  /\bwith\s+that\s+(budget|funding|raise)\b/i,
+  /\bnow\s+that\s+you.*(?:raised|closed|funded)\b/i,
+  /\byour\s+(?:series\s*[abc]|funding|raise)\s+(?:gives?|means|allows?)\b/i,
+  /\bjust\s+closed\s+(?:a\s+)?(?:round|series|funding)\b.{0,40}\b(?:budget|spend|afford|invest)\b/i,
+  /\b(?:raised|closed)\s+(?:a\s+)?(?:round|series|funding)\b.{0,40}\b(?:budget|spend|afford|invest)\b/i,
+  /\bfresh\s+capital\b.{0,40}\b(?:budget|spend|afford|invest)\b/i,
+  /\bafford\s+(?:to\s+(?:hire|build|ship|spend))\b/i,
+  /\bspend\s+(?:some\s+)?(?:of\s+)?(?:that|your)\s+(?:budget|funding|raise)\b/i,
+]
+
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu
 
 export interface ConnectionNoteInput {
   text: string
@@ -150,21 +175,23 @@ export function evaluateConnectionNote(input: ConnectionNoteInput): ConnectionNo
     }
   }
 
-  // 4. Hard spam gates — always wrong in connection notes
-  const spamPatterns = [
-    /\b(i can help you|we can help you|let me help you|happy to help you (ship|build|grow|scale))\b/i,
-    /\b(game[-]?chang|revolutioniz|cutting[-]?edge|leverage (our|my) expertise|synerg|passionate about|thrilled to|excited to|delighted to)\b/i,
-    /\b(i have been following|i have been watching|big fan of your)\b/i,
-    /\b(we can help|our team|we have|we are a|our expertise)\b/i,
-  ]
-  for (const pattern of spamPatterns) {
-    if (pattern.test(lower)) {
-      failures.push('Contains spam-like language')
-      break
-    }
+  // 4. Generalized pain claims — a business truism dressed as a diagnosis
+  if (GENERALIZED_PAIN_CLAIMS.some((p) => p.test(lower))) {
+    failures.push('Generalized pain claim')
   }
 
-  // 5. Sender mismatch — claims experience without proof
+  // 5. Hard spam gates — always wrong in connection notes
+  if (SALES_PITCH.test(lower)) failures.push('Sales pitch')
+  if (AI_CLICHE.test(lower)) failures.push('AI cliché')
+  if (FAKE_FAMILIARITY.test(lower)) failures.push('Fake familiarity')
+  if (SERVICE_DESCRIPTION.test(lower)) failures.push('Service description ("we"/"our" language for a solo sender)')
+
+  // 6. Funding event read as spending power
+  if (FUNDING_INFERENCE.some((p) => p.test(lower))) {
+    failures.push('Assumes funding = budget')
+  }
+
+  // 7. Sender mismatch — claims experience without proof
   if (input.profile && input.matchedProof.length === 0) {
     if (/\b(i built|i helped|i worked on|my experience with)\b/i.test(lower)) {
       failures.push('Claims experience without verified proof match')
@@ -217,10 +244,10 @@ export function repairConnectionNote(text: string, failures: string[]): string {
     repaired = repaired.replace(/\bpassionate about\b/gi, '')
     repaired = repaired.replace(/\bthrilled to\b/gi, '')
     repaired = repaired.replace(/\bhonored to\b/gi, '')
-    repaired = repaired.replace(/\bexcited to reach out\b/gi, '')
+    repaired = repaired.replace(/\b(?:excited|delighted) to\b/gi, '')
   }
 
-  if (failures.some((f) => f.includes('fake familiarity'))) {
+  if (failures.some((f) => f.toLowerCase().includes('fake familiarity'))) {
     repaired = repaired.replace(/\bi have been following\b/gi, '')
     repaired = repaired.replace(/\bi have been watching\b/gi, '')
     repaired = repaired.replace(/\bbig fan of your\b/gi, '')
@@ -230,6 +257,15 @@ export function repairConnectionNote(text: string, failures: string[]): string {
     repaired = repaired.replace(/\bwe (?:build|ship|deliver|help)\b/gi, '')
     repaired = repaired.replace(/\bi (?:build|ship|deliver|help)\b/gi, '')
     repaired = repaired.replace(/\bour (?:work|focus|practice)\b/gi, '')
+    repaired = repaired.replace(/\b(?:with )?our (?:\w+\s+){0,2}expertise\b/gi, '')
+  }
+
+  if (failures.some((f) => f.includes('Generalized pain claim'))) {
+    // Drop the whole sentence — a truism has no salvageable prospect fact.
+    repaired = repaired
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => !GENERALIZED_PAIN_CLAIMS.some((p) => p.test(sentence)))
+      .join(' ')
   }
 
   if (failures.some((f) => f.includes('Manufactured personalization'))) {
@@ -288,7 +324,7 @@ export function repairConnectionNote(text: string, failures: string[]): string {
 
   repaired = repaired.replace(/!/g, '.')
 
-  repaired = repaired.replace(/[\u{1F300}-\u{1F9FF}]/gu, '')
+  repaired = repaired.replace(EMOJI_RE, '')
 
   // double spaces, double periods, dangling commas before periods,
   // orphaned sentence fragments ("word. ."), leading punctuation.
@@ -489,7 +525,9 @@ export function humanizeConnectionNote(text: string): string {
  * Validate character count and auto-repair if needed.
  */
 export function validateAndRepair(input: ConnectionNoteInput): ConnectionNoteResult {
-  const cleaned = humanizeConnectionNote(input.text)
+  // Emoji and "!" never ship, whether or not the gates trip. humanize turns
+  // "!" into "."; the emoji strip happens here so it runs on every path.
+  const cleaned = humanizeConnectionNote(input.text.replace(EMOJI_RE, ''))
   let result = evaluateConnectionNote({ ...input, text: cleaned })
 
   if (!result.passed) {

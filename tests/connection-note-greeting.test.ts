@@ -78,7 +78,11 @@ describe('validateAndRepair - greeting normalization', () => {
     expect(result.passed).toBe(true)
   })
 
-  it('repairs surveillance opening', () => {
+  // "I came across", "I noticed", questions and discovery language are
+  // allowed since bf4c086 — the gate was rejecting good notes and forcing
+  // generic fallbacks. These assert the relaxed behaviour.
+
+  it('leaves an "I came across your profile" opener untouched', () => {
     const result = validateAndRepair({
       text: 'Hi Sarah, I came across your profile and would love to connect.',
       profile: null,
@@ -86,25 +90,27 @@ describe('validateAndRepair - greeting normalization', () => {
       prospectCompany: 'Acme',
       matchedProof: [],
     })
-    // After repair, the surveillance opening is removed
     expect(result.passed).toBe(true)
-    expect(result.repaired).not.toBeNull()
-    expect(result.text.toLowerCase()).not.toContain('came across')
+    expect(result.repaired).toBeNull()
+    expect(result.text).toBe('Hi Sarah, I came across your profile and would love to connect.')
   })
 
-  it('rejects questions in connection notes', () => {
-    const result = evaluateConnectionNote({
+  it('allows a question at the gate and turns "?" into a period on repair', () => {
+    const input = {
       text: 'Hi Sarah, curious about how you are scaling the team?',
       profile: null,
       prospectName: 'Sarah Chen',
       prospectCompany: 'Acme',
       matchedProof: [],
-    })
-    expect(result.passed).toBe(false)
-    expect(result.failures.some((f) => f.toLowerCase().includes('question'))).toBe(true)
+    }
+    expect(evaluateConnectionNote(input).passed).toBe(true)
+    const repaired = validateAndRepair(input)
+    expect(repaired.passed).toBe(true)
+    expect(repaired.text).not.toContain('?')
+    expect(repaired.text).toMatch(/scaling the team\.$/)
   })
 
-  it('rejects manufactured personalization', () => {
+  it('allows "would love to learn more" personalization', () => {
     const result = evaluateConnectionNote({
       text: 'Hi Sarah, would love to learn more about your work at Acme.',
       profile: null,
@@ -112,8 +118,41 @@ describe('validateAndRepair - greeting normalization', () => {
       prospectCompany: 'Acme',
       matchedProof: [],
     })
+    expect(result.passed).toBe(true)
+  })
+
+  it('flags a generalized pain claim as a truthfulness failure', () => {
+    const result = evaluateConnectionNote({
+      text: 'Hi Sarah, growth phases tend to strain roadmaps. Worth connecting.',
+      profile: null,
+      prospectName: 'Sarah Chen',
+      prospectCompany: 'Acme',
+      matchedProof: [],
+    })
     expect(result.passed).toBe(false)
-    expect(result.failures.some((f) => /manufactured|curious|would love to learn/i.test(f))).toBe(true)
+    expect(result.failures).toContain('Generalized pain claim')
+    const repaired = validateAndRepair({
+      text: 'Hi Sarah, growth phases tend to strain roadmaps. Worth connecting.',
+      profile: null,
+      prospectName: 'Sarah Chen',
+      prospectCompany: 'Acme',
+      matchedProof: [],
+    })
+    expect(repaired.text.toLowerCase()).not.toContain('tend to strain')
+  })
+
+  it('strips emoji and "!" even when every gate passes', () => {
+    const result = validateAndRepair({
+      text: 'Hi Sarah, great work! 👋',
+      profile: null,
+      prospectName: 'Sarah Chen',
+      prospectCompany: 'Acme',
+      matchedProof: [],
+    })
+    expect(result.text).not.toContain('!')
+    expect(result.text).not.toContain('👋')
+    expect(result.text).toBe('Hi Sarah, great work.')
+    expect(result.repaired).toBe('Hi Sarah, great work.')
   })
 
   it('rejects service descriptions', () => {
@@ -289,9 +328,14 @@ describe('validateAndRepair - greeting normalization', () => {
       failureType: 'Service description',
     },
     {
-      name: 'surveillance mid-text',
-      text: 'Hi Sarah, I saw your post about the migration. Similar to work I have done.',
-      failureType: 'surveillance',
+      name: 'hyphenated AI cliche (game-changing)',
+      text: 'Hi Sarah, revolutionizing infra with a game-changing approach. Synergies ahead.',
+      failureType: 'AI cliché',
+    },
+    {
+      name: 'sales pitch without "you"',
+      text: 'Hi Sarah, I can help TestCo ship faster with our Rails expertise.',
+      failureType: 'Sales pitch',
     },
   ]
 
@@ -307,8 +351,30 @@ describe('validateAndRepair - greeting normalization', () => {
       // The initial text should fail with the expected failure type
       expect(initialResult.passed).toBe(false)
       expect(initialResult.failures.some((f) => f.toLowerCase().includes(testCase.failureType.toLowerCase()))).toBe(true)
+
+      // And the repair pass must actually remove the offending phrase
+      const repaired = validateAndRepair({
+        text: testCase.text,
+        profile: null,
+        prospectName: 'Test Person',
+        prospectCompany: 'TestCo',
+        matchedProof: [],
+      })
+      expect(repaired.repaired).not.toBeNull()
+      expect(repaired.text).not.toBe(testCase.text)
     })
   }
+
+  it('allows an "I saw your post" opener (surveillance ban lifted in bf4c086)', () => {
+    const result = evaluateConnectionNote({
+      text: 'Hi Sarah, I saw your post about the migration. Similar to work I have done.',
+      profile: null,
+      prospectName: 'Test Person',
+      prospectCompany: 'TestCo',
+      matchedProof: [],
+    })
+    expect(result.passed).toBe(true)
+  })
 
   it('stripPhrasesAnywhere removes phrases from any position', () => {
     const result = stripPhrasesAnywhere(

@@ -167,7 +167,8 @@ describe('Cross-Session Learning Integration', () => {
     expect(systemDesignOpp).toBeDefined()
 
     // Memory check: deployment topic should be flagged as duplicate
-    const dupCheck = checkMemoryForDuplicates('Debugged a production deployment issue because the deploy script was reading stale environment variables', memories, 0.6)
+    // Pin "now" to the fixture date so time decay cannot age this out.
+    const dupCheck = checkMemoryForDuplicates('Debugged a production deployment issue because the deploy script was reading stale environment variables', memories, 0.6, { now: '2024-01-15' })
     expect(dupCheck.isDuplicate).toBe(true)
 
     // Interview should NOT be needed (profile confidence is high enough)
