@@ -66,7 +66,7 @@ const MORE_NAV: Array<{
   { href: '/leads/import', label: 'Import CSV', icon: Target, exact: true, group: 'Work' },
   { href: '/upwork', label: 'Jobs', icon: Briefcase, exact: false, group: 'Work' },
   { href: '/relay', label: 'Conversations', icon: MessageSquare, exact: false, group: 'Work' },
-  { href: '/inbound', label: 'Inbox', icon: Search, exact: false, group: 'Work' },
+  { href: '/inbound', label: 'Inbound', icon: Search, exact: false, group: 'Work' },
   { href: '/archive', label: 'Archive', icon: Target, exact: false, group: 'Work' },
   { href: '/content-v2/growth', label: 'Relay Growth', icon: TrendingUp, exact: true, adminOnly: true, group: 'Create' },
   { href: '/profile-intelligence', label: 'Profiles', icon: UserCircle2, exact: false, group: 'Intelligence' },
