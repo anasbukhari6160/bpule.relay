@@ -90,16 +90,21 @@ export function DatasetCenter() {
 
   useEffect(() => { void load() }, [load])
 
+  const [exportInfo, setExportInfo] = useState<string | null>(null)
+
   const exportData = useCallback(async (mode: ExportMode, format: ExportFormat, privacy: PrivacyMode) => {
     const params = new URLSearchParams({ mode, format, privacy })
     if (platform) params.set('platform', platform)
     params.set('confirm', 'true')
+    setExportInfo(`Exporting ${mode}...`)
     const res = await fetch(`/api/dataset/export?${params}`)
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
+      setExportInfo(null)
       alert(err.error ?? 'Export failed')
       return
     }
+    const count = res.headers.get('X-Sample-Count') ?? '?'
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -107,6 +112,8 @@ export function DatasetCenter() {
     a.download = `relay_dataset_${mode.toLowerCase()}_${Date.now()}.${format === 'jsonl' ? 'jsonl' : format}`
     a.click()
     URL.revokeObjectURL(url)
+    setExportInfo(`Downloaded ${count} samples as ${format}`)
+    setTimeout(() => setExportInfo(null), 4000)
   }, [platform])
 
   const m = metrics
@@ -116,7 +123,7 @@ export function DatasetCenter() {
       <DashHeader
         eyebrow="Training Funnel"
         title="Intelligence Dataset"
-        subtitle={`${total} versioned samples. Events are append-only. Training requires explicit approval.`}
+        subtitle={`${total} versioned samples. Events are append-only. Training requires explicit approval. ${exportInfo ?? ''}`}
         actions={
           <div className="flex flex-wrap gap-2">
             <button onClick={() => exportData('FULL_AUDIT', 'jsonl', 'REDACTED')} className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12px] hover:bg-bone">
