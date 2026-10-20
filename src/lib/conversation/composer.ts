@@ -39,7 +39,7 @@ HOW TO WRITE
 ${VOICE_RULES}
 ${FACTUALITY_RULES}
 ${ANTI_AI_RULES}
-FORMATTING: no em dashes or en dashes, no emojis, no exclamation marks, no hashtags, no bullet lists, no subject lines, no signature. Greeting only on the first message of the thread ("Hi Name,").
+FORMATTING: no em dashes or en dashes, no emojis, no exclamation marks, no hashtags, no bullet lists, no subject lines, no signature. Greeting only on the first message of the thread ("Hi Name,"). Connection notes are plain sentences: no question marks, no slashes, no dashes used as separators.
 
 Return JSON only:
 {"message": "the message text", "goal": "the job of this message in a few words", "answers": ["each client question this message answers"], "nextStep": "what you want them to do next", "why": "one sentence for the seller on why this message"}`
@@ -274,6 +274,17 @@ export function cleanMessage(text: string, intent: ComposeIntent, midThread = fa
   let t = text
     .replace(/\s*[—–]\s*/g, ', ')
     .replace(/!+/g, '.')
+  if (intent === 'connection') {
+    t = t
+      .replace(/\s+-\s+/g, ', ')
+      .replace(/\s*\/\s*/g, ' ')
+      .replace(/\?+/g, '.')
+      .replace(/\s+,/g, ',')
+      .replace(/,\s*,+/g, ',')
+      .replace(/\.\s*\./g, '.')
+      .replace(/  +/g, ' ')
+  }
+  t = t
     .replace(/\.\./g, '.')
     .replace(/[ \t]+\n/g, '\n')
     .trim()

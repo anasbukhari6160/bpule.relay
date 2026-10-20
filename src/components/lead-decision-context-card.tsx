@@ -3,10 +3,9 @@
 import { useState } from 'react'
 import { cn } from 'cn'
 import {
-  ArrowRight, Check, HelpCircle, MessageSquare,
-  ChevronDown, ChevronUp, AlertTriangle, Loader2,
+  MessageSquare,
+  ChevronDown, ChevronUp,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { RejectedSignalInspector, type RejectedSignalView } from '@/components/scoring/rejected-signal-inspector'
 import { ScoringFeedback } from '@/components/scoring/scoring-feedback'
 
@@ -70,16 +69,10 @@ export interface DecisionContext {
 
 interface Props {
   context: DecisionContext
-  onRefer?: (senderId: string) => void
-  onAskHelp?: (senderId: string, helpType: string) => void
-  onKeepOwner?: () => void
 }
 
-export function LeadDecisionContextCard({ context, onRefer, onAskHelp, onKeepOwner }: Props) {
-  const [helpLoading] = useState(false)
+export function LeadDecisionContextCard({ context }: Props) {
   const [whyOpen, setWhyOpen] = useState(false)
-  const best = context.routing.rankings[0] ?? null
-  const current = context.routing.rankings.find((r) => r.senderId === context.routing.currentSenderId) ?? null
   const facts: Array<[string, string | null | undefined]> = [
     ['Buyer intent', context.buyerIntent],
     ['Role', context.relationshipRole],
@@ -151,70 +144,6 @@ export function LeadDecisionContextCard({ context, onRefer, onAskHelp, onKeepOwn
           </div>
         )}
       </div>
-
-      {/* Routing recommendation that needs a human decision (ASSIGN / REFER / ASK_FOR_HELP). */}
-      {context.routingRecommendation && context.routingRecommendation.recommendation !== 'KEEP' && !context.hasMismatch && (
-        <div className="rounded-xl border border-orange/30 bg-orange/5 px-4 py-2.5 text-[11px] text-ink" data-testid="routing-recommendation">
-          <span className="font-medium">Routing: {context.routingRecommendation.recommendation.replaceAll('_', ' ').toLowerCase()}.</span>{' '}
-          {context.routingRecommendation.reason}
-        </div>
-      )}
-
-      {/* Routing Mismatch Banner */}
-      {context.hasMismatch && best && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 size-4 text-amber-600 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-medium text-amber-800">
-                Another sender is a stronger match
-              </p>
-              <p className="mt-1 text-[12px] text-amber-700">
-                <span className="font-medium">{best.name ?? 'Unknown'}</span> is{' '}
-                <span className="font-semibold">+{context.mismatchDelta}%</span> stronger for this lead.
-                {current && (
-                  <> Current sender: {current.name ?? 'Unknown'} ({current.profileMatch}%)</>
-                )}
-              </p>
-              {best.reasons.length > 0 && (
-                <ul className="mt-2 space-y-0.5">
-                  {best.reasons.slice(0, 3).map((reason) => (
-                    <li key={reason} className="text-[11px] text-amber-700">• {reason}</li>
-                  ))}
-                </ul>
-              )}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-[11px] border-amber-300 text-amber-800 hover:bg-amber-100"
-                  onClick={() => onRefer?.(best.senderId)}
-                >
-                  <ArrowRight className="size-3" /> Refer
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-[11px] border-amber-300 text-amber-800 hover:bg-amber-100"
-                  onClick={() => onAskHelp?.(best.senderId, 'BETTER_SENDER')}
-                  disabled={helpLoading}
-                >
-                  {helpLoading ? <Loader2 className="size-3 animate-spin" /> : <HelpCircle className="size-3" />}
-                  Ask for help
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-[11px] text-amber-600 hover:bg-amber-100"
-                  onClick={() => onKeepOwner?.()}
-                >
-                  <Check className="size-3" /> Keep current owner
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Conversation Override Indicator */}
       {context.conversationOverride && (

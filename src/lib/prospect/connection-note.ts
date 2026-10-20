@@ -464,19 +464,43 @@ export function extractFirstName(name: string | null): string | null {
 }
 
 /**
+ * Dashes, slashes, and question marks read as model copy in a connection note.
+ * Turn them into plain sentences. Hyphens inside a word (co-founder) stay.
+ */
+export function humanizeConnectionNote(text: string): string {
+  let next = text
+    .replace(/\s*[—–]\s*/g, ', ')
+    .replace(/\s+-\s+/g, ', ')
+    .replace(/\s*\/\s*/g, ' ')
+    .replace(/\?+/g, '.')
+    .replace(/!+/g, '.')
+  next = next
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*,+/g, ',')
+    .replace(/\.\s*\./g, '.')
+    .replace(/^[,\s]+/, '')
+    .replace(/  +/g, ' ')
+    .trim()
+  if (next.length > CONNECTION_NOTE_MAX_CHARS) next = shortenConnectionNote(next)
+  return next
+}
+
+/**
  * Validate character count and auto-repair if needed.
  */
 export function validateAndRepair(input: ConnectionNoteInput): ConnectionNoteResult {
-  let result = evaluateConnectionNote(input)
+  const cleaned = humanizeConnectionNote(input.text)
+  let result = evaluateConnectionNote({ ...input, text: cleaned })
 
   if (!result.passed) {
-    const repaired = repairConnectionNote(input.text, result.failures)
+    const repaired = humanizeConnectionNote(repairConnectionNote(cleaned, result.failures))
     const reEval = evaluateConnectionNote({ ...input, text: repaired })
 
     let finalText = repaired
     if (!reEval.withinLimit) {
       finalText = shortenConnectionNote(repaired)
     }
+    finalText = humanizeConnectionNote(finalText)
 
     result = {
       ...reEval,
@@ -484,6 +508,13 @@ export function validateAndRepair(input: ConnectionNoteInput): ConnectionNoteRes
       charCount: finalText.length,
       withinLimit: finalText.length <= CONNECTION_NOTE_MAX_CHARS,
       repaired: finalText !== input.text ? finalText : null,
+    }
+  } else if (cleaned !== input.text) {
+    result = {
+      ...result,
+      text: cleaned,
+      charCount: cleaned.length,
+      repaired: cleaned,
     }
   }
 

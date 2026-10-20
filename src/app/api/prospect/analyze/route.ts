@@ -503,83 +503,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Gate sender/proof selection off whether the recommended messaging
-    // policy actually involves a pitch — NOT off qualification/action==='SKIP'
-    // alone. A non-skip-qualification prospect with a legitimate
-    // CONNECT_WITHOUT_NOTE or OBSERVE action has nothing to pitch and must
-    // not go through full sender/proof selection or show "Best sender" UI.
-    if (!isPitchingPolicy(loop.messagingPolicy)) {
-      emit({
-        type: 'done',
-        extracted,
-        canonical,
-        revenue: loop,
-        score: {
-          total: canonical.canonicalScore,
-          displayScore: getDisplayScore(canonical),
-          label: canonical.scoreBreakdown.label,
-          qualification: canonical.qualification,
-          reasons: canonical.scoreBreakdown.reasons,
-          watchOut: rewordWatchOutForNoOutreach(canonical.scoreBreakdown.watchOut),
-          dimensions: normalizeScoreDimensions(canonical.scoreBreakdown.dimensions),
-          missingInfo: canonical.scoreBreakdown.missingInfo,
-          ...scoreTrace(canonical),
-        },
-        buyerIntent,
-        orgContext,
-        remoteEligibility: canonical.remoteEligibility,
-        evidenceLedger: canonical.evidenceLedger,
-        sources: {
-          rawSource: canonical.rawSource,
-          urls: canonical.extractionCompleteness.urlsPreserved,
-          sourceUrlsFound: canonical.extractionCompleteness.sourceUrlsFound,
-        },
-        extractionCompleteness: canonical.extractionCompleteness,
-        bestSender: null,
-        bestSenderProof: [],
-        connectionNote: '',
-        charCount: 0,
-        maxChars: CONNECTION_NOTE_MAX_CHARS,
-        quality: { passed: true, failures: [], wasRepaired: false },
-        strategy: {
-          whyConnect: '',
-          relevantObservation: '',
-          forbidden: [],
-          candidateAngles: [],
-        },
-        draftFailed: false,
-        demoMode: !hasProvider(),
-        alternativeSenders: [],
-        qualification: evaluateProspectQualification({
-          rawText,
-          extracted,
-          canonicalQualification: canonical.qualification,
-        }),
-        gateNotes: canonicalResult.gateNotes,
-        repairAttempted: canonicalResult.repairAttempted,
-        repairImproved: canonicalResult.repairImproved,
-        reused: canonicalResult.reused,
-        // Canonical decision context
-        recommendedAction: recommended,
-        versions: packet?.versions ?? null,
-        resolved: packet?.resolved ?? null,
-        confidenceDetail: packet?.confidenceDetail ?? null,
-        rejectedSignals: packet?.sourceFacts?.rejectedSignals ?? [],
-        decisionRunId: packet?.decisionRunId ?? null,
-        senderRouting: null,
-        routingRecommendation: null,
-        // V3 telemetry
-        decisionVersion: V3_CANONICAL ? 'decision_v3' : 'relay_qualification_v2',
-        scoreVersion: V3_CANONICAL ? (packet?.scoreVersion ?? 'score_v3') : (canonical as CanonicalProspectIntelligence).scoreVersion,
-        decisionProvider: V3_CANONICAL ? packet?.decisionProvider ?? 'openai' : undefined,
-        decisionModel: V3_CANONICAL ? packet?.decisionModel : undefined,
-        selectedEpisodeId: V3_CANONICAL ? packet?.selectedEpisodeId : undefined,
-        v3Action: V3_CANONICAL ? v3Action ?? undefined : undefined,
-        messageEligible: V3_CANONICAL ? v3MessageEligible ?? undefined : undefined,
-      })
-      return
-    }
-
+    // Sender ranking runs for every scored prospect, including observe.
+    // A connection note is still withheld unless the action is a pitch.
     emit({ type: 'status', message: 'Matching sender profiles' })
     let profiles: Profile[] = []
     let fewShotPool: Array<{ id: string; messageId: string; leadId: string; playId: string | null; signalType: number | null; sentText: string; company: string; signalEvidence: string | null; tags: string[]; createdAt: string }> = []
@@ -603,12 +528,9 @@ export async function POST(request: Request) {
       ...(canonical.intelligence.company.industry ? [canonical.intelligence.company.industry] : []),
     ]
 
-    // ONE sender ranking (rankSendersForLead through routing-context) — the
-    // same engine and inputs the lead page and the admin routing panel use.
-    // Channel authorization: the recommended channel is a LinkedIn
-    // connection note, so only LinkedIn profiles are eligible senders.
-    const RECOMMENDED_CHANNEL_PLATFORM: Profile['platform'] = 'linkedin'
-    const channelAuthorizedProfiles = profiles.filter((p) => p.platform === RECOMMENDED_CHANNEL_PLATFORM)
+    // Same ranking the lead page uses: every profile, including the one
+    // the rep is prospecting as. A LinkedIn-only filter hid Upwork profiles
+    // such as the current sender and left the stronger match looking stuck.
     const profileById = new Map(profiles.map((p) => [p.id, p]))
 
     let senderRouting: RoutingResult | null = null
@@ -620,21 +542,20 @@ export async function POST(request: Request) {
           { company: extracted.company, contactName: extracted.name, contactTitle: extracted.title, rawInput: rawText, senderProfileId: explicitProfileId },
           packet,
           senders,
-          RECOMMENDED_CHANNEL_PLATFORM,
+          null,
         )
       }
     } catch (err) {
       console.warn('[prospect/analyze] sender routing skipped:', err instanceof Error ? err.message : err)
     }
 
-    // Best sender = the top-ranked sender this rep can actually use (or the
-    // explicitly requested one). Falls back to the first LinkedIn profile
-    // only when routing was unavailable.
+    // The profile chosen for this check stays the sender. Otherwise use the
+    // highest-ranked profile this rep can actually send as.
     const accessibleRanked = (senderRouting?.rankings ?? []).filter((r) => r.accessibleToRep && profileById.has(r.senderId))
-    const explicitProfile = explicitProfileId ? channelAuthorizedProfiles.find((p) => p.id === explicitProfileId) ?? null : null
+    const explicitProfile = explicitProfileId ? profiles.find((p) => p.id === explicitProfileId) ?? null : null
     const bestSender: Profile | null = explicitProfile
       ?? (accessibleRanked[0] ? profileById.get(accessibleRanked[0].senderId) ?? null : null)
-      ?? channelAuthorizedProfiles[0]
+      ?? profiles[0]
       ?? null
     const bestSenderProof: MatchedProof[] = bestSender
       ? matchProofToLead(buildProfileIntelligence(bestSender, []), tagsForMatching, 3)
@@ -749,7 +670,7 @@ export async function POST(request: Request) {
     let draftFailed = false
     let qualityResult: ReturnType<typeof validateAndRepair> | null = null
 
-    if (generateNote) {
+    if (generateNote && isPitchingPolicy(loop.messagingPolicy)) {
       emit({ type: 'status', message: 'Drafting the connection note' })
 
       const safeFact = classifyLeadFact(
@@ -813,6 +734,7 @@ export async function POST(request: Request) {
           `**Hard rules:**`,
           `- 100 to ${CONNECTION_NOTE_MAX_CHARS} characters. Never exceed ${CONNECTION_NOTE_MAX_CHARS}.`,
           `- Specific observation + genuine overlap + simple reason to connect`,
+          `- Plain sentences. No question marks, no slashes, no dashes.`,
           `- NO questions. NO "curious about", "how do you", "would love to learn"`,
           `- NO pitch. NO service description. NO "I can help", "we build"`,
           `- NO praise. NO "impressive", "caught my attention"`,
@@ -1192,21 +1114,4 @@ async function embedTextSafe(text: string): Promise<number[] | null> {
   } catch {
     return null
   }
-}
-
-/**
- * Reword the always-present "No Revenue Identity identified for this
- * opportunity." watchOut for surfaces where no outreach message is planned
- * (see Bug 4). That phrasing carries urgency appropriate to a pitching
- * action; when the recommended action is CONNECT_WITHOUT_NOTE/OBSERVE/SKIP,
- * it reads as an unaddressed problem on a profile where nothing was ever
- * going to be pitched. Only touches this specific string — every other
- * watchOut passes through unchanged.
- */
-function rewordWatchOutForNoOutreach(watchOut: string[]): string[] {
-  return watchOut.map((w) =>
-    /no revenue identity identified for this opportunity/i.test(w)
-      ? 'Revenue Identity not required — no outreach message planned.'
-      : w,
-  )
 }

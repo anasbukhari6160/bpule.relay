@@ -37,6 +37,7 @@ import { RejectedSignalInspector, type RejectedSignalView } from '@/components/s
 import { ScoringFeedback } from '@/components/scoring/scoring-feedback'
 import { useActiveIdentity } from '@/components/workspace/active-identity-provider'
 import { workspaceIdentityForSender } from '@/lib/workspace/active-identity'
+import { ROUTING_MISMATCH_DELTA } from '@/lib/intelligence-v3/action/recommended-action'
 
 /** Canonical decision detail returned by /api/prospect/analyze (Phase 25-31). */
 interface DecisionDetail {
@@ -92,7 +93,7 @@ type AnalyzeEvent =
       draftFailed: boolean
       demoMode: boolean
       alternativeSenders: Array<{ profile: Profile; matchScore: number; topProof: string | null }>
-      senderRouting?: { rankings?: SenderRankView[] } | null
+      senderRouting?: { rankings?: SenderRankView[]; currentSenderId?: string | null } | null
   senderSuggestion?: { profileId: string; name: string | null; role: string | null; platform: string | null; score: number; currentBestScore: number; matchedTerms: string[]; topProof: string | null; holders: string[]; reason: string } | null
       qualification: ProspectQualificationAssessment
       revenue?: RevenueLoopSnapshot
@@ -314,7 +315,14 @@ export default function ProspectCheckPage() {
                 quality: event.quality ?? { passed: true, failures: [], wasRepaired: false },
                 strategy: event.strategy,
                 alternativeSenders: event.alternativeSenders,
-                senderRankings: Array.isArray(event.senderRouting?.rankings) ? event.senderRouting.rankings.slice(0, 5) : [],
+                senderRankings: (() => {
+                  const all = Array.isArray(event.senderRouting?.rankings) ? event.senderRouting.rankings : []
+                  const currentId = event.senderRouting?.currentSenderId ?? event.bestSender?.id ?? null
+                  const top = all.slice(0, 5)
+                  const current = currentId ? all.find((ranking) => ranking.senderId === currentId) : undefined
+                  if (current && !top.some((ranking) => ranking.senderId === current.senderId)) return [...top, current]
+                  return top
+                })(),
                 senderSuggestion: event.senderSuggestion ?? null,
                 draftFailed: event.draftFailed,
                 demoMode: event.demoMode,
@@ -333,9 +341,6 @@ export default function ProspectCheckPage() {
                   decisionRunId: event.decisionRunId ?? null,
                 },
               })
-              if (event.bestSender) {
-                setSelectedProfileId(event.bestSender.id)
-              }
               // Track completed analysis
               const durationMs = Math.round(performance.now() - analysisTiming)
               trackEvent({
@@ -406,10 +411,10 @@ export default function ProspectCheckPage() {
           signalEvidence: result.extracted.signalEvidence,
           verbatimQuote: result.extracted.verbatimQuote,
           tags: result.extracted.tags,
-          senderProfileId: result.bestSender?.id ?? workspace.active?.profileId ?? null,
+          senderProfileId: selectedProfileId ?? result.bestSender?.id ?? workspace.active?.profileId ?? null,
           revenueIdentityId: workspaceIdentityForSender(
             workspace.active,
-            result.bestSender?.id ?? workspace.active?.profileId ?? null,
+            selectedProfileId ?? result.bestSender?.id ?? workspace.active?.profileId ?? null,
           ),
           connectionNote: result.connectionNote,
           prospectScore: result.score?.total ?? null,
@@ -776,16 +781,7 @@ export default function ProspectCheckPage() {
             </div>
           )}
 
-          {result.score && !result.bestSender && result.senderSuggestion && (
-            <div data-testid="sender-suggestion" className="rounded-md border border-orange/30 bg-orange/5 p-2.5">
-              <p className="text-[11px] font-medium text-ink">
-                You have no profile that fits this lead. Relay suggests: {result.senderSuggestion.name ?? 'another profile'}
-              </p>
-              <p className="mt-0.5 text-[11px] text-graphite">{result.senderSuggestion.reason}</p>
-            </div>
-          )}
-
-          {result.score && (result.bestSender || result.senderRankings.length > 0) && (
+          {result.score && (
             <div data-testid="sender-section" className="rounded-lg border border-line bg-bone-raised/30 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -803,27 +799,82 @@ export default function ProspectCheckPage() {
                   </button>
                 )}
               </div>
-              <p className="mt-1.5 text-[13px] font-medium text-ink">
-                Best profile: {result.senderRankings[0]?.name ?? result.bestSender?.label ?? 'Unnamed'}
-                {typeof result.senderRankings[0]?.profileMatch === 'number' ? ` · ${result.senderRankings[0].profileMatch}% match` : ''}
-              </p>
-              {(result.senderRankings[0]?.reasons[0] ?? result.bestSenderProof[0]?.safeClaim) && (
-                <p className="mt-0.5 text-[11px] text-graphite">
-                  {(result.senderRankings[0]?.reasons[0] ?? result.bestSenderProof[0]?.safeClaim ?? '').slice(0, 140)}
-                </p>
+              {(() => {
+                const activeId = selectedProfileId ?? result.bestSender?.id ?? null
+                const active = result.senderRankings.find((ranking) => ranking.senderId === activeId) ?? null
+                const stronger = result.senderRankings.find((ranking) => (
+                  ranking.senderId !== activeId
+                  && active != null
+                  && ranking.profileMatch - active.profileMatch >= ROUTING_MISMATCH_DELTA
+                )) ?? null
+                const delta = stronger && active ? stronger.profileMatch - active.profileMatch : 0
+                return (
+                  <>
+                    <p className="mt-1.5 text-[13px] font-medium text-ink">
+                      Sending as: {active?.name ?? result.bestSender?.label ?? 'No profile selected'}
+                      {active ? ` · ${active.profileMatch}% match` : ''}
+                    </p>
+                    {(active?.reasons[0] ?? result.bestSenderProof[0]?.safeClaim) && (
+                      <p className="mt-0.5 text-[11px] text-graphite">
+                        {(active?.reasons[0] ?? result.bestSenderProof[0]?.safeClaim ?? '').slice(0, 140)}
+                      </p>
+                    )}
+                    {stronger && (
+                      <div data-testid="sender-mismatch" className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2.5">
+                        <p className="text-[12px] font-medium text-amber-800">Another sender is a stronger match</p>
+                        <p className="mt-1 text-[12px] text-amber-700">
+                          <span className="font-medium">{stronger.name ?? 'Another profile'}</span> is +{delta}% stronger for this lead.
+                          {' '}Current sender: {active?.name ?? 'Unknown'} ({active?.profileMatch ?? 0}%).
+                        </p>
+                        {stronger.reasons.length > 0 && (
+                          <ul className="mt-1.5 space-y-0.5">
+                            {stronger.reasons.slice(0, 3).map((reason) => (
+                              <li key={reason} className="text-[11px] text-amber-700">• {reason}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="mt-2 h-7 text-[11px]"
+                          onClick={() => changeSender(stronger.senderId)}
+                        >
+                          Use {stronger.name ?? 'this sender'}
+                        </Button>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+              {result.senderRankings.length === 0 && !result.bestSender && (
+                <p className="mt-1.5 text-[12px] text-graphite">No LinkedIn profile is available for this check.</p>
               )}
               {result.senderRankings.length > 1 && (
                 <ul className="mt-2 space-y-1">
-                  {result.senderRankings.slice(0, 5).map((ranking, index) => (
-                    <li key={ranking.senderId} className="flex items-center gap-2 text-[11px]">
-                      <span className="w-4 text-stone">{index + 1}</span>
-                      <span className="min-w-0 flex-1 truncate font-medium text-ink">
-                        {ranking.name ?? 'Unnamed'}
-                        {ranking.role ? <span className="font-normal text-graphite"> · {ranking.role}</span> : null}
-                      </span>
-                      <span className="shrink-0 text-graphite">{ranking.profileMatch}%</span>
-                    </li>
-                  ))}
+                  {result.senderRankings.slice(0, 5).map((ranking, index) => {
+                    const activeId = selectedProfileId ?? result.bestSender?.id ?? null
+                    const selected = ranking.senderId === activeId
+                    return (
+                      <li key={ranking.senderId}>
+                        <button
+                          type="button"
+                          onClick={() => changeSender(ranking.senderId)}
+                          className={cn(
+                            'flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-[11px]',
+                            selected ? 'bg-bone text-ink' : 'text-graphite hover:text-ink',
+                          )}
+                        >
+                          <span className="w-4 text-stone">{index + 1}</span>
+                          <span className="min-w-0 flex-1 truncate font-medium">
+                            {ranking.name ?? 'Unnamed'}
+                            {ranking.role ? <span className="font-normal"> · {ranking.role}</span> : null}
+                          </span>
+                          <span className="shrink-0">{ranking.profileMatch}%</span>
+                        </button>
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
 

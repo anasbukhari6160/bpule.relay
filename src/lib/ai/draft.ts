@@ -163,7 +163,7 @@ function messageKind(input: DraftInput): string {
     case 'dm':
       return `LinkedIn DM. One job${job ? ` (${job})` : ''}. ${ceiling ?? '20–55 words'}. One observation, one question.`
     case 'connection':
-      return `LinkedIn connection note. Earn access only. ${ceiling ?? '15–35 words'}. Specific observation + genuine overlap + simple reason to connect. No questions. No pitch. No praise. No service description. Sounds natural spoken aloud. Zero effort to respond to.`
+      return `LinkedIn connection note. Earn access only. ${ceiling ?? '14-22 words'}. 100 to 120 characters, never more. Specific observation plus a genuine overlap and a simple reason to connect. Plain sentences only: no question marks, no slashes, no dashes. No pitch. No praise. No service description. Sounds natural spoken aloud.`
     case 'upwork':
       return `Upwork cover letter. Specific to the job. No biography dump. ${ceiling ?? '50-150 words'}. One relevant project shape, one specific need from the job, one easy next step.`
     case 'followup':

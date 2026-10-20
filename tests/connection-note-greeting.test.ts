@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeGreeting, extractFirstName, validateAndRepair, evaluateConnectionNote, stripPhrasesAnywhere } from '@/lib/prospect/connection-note'
+import { normalizeGreeting, extractFirstName, validateAndRepair, evaluateConnectionNote, stripPhrasesAnywhere, humanizeConnectionNote } from '@/lib/prospect/connection-note'
+
+describe('humanizeConnectionNote', () => {
+  it('removes dashes, slashes, and question marks', () => {
+    const note = humanizeConnectionNote('Hi Aneeb, saw the go / integration work - worth a connect?')
+    expect(note).not.toMatch(/[?/]| - |—/)
+    expect(note).toMatch(/Hi Aneeb, saw the go integration work, worth a connect\./)
+  })
+})
 
 describe('extractFirstName', () => {
   it('extracts first name from full name', () => {

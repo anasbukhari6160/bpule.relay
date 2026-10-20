@@ -312,9 +312,9 @@ function fallbackText(input: DraftInput): string {
 
   if (input.type === 'connection') {
     const openers = [
-      `Hi ${firstName}, ${observation} Would be great to connect.`,
-      `Hi ${firstName}, ${observation} Thought it worth reaching out — connect?`,
-      `Hi ${firstName}, ${observation} Always interesting to meet others in this space. Connect?`,
+      `Hi ${firstName}, ${observation} Would be good to connect.`,
+      `Hi ${firstName}, ${observation} Reaching out because the overlap is real.`,
+      `Hi ${firstName}, ${observation} Happy to connect.`,
     ]
     return openers[Math.abs(hashCode(company)) % openers.length]
   }
