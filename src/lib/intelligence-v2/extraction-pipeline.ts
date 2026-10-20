@@ -40,6 +40,8 @@ export interface ExtractionPipelineOptions {
   knownJobUrl?: string | null
   /** When true, AI failures are not silently replaced by deterministic fallback extraction */
   strictLiveMode?: boolean
+  /** Lead this extraction is about, when one already exists. */
+  leadId?: string | null
 }
 
 export interface ExtractionPipelineResult {
@@ -277,6 +279,7 @@ async function runPassA(
   callLog: ExtractionPipelineResult['callLog'],
   onStatus?: (msg: string) => void,
   strictLiveMode?: boolean,
+  leadId?: string | null,
 ): Promise<PassAOutput> {
   onStatus?.('Analyzing prospect')
   const startTime = Date.now()
@@ -291,7 +294,8 @@ async function runPassA(
       maxTokens: 1024,
       onStatus,
       callSite: 'extraction-pipeline:runPassA',
-      feature: 'prospect_analysis',
+      feature: 'prospect_extraction',
+      leadId: leadId ?? undefined,
     })
 
     callLog.push({
@@ -871,6 +875,7 @@ async function runPassC(
   callLog: ExtractionPipelineResult['callLog'],
   onStatus?: (msg: string) => void,
   strictLiveMode?: boolean,
+  leadId?: string | null,
 ): Promise<Pick<NormalizedIntelligence, 'probableNeed' | 'opportunityTrigger' | 'timingSignal' | 'risks' | 'unknowns'>> {
   // Pass C is only needed for risks/unknowns when deterministic fallback is insufficient.
   const hasSignals = passA.opportunity.signals.length > 0
@@ -904,7 +909,8 @@ async function runPassC(
       maxTokens: 512,
       onStatus,
       callSite: 'extraction-pipeline:runPassC',
-      feature: 'prospect_analysis',
+      feature: 'prospect_extraction',
+      leadId: leadId ?? undefined,
     })
 
     callLog.push({
@@ -2267,7 +2273,7 @@ export async function runIntelligencePipeline(
   })
 
   // Pass A: Extract
-  const passA = await runPassA(rawText, sourceUrls, callLog, opts.onStatus, opts.strictLiveMode)
+  const passA = await runPassA(rawText, sourceUrls, callLog, opts.onStatus, opts.strictLiveMode, opts.leadId)
 
   // Pass B: Normalize
   opts.onStatus?.('Normalizing extraction')
@@ -2338,7 +2344,7 @@ export async function runIntelligencePipeline(
   }
 
   // Pass C: Intelligence
-  const passC = await runPassC(passA, partialIntelligence, callLog, opts.onStatus, opts.strictLiveMode)
+  const passC = await runPassC(passA, partialIntelligence, callLog, opts.onStatus, opts.strictLiveMode, opts.leadId)
 
   // Remote eligibility override for non-buyer relationships: a recruiter,
   // partner, or networking contact is not a job opportunity, so "remote

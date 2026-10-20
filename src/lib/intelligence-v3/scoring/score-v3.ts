@@ -51,7 +51,7 @@ import {
   type AuthorityResolution,
   type EvidenceQualityResolution,
 } from '../dimensions'
-import { qualifyCanonicalScore, type CanonicalQualification } from '@/lib/scoring/qualification'
+import { QUALIFICATION_BANDS, qualifyCanonicalScore, type CanonicalQualification } from '@/lib/scoring/qualification'
 import { detectCommercialRequest } from '../source-facts'
 
 export interface V3ScoreInput {
@@ -357,7 +357,24 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
     watchOut.push('Sells the same services — treat as a competitor unless they ask for help')
   }
 
-  const score = Math.round(Math.max(0, Math.min(100, adjusted)))
+  let score = Math.round(Math.max(0, Math.min(100, adjusted)))
+  // A seller, recruiter, candidate, or service provider with no surviving
+  // buy can keep a high commercial-potential reading. That reading is
+  // relationship value. It does not cross into Worth pursuing.
+  const supplySide = intent.relationshipRole === 'SELLER'
+    || intent.relationshipRole === 'RECRUITER'
+    || intent.relationshipRole === 'CANDIDATE'
+    || (decision.relationship === 'SERVICE_PROVIDER' && intent.relationshipRole !== 'BUYER' && intent.relationshipRole !== 'BUYER_AND_SELLER')
+  const buyingNeed = intent.verifiedBuyerRequest && intent.buyerIntentLevel !== 'UNKNOWN'
+  const maybeCeiling = QUALIFICATION_BANDS.find((b) => b.qualification === 'MAYBE')?.max ?? 54
+  if (supplySide && !buyingNeed && score > maybeCeiling) {
+    steps.push({
+      label: 'Supply-side ceiling',
+      value: `${maybeCeiling}/100`,
+      detail: 'No verified buying need. Commercial potential, authority, fit and access stay in the breakdown; they cannot reach Worth pursuing.',
+    })
+    score = maybeCeiling
+  }
   steps.push({ label: 'Canonical score', value: `${score}/100`, detail: 'Rounded, bounded 0-100.' })
 
   const band = qualifyCanonicalScore(score)

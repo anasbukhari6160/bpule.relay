@@ -42,7 +42,7 @@ export interface ActionOpportunityInput {
   qualification: CanonicalQualification | 'INELIGIBLE' | null
   buyerIntentLevel: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN' | 'NONE'
   verifiedBuyerRequest: boolean
-  relationshipRole: 'BUYER' | 'SELLER' | 'BUILDER' | 'RECRUITER' | 'CANDIDATE' | 'UNKNOWN'
+  relationshipRole: 'BUYER' | 'BUYER_AND_SELLER' | 'SELLER' | 'BUILDER' | 'RECRUITER' | 'CANDIDATE' | 'UNKNOWN'
   access: 'DIRECT' | 'CONNECTION' | 'INDIRECT' | 'NONE'
   buyerTiming: 'NONE' | 'WEAK' | 'CURRENT' | 'URGENT'
   activityRecency: 'FRESH' | 'RECENT' | 'AGING' | 'STALE' | 'UNKNOWN'
@@ -168,7 +168,17 @@ function coldAction(input: DeriveActionInput): { action: RecommendedAction; reas
   // known; low confidence about buyer intent does not make them research
   // targets.
   if (nonBuyerRole) {
-    if (q === 'STRONG' || q === 'WORTH_PURSUING') return { action: 'CONNECT_WITHOUT_NOTE', reason: `${roleWord(o.relationshipRole)} with real commercial potential — connect, do not pitch.` }
+    // Commercial maturity never becomes CONTACT_NOW or a silent pursuit.
+    // A reachable seller with real potential gets a relationship note.
+    // Otherwise observe. A verified buy is handled above, as BUYER.
+    if (!o.verifiedBuyerRequest && (q === 'STRONG' || q === 'WORTH_PURSUING' || q === 'MAYBE')) {
+      const reachable = o.access === 'DIRECT' || o.access === 'CONNECTION'
+      const mature = o.commercialPotential === 'HIGH' || o.commercialPotential === 'VERY_HIGH'
+      if (q !== 'MAYBE' && reachable && mature && conf.label !== 'LOW') {
+        return { action: 'CONNECT_WITH_NOTE', reason: `${roleWord(o.relationshipRole)} with commercial potential and a route — relationship note, not a pitch.` }
+      }
+      return { action: 'OBSERVE', reason: `${roleWord(o.relationshipRole)} — not a buyer today; keep on the watch list.` }
+    }
     if (q === 'MAYBE') return { action: 'OBSERVE', reason: `${roleWord(o.relationshipRole)} — not a buyer today; keep on the watch list.` }
     return { action: 'CLOSE', reason: `${roleWord(o.relationshipRole)} with weak commercial potential.` }
   }
@@ -194,6 +204,7 @@ function coldAction(input: DeriveActionInput): { action: RecommendedAction; reas
 
 function roleWord(role: ActionOpportunityInput['relationshipRole']): string {
   switch (role) {
+    case 'BUYER_AND_SELLER': return 'Buyer who also sells'
     case 'SELLER': return 'Service provider'
     case 'RECRUITER': return 'Recruiter'
     case 'CANDIDATE': return 'Candidate'

@@ -47,7 +47,7 @@ export default async function AdminAiUsagePage({ searchParams }: { searchParams:
     const supabase = await createServerSupabase()
     const { data, error } = await supabase
       .from('ai_traces')
-      .select('task_class, provider, model, latency_ms, estimated_cost_usd, input_tokens, output_tokens, fallback, error, schema_valid, created_at')
+      .select('task_class, provider, model, latency_ms, estimated_cost_usd, input_tokens, output_tokens, fallback, error, schema_valid, feature, call_site, created_at')
       .eq('organization_id', orgId)
       .gte('created_at', since)
       .order('created_at', { ascending: false })
@@ -102,6 +102,8 @@ export default async function AdminAiUsagePage({ searchParams }: { searchParams:
       <Panel title="Daily spend" subtitle={`Last ${days} days · hover a bar for calls and failures`}>
         {s.totals.calls === 0 ? <EmptyNote>No AI calls recorded in this period.</EmptyNote> : <AiUsageChart data={s.daily} />}
       </Panel>
+
+      <BucketTable title="By feature" subtitle="One row per model call, grouped the way the product makes them" rows={s.byFeature} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <BucketTable title="By kind of work" subtitle="Where the money goes" rows={s.byTask} />

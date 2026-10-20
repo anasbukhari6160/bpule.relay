@@ -138,8 +138,14 @@ export interface GenerateOptions {
   outputSchema?: ShapeSchema
   /** Skip cache (force fresh generation) */
   skipCache?: boolean
-  /** Organization ID for telemetry persistence */
+  /** Organization ID for telemetry persistence. Filled from the signed-in rep when omitted. */
   organizationId?: string
+  /** Rep who triggered the call. */
+  repId?: string
+  /** Lead this call is about, when there is one. */
+  leadId?: string
+  /** Upwork job this call is about, when there is one. */
+  jobId?: string
   /** Where in the code this call originated (e.g. 'extraction-pipeline:runPassA') */
   callSite?: string
   /** Feature that initiated this call (e.g. 'prospect_analysis', 'connection_note') */
@@ -224,6 +230,23 @@ function cacheKey(opts: Pick<GenerateOptions, 'task' | 'system' | 'user' | 'prom
 }
 
 
+async function resolveTraceScope(options: GenerateOptions): Promise<{ organizationId?: string; repId?: string }> {
+  let organizationId = options.organizationId
+  let repId = options.repId
+  if (organizationId && repId) return { organizationId, repId }
+  try {
+    const { getAuthContext } = await import('@/lib/auth/organization')
+    const auth = await getAuthContext()
+    if (auth) {
+      organizationId = organizationId ?? auth.orgId
+      repId = repId ?? auth.repId
+    }
+  } catch {
+    // Scripts and tests have no request. The call still runs; the trace is skipped.
+  }
+  return { organizationId, repId }
+}
+
 export async function generate<T = Record<string, unknown>>(
   options: GenerateOptions,
 ): Promise<GenerateResult<T>> {
@@ -239,11 +262,15 @@ async function generateOnce<T>(
   const temperature = options.temperature ?? defaultTemperature(options.task)
   const timeoutMs = options.timeoutMs ?? profile.timeoutMs
   const taskId = generateTaskId()
+  const scope = await resolveTraceScope(options)
   const traceBase = {
     taskId,
     taskClass: options.task,
     inputChars: options.system.length + options.user.length,
     timestamp: Date.now(),
+    leadId: options.leadId ?? null,
+    jobId: options.jobId ?? null,
+    repId: scope.repId ?? null,
   }
 
   const chain = getChainForTask(options.task)
@@ -290,6 +317,7 @@ async function generateOnce<T>(
         cacheHit: true,
       }
       logTrace(trace)
+      if (scope.organizationId) void persistTrace(trace, scope.organizationId)
       return { data: cached as T, trace, cacheHit: true }
     }
   }
@@ -450,9 +478,7 @@ async function generateOnce<T>(
       }
 
       logTrace(trace)
-      if (options.organizationId) {
-        void persistTrace(trace, options.organizationId)
-      }
+      if (scope.organizationId) void persistTrace(trace, scope.organizationId)
       return { data: result.data as T, trace }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)
@@ -503,9 +529,7 @@ async function generateOnce<T>(
     promptVersion: options.promptVersion,
   }
   logTrace(trace)
-  if (options.organizationId) {
-    void persistTrace(trace, options.organizationId)
-  }
+  if (scope.organizationId) void persistTrace(trace, scope.organizationId)
   throw new Error(`All providers failed: ${trace.error}`)
 }
 

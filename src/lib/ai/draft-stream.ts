@@ -123,7 +123,8 @@ export async function streamDraft(
     maxTokens: 1024,
     temperature: 0.7,
     callSite: 'draft-stream:generate',
-    feature: 'outbound_draft',
+    feature: input.type === 'connection' ? 'connection_note' : input.type === 'followup' ? 'follow_up' : input.type === 'reply' ? 'reply' : 'dm',
+    leadId: input.leadId,
     skipCache: true,
   })
     .then((r) => {

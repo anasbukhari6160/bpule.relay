@@ -181,6 +181,6 @@ Please send a short proposal with 2 examples of similar dashboards.`,
       experience: [{ title: 'CTO & Co-founder', company: 'BuildCo', range: 'Jan 2021 - Present · 4 yrs 10 mos' }],
     }),
     model: { ...BUYER_MODEL, relationship: 'MIXED' },
-    expect: { scoreRange: [50, 95], buyerIntent: ['HIGH', 'MEDIUM'], relationshipRole: ['BUYER'], verifiedBudget: true },
+    expect: { scoreRange: [50, 95], buyerIntent: ['HIGH', 'MEDIUM'], relationshipRole: ['BUYER_AND_SELLER'], verifiedBudget: true },
   },
 ]

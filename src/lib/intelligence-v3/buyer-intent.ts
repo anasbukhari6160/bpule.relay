@@ -27,10 +27,23 @@ import { parseHiringCount } from '@/lib/evidence/provenance'
 import { ML_CANDIDATE_SEEKING, ML_FOUNDER_ROLE, ML_PAST_PHRASE, mlMatches } from './multilingual'
 
 /** Bump when buyer-intent rules change; part of the V3 decision reuse key. */
-export const BUYER_INTENT_VERSION = 'buyer_intent_v2'
+export const BUYER_INTENT_VERSION = 'buyer_intent_v4'
 
 export type BuyerIntentLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
-export type RelationshipRole = 'BUYER' | 'SELLER' | 'BUILDER' | 'RECRUITER' | 'CANDIDATE' | 'UNKNOWN'
+export type RelationshipRole = 'BUYER' | 'BUYER_AND_SELLER' | 'SELLER' | 'BUILDER' | 'RECRUITER' | 'CANDIDATE' | 'UNKNOWN'
+
+/** A verified buy keeps buyer scoring. Selling as well does not remove it. */
+export function isBuyerRelationship(role: RelationshipRole | null | undefined): boolean {
+  return role === 'BUYER' || role === 'BUYER_AND_SELLER'
+}
+
+/**
+ * WRONG_SELLER is a buyer label with seller activity and no separate
+ * verified request. A verified buy, including BUYER_AND_SELLER, is not an error.
+ */
+export function isWrongSellerClassification(role: string | null | undefined, sellerActivity: boolean, independentBuyerEvidence: boolean): boolean {
+  return role === 'BUYER' && sellerActivity && !independentBuyerEvidence
+}
 
 export interface BuyerBudgetFact {
   line: string
@@ -148,7 +161,8 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
 
   all.forEach((line, idx) => {
     const kind = classifyLine(line)
-    if (!externalServiceRequest && kind === 'external_request' && usable(line, idx)) externalServiceRequest = { line }
+    // A line the prospect owns as a sales pitch is not a request to buy.
+    if (!externalServiceRequest && kind === 'external_request' && usable(line, idx) && !sellerSet.has(line)) externalServiceRequest = { line }
     if (!employmentHiring && kind === 'employment_hiring' && usable(line, idx) && verifyHiringProvenance(line).valid) employmentHiring = { line }
     if (!helpRequest && !sellerSet.has(line) && HELP_REQUEST.test(line) && usable(line, idx)) helpRequest = { line }
     if (!statedBudget && BUDGET_LINE.test(line) && !sellerSet.has(line) && !PRODUCT_METRIC.test(line)
@@ -247,9 +261,16 @@ export function resolveVerifiedBuyerIntent(
   }
 
   // ── Role ───────────────────────────────────────────────────────────────
+  // BUYER requires a request that survived contradiction. Seller activity,
+  // founder authority, or a model claim never confer it. A prospect may
+  // sell and buy when the buy is a separate, prospect-owned request.
+  // That case is BUYER_AND_SELLER: the buy stays verified and is not capped.
+  const buyingNeedSurvived = verifiedBuyerRequest && contradictions.length === 0 && (buyerIntentLevel === 'HIGH' || buyerIntentLevel === 'MEDIUM')
+  const independentSellerLines = facts.sellerLines.filter((line) => line !== facts.externalServiceRequest?.line)
   let relationshipRole: RelationshipRole = 'UNKNOWN'
   if (facts.candidateSeeking) relationshipRole = 'CANDIDATE'
-  else if (verifiedBuyerRequest) relationshipRole = 'BUYER'
+  else if (buyingNeedSurvived && independentSellerLines.length > 0) relationshipRole = 'BUYER_AND_SELLER'
+  else if (buyingNeedSurvived) relationshipRole = 'BUYER'
   else if (facts.recruiter) relationshipRole = 'RECRUITER'
   else if (facts.sellerLines.length > 0) relationshipRole = 'SELLER'
   else if (facts.founderOrBuilder) relationshipRole = 'BUILDER'

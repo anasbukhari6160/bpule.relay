@@ -38,6 +38,9 @@ export interface PersistedTrace {
   model_tier: string | null
   prompt_version: string | null
   cache_hit: boolean
+  lead_id: string | null
+  job_id: string | null
+  rep_id: string | null
   created_at: string
 }
 
@@ -75,6 +78,9 @@ export async function persistTrace(
       model_tier: trace.modelTier ?? null,
       prompt_version: trace.promptVersion ?? null,
       cache_hit: trace.cacheHit ?? false,
+      lead_id: trace.leadId ?? null,
+      job_id: trace.jobId ?? null,
+      rep_id: trace.repId ?? null,
       created_at: new Date(trace.timestamp).toISOString(),
     }
 
@@ -82,12 +88,83 @@ export async function persistTrace(
       .from('ai_traces')
       .insert(record)
 
+    if (error && /lead_id|job_id|rep_id/.test(error.message)) {
+      const { lead_id: _lead, job_id: _job, rep_id: _rep, ...withoutScope } = record
+      const retry = await supabase.from('ai_traces').insert(withoutScope)
+      if (retry.error) console.warn('[ai/telemetry] Failed to persist trace:', retry.error.message)
+      return
+    }
+
     if (error) {
       console.warn('[ai/telemetry] Failed to persist trace:', error.message)
     }
   } catch (err) {
     console.warn('[ai/telemetry] Persistence error:', err instanceof Error ? err.message : String(err))
   }
+}
+
+/**
+ * One row per model call that does not go through generate().
+ * Used by the V3 decision and event extraction, which call OpenAI directly.
+ */
+export async function recordScopedTrace(input: {
+  feature: string
+  callSite: string
+  provider: string
+  model: string
+  latencyMs: number
+  success: boolean
+  error?: string | null
+  attempt?: number
+  fallback?: boolean
+  estimatedCostUsd?: number
+  organizationId?: string | null
+  repId?: string | null
+  leadId?: string | null
+  jobId?: string | null
+}): Promise<void> {
+  let organizationId = input.organizationId ?? undefined
+  let repId = input.repId ?? undefined
+  if (!organizationId || !repId) {
+    try {
+      const { getAuthContext } = await import('@/lib/auth/organization')
+      const auth = await getAuthContext()
+      if (auth) {
+        organizationId = organizationId ?? auth.orgId
+        repId = repId ?? auth.repId
+      }
+    } catch {
+      // No request scope. Skip the row rather than failing the decision.
+    }
+  }
+  if (!organizationId) return
+  const trace: AiTrace = {
+    taskId: `direct-${Date.now()}`,
+    taskClass: 'FAST_STRUCTURED',
+    provider: input.provider,
+    model: input.model,
+    credentialId: 'direct',
+    attempt: input.attempt ?? 1,
+    inputTokens: 0,
+    outputTokens: 0,
+    inputChars: 0,
+    ttfbMs: null,
+    latencyMs: input.latencyMs,
+    estimatedCostUsd: input.estimatedCostUsd ?? 0,
+    schemaValid: input.success,
+    quality: input.success ? 'GOOD' : 'BAD',
+    fallback: input.fallback ?? false,
+    fallbackReason: input.fallback ? (input.error ?? 'fallback') : null,
+    error: input.error ?? null,
+    callSite: input.callSite,
+    feature: input.feature,
+    timestamp: Date.now(),
+    runtimeVersion: 'direct',
+    leadId: input.leadId ?? null,
+    jobId: input.jobId ?? null,
+    repId: repId ?? null,
+  }
+  await persistTrace(trace, organizationId)
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { leadBelongsToWorkspace, workspaceIdentityForSender } from '@/lib/workspace/active-identity'
+import { assignLead, chooseSender, leadBelongsToWorkspace, workspaceIdentityForSender, type LeadVisibility } from '@/lib/workspace/active-identity'
 
 const workspace = { id: 'identity-1', profileId: 'profile-1' }
 
@@ -30,7 +30,41 @@ describe('workspaceIdentityForSender', () => {
     expect(workspaceIdentityForSender({ id: 'identity-1', profileId: null }, 'profile-9')).toBe('identity-1')
   })
 
-  it('does not stamp the workspace after the sender is changed to another profile', () => {
-    expect(workspaceIdentityForSender(workspace, 'profile-2')).toBeNull()
+  it('keeps the creating workspace when the sender is a different profile', () => {
+    expect(workspaceIdentityForSender(workspace, 'profile-2')).toBe('identity-1')
+  })
+})
+
+describe('owner, workspace, sender, and best sender stay separate', () => {
+  const repA = 'rep-a'
+  const repB = 'rep-b'
+  const workspaceA = { id: 'identity-a', profileId: 'profile-a' }
+  const created: LeadVisibility = {
+    ownerRepId: repA,
+    workspaceIdentityId: 'identity-a',
+    senderProfileId: 'profile-a',
+    bestSenderProfileId: 'profile-b',
+  }
+
+  it('keeps the lead on Rep A after the best sender is Rep B', () => {
+    const switched = chooseSender(created, created.bestSenderProfileId!)
+    expect(switched.ownerRepId).toBe(repA)
+    expect(switched.workspaceIdentityId).toBe('identity-a')
+    expect(switched.senderProfileId).toBe('profile-b')
+    expect(leadBelongsToWorkspace(
+      { revenueIdentityId: switched.workspaceIdentityId, senderProfileId: switched.senderProfileId },
+      workspaceA,
+    )).toBe(true)
+    expect(leadBelongsToWorkspace(
+      { revenueIdentityId: switched.workspaceIdentityId, senderProfileId: switched.senderProfileId },
+      { id: 'identity-b', profileId: 'profile-b' },
+    )).toBe(false)
+  })
+
+  it('changes the owner only when the lead is explicitly assigned', () => {
+    const referred = assignLead(chooseSender(created, 'profile-b'), repB, 'profile-b')
+    expect(referred.ownerRepId).toBe(repB)
+    expect(referred.workspaceIdentityId).toBe('identity-a')
+    expect(referred.senderProfileId).toBe('profile-b')
   })
 })

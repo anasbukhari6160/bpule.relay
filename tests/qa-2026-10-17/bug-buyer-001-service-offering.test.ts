@@ -201,7 +201,7 @@ Budget: $5k/month. Start within 3 weeks.`
   it('canonical: genuine buyer episode inside a seller profile is verified', () => {
     const r = resolveBuyerIntentFromSource(MIXED)
     expect(r.verifiedBuyerRequest).toBe(true)
-    expect(r.relationshipRole).toBe('BUYER')
+    expect(r.relationshipRole).toBe('BUYER_AND_SELLER')
     expect(r.sellerSideContent).toBe(true)
   })
 

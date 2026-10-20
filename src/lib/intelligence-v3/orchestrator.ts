@@ -24,6 +24,7 @@ import {
 } from './decision/decision-provider'
 import { assembleDecisionPacket } from './decision/decision-assembler'
 import type { SourceFacts } from './source-facts-model'
+import { recordScopedTrace } from '@/lib/ai/runtime/telemetry'
 
 
 export interface V3OrchestratorOptions {
@@ -52,6 +53,12 @@ export interface V3OrchestratorOptions {
   onStatus?: (msg: string) => void
   /** V2 canonical intelligence for latent opportunity assessment */
   v2Canonical?: import('@/lib/intelligence-v2/types').CanonicalProspectIntelligence
+  /** Who this decision is for. A missing org still runs the decision; the trace is skipped. */
+  trace?: {
+    organizationId?: string | null
+    repId?: string | null
+    leadId?: string | null
+  }
 }
 
 export interface V3OrchestratorResult {
@@ -121,24 +128,75 @@ export async function runV3Decision(
 
   let providerResult: V3ProviderResult | undefined
   if (provider && bestEpisode) {
+    const decidedAt = Date.now()
     try {
       providerResult = await provider.decide(providerContext)
+      void recordScopedTrace({
+        feature: 'v3_decision',
+        callSite: 'v3:decision',
+        provider: provider.id,
+        model: providerResult.modelVersion,
+        latencyMs: providerResult.latencyMs || Date.now() - decidedAt,
+        success: true,
+        attempt: 1,
+        organizationId: options.trace?.organizationId,
+        repId: options.trace?.repId,
+        leadId: options.trace?.leadId,
+      })
 
       // Cascade: escalate to the stronger model when the primary is uncertain
       if (!options.decisionProvider && shouldCascadeEscalate(providerResult, bestEpisode)) {
-        const escalationResult = await runEscalationDecision(providerContext)
+        const escalationResult = await runEscalationDecision(providerContext, options)
         if (escalationResult) {
           providerResult = escalationResult
         }
       }
-    } catch {
+    } catch (err) {
+      void recordScopedTrace({
+        feature: 'v3_decision',
+        callSite: 'v3:decision',
+        provider: provider.id,
+        model: provider.modelVersion,
+        latencyMs: Date.now() - decidedAt,
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        attempt: 2,
+        organizationId: options.trace?.organizationId,
+        repId: options.trace?.repId,
+        leadId: options.trace?.leadId,
+      })
       // Primary provider failed after retry — try LongCat fallback
       const longcat = options.decisionProvider ? null : registry.getAvailable('longcat_structured')
       if (longcat && longcat.id !== provider.id) {
+        const fallbackAt = Date.now()
         try {
           providerResult = await longcat.decide(providerContext)
-        } catch {
-          // LongCat also failed — fall through to deterministic
+          void recordScopedTrace({
+            feature: 'v3_decision',
+            callSite: 'v3:decision:fallback',
+            provider: longcat.id,
+            model: providerResult.modelVersion,
+            latencyMs: providerResult.latencyMs || Date.now() - fallbackAt,
+            success: true,
+            fallback: true,
+            organizationId: options.trace?.organizationId,
+            repId: options.trace?.repId,
+            leadId: options.trace?.leadId,
+          })
+        } catch (fallbackErr) {
+          void recordScopedTrace({
+            feature: 'v3_decision',
+            callSite: 'v3:decision:fallback',
+            provider: longcat.id,
+            model: longcat.modelVersion,
+            latencyMs: Date.now() - fallbackAt,
+            success: false,
+            fallback: true,
+            error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+            organizationId: options.trace?.organizationId,
+            repId: options.trace?.repId,
+            leadId: options.trace?.leadId,
+          })
         }
       }
     }
@@ -223,7 +281,19 @@ function shouldCascadeEscalate(
  */
 async function runEscalationDecision(
   context: V3ProviderContext,
+  options: V3OrchestratorOptions,
 ): Promise<V3ProviderResult | null> {
+  const started = Date.now()
+  const scope = {
+    feature: 'v3_decision',
+    callSite: 'v3:escalation',
+    provider: 'openai',
+    model: 'gpt-4.1',
+    fallback: true,
+    organizationId: options.trace?.organizationId,
+    repId: options.trace?.repId,
+    leadId: options.trace?.leadId,
+  }
   try {
     const systemPrompt = `You are a senior commercial decision reviewer for a software development agency.
 You review an OPPORTUNITY EPISODE that the primary classifier found uncertain.
@@ -276,13 +346,21 @@ Rules:
       }),
     })
 
-    if (!response.ok) return null
+    if (!response.ok) {
+      void recordScopedTrace({ ...scope, latencyMs: Date.now() - started, success: false, error: `HTTP ${response.status}` })
+      return null
+    }
 
     const data = await response.json() as { choices: Array<{ message: { content: string } }> }
     const content = data.choices[0]?.message?.content
-    if (!content) return null
+    if (!content) {
+      void recordScopedTrace({ ...scope, latencyMs: Date.now() - started, success: false, error: 'empty escalation response' })
+      return null
+    }
 
     const parsed = JSON.parse(content) as Record<string, unknown>
+    const latencyMs = Date.now() - started
+    void recordScopedTrace({ ...scope, latencyMs, success: true })
 
     return {
       answers: {
@@ -297,11 +375,17 @@ Rules:
       },
       providerId: 'openai_gpt-4.1',
       modelVersion: 'openai_gpt-4.1_v3',
-      latencyMs: 0,
+      latencyMs,
       // Decisiveness: 1 when the probability is near 0 or 1, 0 at 0.5.
       confidence: Math.round(2 * Math.abs(clampEscalProb(parsed.buyerRequestProbability) - 0.5) * 100) / 100,
     }
-  } catch {
+  } catch (err) {
+    void recordScopedTrace({
+      ...scope,
+      latencyMs: Date.now() - started,
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    })
     return null
   }
 }

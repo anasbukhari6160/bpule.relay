@@ -57,7 +57,7 @@ export function goalFor(stage: DealStage, intent: ComposeIntent, memory: Convers
   const facts = memory?.facts
 
   if (intent === 'connection') {
-    return { goal: 'Earn the connection. One genuine, specific reason to connect. No pitch, no question, no CTA. Stay between 100 and 120 characters.', allowCallAsk: false, wordBudget: { min: 14, max: 22 } }
+    return { goal: 'Earn the connection. One genuine, specific reason to connect. No pitch, no question, no CTA. Hard cap 120 characters.', allowCallAsk: false, wordBudget: { min: 14, max: 20 } }
   }
 
   if (analysis?.intent === 'not_interested') {

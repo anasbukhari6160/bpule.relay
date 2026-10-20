@@ -93,7 +93,10 @@ export async function POST(
       })
     }
 
-    const result = await produceV3Intelligence(rawText, { forceReanalyze: true })
+    const result = await produceV3Intelligence(rawText, {
+      forceReanalyze: true,
+      trace: { leadId, organizationId: rep.organization_id, repId: rep.id },
+    })
 
     if (result?.intelligence) {
       const newScore = result.intelligence.canonicalScore ?? lead.canonical_score

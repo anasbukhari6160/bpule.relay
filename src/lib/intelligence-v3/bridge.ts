@@ -221,6 +221,12 @@ export interface V3IntelligenceOptions {
   orgCapabilities?: string[]
   /** Reference date for staleness. */
   referenceDate?: Date
+  /** Persisted with the model calls this run makes. */
+  trace?: {
+    organizationId?: string | null
+    repId?: string | null
+    leadId?: string | null
+  }
 }
 
 /**
@@ -622,7 +628,7 @@ export async function produceV3Intelligence(
       events = options.events
       eventSource = 'model'
     } else if (!deterministicOnly && !options.skipEventModel && process.env.OPENAI_API_KEY) {
-      events = await extractEventsFromSource(rawText, v2Canonical)
+      events = await extractEventsFromSource(rawText, v2Canonical, options.trace)
       eventSource = events.length > 0 ? 'model' : 'none'
     }
     if (events.length === 0) {
@@ -641,6 +647,7 @@ export async function produceV3Intelligence(
       decisionProvider: options.decisionProvider ?? undefined,
       deterministicOnly,
       referenceDate: options.referenceDate,
+      trace: options.trace,
     })
     // The events and reference date travel with the packet so a later
     // replay (save, shadow run) scores the same inputs and lands on the

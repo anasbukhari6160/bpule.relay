@@ -48,7 +48,7 @@ export type GoldenCategory =
 export type Qualification = 'STRONG' | 'WORTH_PURSUING' | 'MAYBE' | 'LOW' | 'SKIP'
 export type Intent = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
 export type CP = 'VERY_LOW' | 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH'
-export type Role = 'BUYER' | 'SELLER' | 'BUILDER' | 'RECRUITER' | 'CANDIDATE' | 'UNKNOWN'
+export type Role = 'BUYER' | 'BUYER_AND_SELLER' | 'SELLER' | 'BUILDER' | 'RECRUITER' | 'CANDIDATE' | 'UNKNOWN'
 export type Action =
   | 'CONTACT_NOW' | 'CONNECT_WITH_NOTE' | 'CONNECT_WITHOUT_NOTE' | 'RESEARCH_MORE' | 'OBSERVE' | 'WAIT' | 'CLOSE'
 

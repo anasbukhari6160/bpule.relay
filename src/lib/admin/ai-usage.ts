@@ -14,6 +14,8 @@ export interface AiTraceRow {
   fallback: boolean | null
   error: string | null
   schema_valid: boolean | null
+  feature?: string | null
+  call_site?: string | null
   created_at: string
 }
 
@@ -44,6 +46,7 @@ export interface AiUsageSummary {
   }
   daily: Array<{ date: string; calls: number; cost: number; errors: number }>
   byTask: AiUsageBucket[]
+  byFeature: AiUsageBucket[]
   byModel: AiUsageBucket[]
   recentErrors: Array<{ at: string; task: string; model: string; message: string }>
 }
@@ -53,6 +56,24 @@ const TASK_LABELS: Record<string, string> = {
   INTERACTIVE_WRITING: 'Drafts while you wait',
   DEEP_WRITING: 'Long-form writing',
   BACKGROUND_INTELLIGENCE: 'Background research',
+}
+
+const FEATURE_LABELS: Record<string, string> = {
+  prospect_extraction: 'Prospect extraction',
+  v3_decision: 'V3 decision',
+  connection_note: 'Connection note',
+  dm: 'DM',
+  follow_up: 'Follow-up',
+  reply: 'Reply',
+  upwork_extraction: 'Upwork extraction',
+  upwork_proposal: 'Upwork proposal',
+  'upwork_proposal+screening_answers': 'Upwork proposal + screening answers',
+  screening_answers: 'Screening answers',
+}
+
+function featureKey(row: AiTraceRow): string {
+  if ((row.call_site ?? '').includes('screening_answers')) return 'upwork_proposal+screening_answers'
+  return row.feature || row.call_site || 'unscoped'
 }
 
 export function taskLabel(task: string): string {
@@ -141,6 +162,7 @@ export function summarizeAiUsage(rows: AiTraceRow[], days: number, now: Date = n
     },
     daily: [...dailyMap.entries()].map(([date, v]) => ({ date, ...v })),
     byTask: bucketize(rows, (r) => r.task_class || 'other', taskLabel),
+    byFeature: bucketize(rows, featureKey, (key) => FEATURE_LABELS[key] ?? taskLabel(key)),
     byModel: bucketize(rows, (r) => `${r.provider ?? 'unknown'} · ${r.model ?? 'unknown'}`, (k) => k),
     recentErrors,
   }

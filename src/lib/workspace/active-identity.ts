@@ -1,8 +1,17 @@
 /**
- * The sidebar workspace is one assigned revenue identity. Leads and
- * prospecting follow that choice: a lead belongs to the workspace when it
- * was saved under the identity, or when it was sent from the profile linked
- * to that identity.
+ * Four separate facts about a lead. None of them may be inferred from another.
+ *
+ * - Owner: the rep who holds the lead (`ownerRepId`). Changes only when
+ *   someone explicitly refers or assigns it.
+ * - Workspace: the sidebar identity the lead was captured under
+ *   (`revenueIdentityId`). This is what the Leads view filters on.
+ * - Sender: the profile the message goes out as (`senderProfileId`). A rep
+ *   can send as a different profile without leaving their workspace.
+ * - Best sender: a routing recommendation. It is not an assignment. Choosing
+ *   it updates the sender only, and only when the rep does so on purpose.
+ *
+ * A recommendation or a sender switch must not move the lead out of the
+ * workspace it was saved in, and must not change who owns it.
  */
 
 export const ACTIVE_IDENTITY_COOKIE = 'relay-active-identity'
@@ -26,23 +35,46 @@ export function leadBelongsToWorkspace(
   lead: { revenueIdentityId?: string | null; senderProfileId?: string | null },
   identity: { id: string; profileId?: string | null },
 ): boolean {
-  if (lead.revenueIdentityId && lead.revenueIdentityId === identity.id) return true
+  // A stamped workspace is the only visibility key. The current sender does
+  // not move the lead into another workspace or out of this one.
+  if (lead.revenueIdentityId) return lead.revenueIdentityId === identity.id
+  // Leads captured before workspace stamping still show on the profile that
+  // sent them, until they have an identity of their own.
   if (identity.profileId && lead.senderProfileId && lead.senderProfileId === identity.profileId) return true
   return false
 }
 
 /**
- * Stamp the workspace identity onto a capture only while the sender is still
- * that identity's profile. Changing sender for one check leaves the lead
- * with the other profile, so it shows up under that profile's workspace.
+ * The workspace a new lead is saved under. The sender argument is ignored:
+ * sending as another profile does not change which workspace owns the row.
  */
 export function workspaceIdentityForSender(
   identity: { id: string; profileId?: string | null } | null | undefined,
-  senderProfileId: string | null | undefined,
+  _senderProfileId?: string | null,
 ): string | null {
-  if (!identity) return null
-  if (!identity.profileId || !senderProfileId || senderProfileId === identity.profileId) return identity.id
-  return null
+  return identity?.id ?? null
+}
+
+export interface LeadVisibility {
+  ownerRepId: string
+  workspaceIdentityId: string | null
+  senderProfileId: string | null
+  /** Recommendation only. Never written as owner or workspace. */
+  bestSenderProfileId: string | null
+}
+
+/** Choosing a sender, including the recommended one, leaves owner and workspace alone. */
+export function chooseSender(lead: LeadVisibility, senderProfileId: string): LeadVisibility {
+  return { ...lead, senderProfileId }
+}
+
+/** Explicit refer or assign. This is the only path that changes the owner. */
+export function assignLead(lead: LeadVisibility, toRepId: string, toProfileId?: string | null): LeadVisibility {
+  return {
+    ...lead,
+    ownerRepId: toRepId,
+    senderProfileId: toProfileId ?? lead.senderProfileId,
+  }
 }
 
 export function writeActiveIdentityCookie(identityId: string) {

@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
 import { LeadScoreRing } from '@/components/score-ring'
 
-const V3 = 'relay_decision_v3.2.0'
+const V3 = 'relay_decision_v3.3.0'
 
 describe('BUG-LEAD-005 score consistency', () => {
   it('reported: the same stored lead shows the same /10 on list rows, detail and ring', () => {

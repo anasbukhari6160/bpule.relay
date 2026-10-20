@@ -12,7 +12,8 @@
  *                recruiter / candidate at WORTH_PURSUING+
  *   FALSE_LOW    verified buyer request (intent HIGH) stored at LOW/SKIP
  *   WRONG_BUYER  stored role BUYER / intent HIGH with no verified first-person request
- *   WRONG_SELLER seller language in the source but stored role BUYER
+ *   WRONG_SELLER stored role BUYER, seller activity, and no separate verified buyer request.
+ *                BUYER_AND_SELLER, and a BUYER with that request, are not errors.
  *   WRONG_INDUSTRY  stored current industry ≠ industry the reader resolves now
  *   WRONG_TIMING stored timing CURRENT/URGENT while the source has no current request
  *   WRONG_ACCESS stored DIRECT access on a 3rd-degree / no-route source
@@ -33,6 +34,7 @@ import { recomputePacketFromStored } from '../../src/lib/intelligence-v3/bridge'
 import { parsePacket, loadSenderProfiles, routeLead } from '../../src/lib/relay/routing-context'
 import { readSourceFacts } from '../../src/lib/intelligence-v3/source-facts-model'
 import { qualifyCanonicalScore, displayScoreForCanonical, fromStoredQualification } from '../../src/lib/scoring/qualification'
+import { isWrongSellerClassification } from '../../src/lib/intelligence-v3/buyer-intent'
 import { isPacketCurrent, SCORING_VERSION } from '../../src/lib/intelligence-v3/versions'
 import { ROUTING_MISMATCH_DELTA } from '../../src/lib/intelligence-v3/action/recommended-action'
 import { evaluateMessage } from '../../src/lib/relay/message-forge'
@@ -166,7 +168,7 @@ async function main() {
     }
     if (storedBand && LOW.has(storedBand) && (row.newIntent === 'HIGH' || (row.newQualification === 'STRONG'))) flags.add('FALSE_LOW')
     if ((row.storedRole === 'BUYER' || row.storedIntent === 'HIGH') && facts && !facts.buyerRequest) flags.add('WRONG_BUYER')
-    if (facts?.sellerActivity && row.storedRole === 'BUYER') flags.add('WRONG_SELLER')
+    if (isWrongSellerClassification(row.storedRole, Boolean(facts?.sellerActivity), Boolean(facts?.buyerRequest))) flags.add('WRONG_SELLER')
     const storedIndustry = packet?.sourceFacts?.currentIndustry ?? null
     if (storedIndustry && row.newIndustry && storedIndustry !== row.newIndustry) flags.add('WRONG_INDUSTRY')
     if (['CURRENT', 'URGENT'].includes(row.storedTiming ?? '') && row.newTiming && !['CURRENT', 'URGENT'].includes(row.newTiming)) flags.add('WRONG_TIMING')

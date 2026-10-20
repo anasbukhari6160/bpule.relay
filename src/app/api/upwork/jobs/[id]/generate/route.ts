@@ -229,6 +229,9 @@ export async function POST(
       maxTokens: generationMode === 'premium' ? 2048 : 1536,
       temperature: generationMode === 'premium' ? 0.5 : 0.6,
       ...(generationMode === 'premium' ? { tier: 'sol' as const } : {}),
+      feature: 'upwork_proposal',
+      callSite: screeningQuestions.length > 0 ? 'upwork:proposal+screening_answers' : 'upwork:proposal',
+      jobId: id,
     })
     best = result.data
   } catch {

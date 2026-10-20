@@ -8,6 +8,7 @@
 import { segmentLinkedInSource, type SourceSegment } from './source-segmenter'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import { withRetry, fetchOpenAI } from './retry-utils'
+import { recordScopedTrace } from '@/lib/ai/runtime/telemetry'
 
 
 const EVENT_EXTRACTION_SCHEMA = {
@@ -60,6 +61,7 @@ export interface ExtractedEvent {
 export async function extractEventsFromSource(
   rawText: string,
   v2Canonical: CanonicalProspectIntelligence,
+  scope?: { organizationId?: string | null; repId?: string | null; leadId?: string | null },
 ): Promise<ExtractedEvent[]> {
   const segments = segmentLinkedInSource(rawText)
   const knownOrgs = extractKnownOrganizations(v2Canonical)
@@ -90,6 +92,7 @@ ${p.text.slice(0, 2000)}
 
 Extract all commercial events from these posts. Each event must reference an organization explicitly named in the text.`
 
+  const started = Date.now()
   try {
     const result = await withRetry(
       () => fetchOpenAI(
@@ -106,8 +109,32 @@ Extract all commercial events from these posts. Each event must reference an org
 
     if (result.error || !result.data) {
       console.warn('[V3 Event Extraction] API failed after retry:', result.error?.slice(0, 200))
+      void recordScopedTrace({
+        feature: 'prospect_extraction',
+        callSite: 'v3:event-extraction',
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        latencyMs: Date.now() - started,
+        success: false,
+        error: result.error,
+        attempt: 2,
+        organizationId: scope?.organizationId,
+        repId: scope?.repId,
+        leadId: scope?.leadId,
+      })
       return []
     }
+    void recordScopedTrace({
+      feature: 'prospect_extraction',
+      callSite: 'v3:event-extraction',
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      latencyMs: Date.now() - started,
+      success: true,
+      organizationId: scope?.organizationId,
+      repId: scope?.repId,
+      leadId: scope?.leadId,
+    })
 
     const parsed = JSON.parse(result.data) as { events: ExtractedEvent[] }
     if (!parsed?.events?.length) {
@@ -122,6 +149,19 @@ Extract all commercial events from these posts. Each event must reference an org
     return deduplicateEvents(validated)
   } catch (err) {
     console.warn('[V3 Event Extraction] Failed:', err instanceof Error ? err.message : err)
+    void recordScopedTrace({
+      feature: 'prospect_extraction',
+      callSite: 'v3:event-extraction',
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      latencyMs: Date.now() - started,
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+      attempt: 2,
+      organizationId: scope?.organizationId,
+      repId: scope?.repId,
+      leadId: scope?.leadId,
+    })
     return []
   }
 }

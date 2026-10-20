@@ -38,7 +38,7 @@ describe('cold policy', () => {
     ['LOW + HIGH cp → OBSERVE', { score: 30, qualification: 'LOW', commercialPotential: 'HIGH' }, 'HIGH', ['OBSERVE']],
     ['LOW + LOW cp → CLOSE', { score: 30, qualification: 'LOW', commercialPotential: 'LOW' }, 'HIGH', ['CLOSE']],
     ['LOW + LOW confidence → CLOSE (not research)', { score: 30, qualification: 'LOW', commercialPotential: 'LOW' }, 'LOW', ['CLOSE']],
-    ['seller STRONG → CONNECT_WITHOUT_NOTE', { relationshipRole: 'SELLER', score: 76, qualification: 'STRONG' }, 'HIGH', ['CONNECT_WITHOUT_NOTE']],
+    ['seller STRONG without a buy → CONNECT_WITH_NOTE', { relationshipRole: 'SELLER', score: 76, qualification: 'STRONG' }, 'HIGH', ['CONNECT_WITH_NOTE']],
     ['seller MAYBE → OBSERVE', { relationshipRole: 'SELLER', score: 45, qualification: 'MAYBE' }, 'HIGH', ['OBSERVE']],
     ['seller LOW → CLOSE', { relationshipRole: 'SELLER', score: 30, qualification: 'LOW' }, 'HIGH', ['CLOSE']],
     ['seller + LOW confidence is still OBSERVE, never RESEARCH', { relationshipRole: 'SELLER', score: 45, qualification: 'MAYBE' }, 'LOW', ['OBSERVE']],

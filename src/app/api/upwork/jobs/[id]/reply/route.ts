@@ -83,6 +83,9 @@ export async function POST(
       schema: schema as unknown as Record<string, unknown>,
       maxTokens: 512,
       temperature: 0.6,
+      feature: 'reply',
+      callSite: 'upwork:reply',
+      jobId: id,
     })
 
     let reply = result.data.reply.trim()

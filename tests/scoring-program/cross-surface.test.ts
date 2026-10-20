@@ -20,8 +20,8 @@ describe('one lead, one number, everywhere', () => {
   for (const s of SCORES) {
     it(`canonical ${s}: detail, list row, JSON-string blob, analytics band and priority agree`, () => {
       const band = qualifyCanonicalScore(s)
-      const detail = getLeadDisplayScore({ canonicalScore: s, canonicalIntelligence: { qualification: toStoredQualification(band.qualification), intelligenceVersion: 'relay_decision_v3.2.0' } })
-      const listRow = getLeadDisplayScore({ canonicalScore: s, displayQualification: toStoredQualification(band.qualification), displayIntelligenceVersion: 'relay_decision_v3.2.0' })
+      const detail = getLeadDisplayScore({ canonicalScore: s, canonicalIntelligence: { qualification: toStoredQualification(band.qualification), intelligenceVersion: 'relay_decision_v3.3.0' } })
+      const listRow = getLeadDisplayScore({ canonicalScore: s, displayQualification: toStoredQualification(band.qualification), displayIntelligenceVersion: 'relay_decision_v3.3.0' })
       const jsonBlob = getLeadDisplayScore({ canonicalScore: s, canonicalIntelligence: JSON.stringify({ qualification: 'maybe' }) })
       const noBlob = getLeadDisplayScore({ canonicalScore: s })
       for (const d of [detail, listRow, jsonBlob, noBlob]) {

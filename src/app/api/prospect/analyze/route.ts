@@ -625,8 +625,7 @@ export async function POST(request: Request) {
           canonicalScore: canonical.canonicalScore,
           canonicalIntelligence: canonical as unknown as Record<string, unknown>,
           scoreBreakdown: canonical.scoreBreakdown as unknown as Record<string, unknown>,
-          revenueIdentityId: requestedWorkspaceId
-            ?? (bestSender ? (bestSender as Profile & { revenueIdentityId?: string | null }).revenueIdentityId ?? null : null),
+          revenueIdentityId: requestedWorkspaceId,
           senderProfileId: bestSender?.id ?? null,
         })
         await store.emitRelayEvent({
@@ -714,7 +713,7 @@ export async function POST(request: Request) {
           mode: 'warm_conversational',
           assessment: revenue.assessment,
           messageJob: revenue.messageJob,
-          wordBudget: { min: 14, max: 22, label: 'connection' },
+          wordBudget: { min: 14, max: 20, label: 'connection' },
         }
       }
 

@@ -20,10 +20,10 @@
 
 import { BUYER_INTENT_VERSION } from './buyer-intent'
 
-export const SCORING_VERSION = 'relay_decision_v3.2.0'
+export const SCORING_VERSION = 'relay_decision_v3.3.0'
 export const SOURCE_FACTS_VERSION = 'source_facts_v1'
 export const ATTRIBUTION_VERSION = 'attribution_v2'
-export const ACTION_POLICY_VERSION = 'action_policy_v1'
+export const ACTION_POLICY_VERSION = 'action_policy_v2'
 export const DISPLAY_VERSION = 'display_v2'
 export const V3_DECISION_PROMPT_VERSION = 'v3_decision_prompt_v2'
 

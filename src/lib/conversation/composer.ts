@@ -330,7 +330,7 @@ export async function composeMessage(ctx: ComposeContext, input: ComposeInput): 
   const live = ctx.thread.some((t) => t.role === 'client')
   const tier = live && (input.intent === 'reply' || input.intent === 'custom' || input.intent === 'followup') ? 'terra' : 'luna'
 
-  const call = async (prompt: string): Promise<{ raw: RawCompose | null; model: string | null }> => {
+  const call = async (prompt: string, attempt = 1): Promise<{ raw: RawCompose | null; model: string | null }> => {
     try {
       const res = await runtimeGenerate<RawCompose>({
         task: 'FAST_STRUCTURED',
@@ -355,8 +355,9 @@ export async function composeMessage(ctx: ComposeContext, input: ComposeInput): 
         temperature: input.previousText ? 0.5 : 0.7,
         promptVersion: 'conversation-compose-v1',
         skipCache: true,
-        callSite: 'conversation/composer:composeMessage',
-        feature: `conversation_${input.intent}`,
+        callSite: attempt > 1 ? 'conversation/composer:composeMessage:retry' : 'conversation/composer:composeMessage',
+        feature: input.intent === 'connection' ? 'connection_note' : input.intent === 'followup' ? 'follow_up' : input.intent === 'reply' ? 'reply' : 'dm',
+        leadId: ctx.lead.id,
       })
       return { raw: res.data ?? null, model: res.trace?.model ?? null }
     } catch {
@@ -373,7 +374,7 @@ export async function composeMessage(ctx: ComposeContext, input: ComposeInput): 
   let issues = text ? checkMessage(text, input.intent, goal, ctx.memory, ctx.thread, answers, claimable) : ['No draft returned.']
 
   if (raw && issues.length > 0) {
-    const retry = await call(`${user}\n\nYOUR PREVIOUS DRAFT:\n${text}\n\nIt broke these rules. Rewrite it so none apply:\n${issues.map((i) => `- ${i}`).join('\n')}`)
+    const retry = await call(`${user}\n\nYOUR PREVIOUS DRAFT:\n${text}\n\nIt broke these rules. Rewrite it so none apply:\n${issues.map((i) => `- ${i}`).join('\n')}`, 2)
     if (retry.raw?.message) {
       const retryText = cleanMessage(String(retry.raw.message), input.intent, midThread)
       const retryAnswers = Array.isArray(retry.raw.answers) ? retry.raw.answers.map(String) : []

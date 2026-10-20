@@ -144,4 +144,7 @@ export interface AiTrace {
   promptVersion?: string
   /** Whether result was served from deterministic cache */
   cacheHit?: boolean
+  leadId?: string | null
+  jobId?: string | null
+  repId?: string | null
 }

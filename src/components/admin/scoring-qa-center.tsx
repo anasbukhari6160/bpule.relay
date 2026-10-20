@@ -146,7 +146,7 @@ export function ScoringQaCenter() {
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="truncate text-[13px] font-medium text-ink">{r.company ?? r.contactName ?? r.id.slice(0, 8)}</span>
                       {r.qualification && <Pill tone={QUAL_TONE[r.qualification] ?? 'neutral'}>{r.qualification.replaceAll('_', ' ').toLowerCase()}</Pill>}
-                      {r.relationshipRole && <Pill tone={r.relationshipRole === 'BUYER' ? 'success' : r.relationshipRole === 'SELLER' || r.relationshipRole === 'RECRUITER' || r.relationshipRole === 'CANDIDATE' ? 'warning' : 'neutral'}>{r.relationshipRole.toLowerCase()}</Pill>}
+                      {r.relationshipRole && <Pill tone={r.relationshipRole === 'BUYER' || r.relationshipRole === 'BUYER_AND_SELLER' ? 'success' : r.relationshipRole === 'SELLER' || r.relationshipRole === 'RECRUITER' || r.relationshipRole === 'CANDIDATE' ? 'warning' : 'neutral'}>{r.relationshipRole.toLowerCase().replaceAll('_', ' ')}</Pill>}
                       {r.buyerIntent && <Pill tone="neutral">intent {r.buyerIntent.toLowerCase()}</Pill>}
                       {r.confidence && <Pill tone={r.confidence === 'LOW' ? 'warning' : 'neutral'}>conf {r.confidence.toLowerCase()}</Pill>}
                       {r.contradictions > 0 && <Pill tone="warning">{r.contradictions} contradiction{r.contradictions > 1 ? 's' : ''}</Pill>}

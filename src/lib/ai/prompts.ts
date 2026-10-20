@@ -23,7 +23,7 @@ export const FORMATTING_RULES = `FORMATTING RULES:
 - Never write "Hi Name —" or "Name —" — use a comma: "Hi Name,".
 - Never use emojis or exclamation marks.
 - Write the shortest message that does the one job.
-- Budgets: connection 15-35 words, first DM 20-55, follow-up 15-45, interested reply 30-70. These are ceilings, not targets.
+- Budgets: connection notes are at most 120 characters (about 14-20 words). First DM 20-55 words, follow-up 15-45, interested reply 30-70. These are ceilings, not targets.
 - One observation. One question.`
 
 export const BANNED_PHRASES_COMPACT = `"unpopular opinion:", "here's the thing", "let that sink in", "thread 🧵", "stop scrolling", "read that again", "let me tell you", "the truth is", "nobody talks about this"`

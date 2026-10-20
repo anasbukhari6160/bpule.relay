@@ -122,7 +122,7 @@ export function applyQaFilters(rows: QaDecisionRow[], f: QaFilters): QaDecisionR
     if (f.lowConfidence && r.confidence !== 'LOW') return false
     if (f.contradiction && r.contradictions === 0) return false
     if (f.seller && r.relationshipRole !== 'SELLER') return false
-    if (f.buyer && r.relationshipRole !== 'BUYER') return false
+    if (f.buyer && r.relationshipRole !== 'BUYER' && r.relationshipRole !== 'BUYER_AND_SELLER') return false
     if (f.recruiter && r.relationshipRole !== 'RECRUITER') return false
     if (f.candidate && r.relationshipRole !== 'CANDIDATE') return false
     if (f.highScore && !(r.qualification === 'STRONG' || r.qualification === 'WORTH_PURSUING')) return false
