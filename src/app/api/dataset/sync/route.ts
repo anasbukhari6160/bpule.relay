@@ -11,6 +11,8 @@
 import { NextResponse } from 'next/server'
 import { getAuthContext } from '@/lib/auth/organization'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
+import { hashRawInput } from '@/lib/dataset/service'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,9 +28,12 @@ export async function POST(request: Request) {
   let errors = 0
 
   // ── Find leads without samples ─────────────────────────────────────
+  // Service-role client: scope every read to the caller's organisation, or
+  // "Sync All" would create samples for every tenant's leads.
   const { data: leads } = await client
     .from('leads')
     .select('id, organization_id, company, contact_name, canonical_score, sender_profile_id, status, raw_input, canonical_intelligence')
+    .eq('organization_id', auth.orgId)
     .not('canonical_intelligence', 'is', null)
     .limit(500)
 
@@ -59,7 +64,7 @@ export async function POST(request: Request) {
             platform: 'linkedin',
             version: 1,
             raw_input: lead.raw_input ?? null,
-            raw_input_hash: lead.raw_input ? `${lead.raw_input.length}:${lead.raw_input.slice(0, 100)}` : null,
+            raw_input_hash: lead.raw_input ? hashRawInput(lead.raw_input) : null,
             extracted_identity: {
               name: lead.contact_name ?? null,
               title: (sourceFacts as any)?.person?.title ?? null,
@@ -67,7 +72,7 @@ export async function POST(request: Request) {
               industry: orgContext?.currentIndustry ?? null,
             },
             canonical_score: lead.canonical_score ?? null,
-            display_score: lead.canonical_score != null ? Math.round(lead.canonical_score / 10) : null,
+            display_score: lead.canonical_score != null ? displayScoreForCanonical(lead.canonical_score) : null,
             qualification: lead.canonical_score != null ? qualify(lead.canonical_score) : null,
             score_dimensions: ((ci.scoreBreakdown as any)?.dimensions as any[]) ?? [],
             source_facts: sourceFacts ?? null,
@@ -120,6 +125,7 @@ export async function POST(request: Request) {
   const { data: jobs } = await client
     .from('upwork_jobs')
     .select('id, organization_id, title, canonical_score, status, raw_input')
+    .eq('organization_id', auth.orgId)
     .limit(500)
 
   if (jobs) {
@@ -143,7 +149,7 @@ export async function POST(request: Request) {
             raw_input: job.raw_input ?? null,
             extracted_identity: { company: job.title ?? null },
             canonical_score: job.canonical_score ?? null,
-            display_score: job.canonical_score != null ? Math.round(job.canonical_score / 10) : null,
+            display_score: job.canonical_score != null ? displayScoreForCanonical(job.canonical_score) : null,
             qualification: job.canonical_score != null ? qualify(job.canonical_score) : null,
             funnel_stage: job.canonical_score != null ? 'SCORE' : 'RAW_INPUT',
             label_status: job.canonical_score != null ? 'AI_ONLY' : 'UNLABELED',
@@ -160,10 +166,7 @@ export async function POST(request: Request) {
   return NextResponse.json({ synced, errors })
 }
 
+/** One band table (qualification.ts); the sync must not keep its own thresholds. */
 function qualify(score: number): string {
-  if (score >= 75) return 'STRONG'
-  if (score >= 55) return 'WORTH_PURSUING'
-  if (score >= 35) return 'MAYBE'
-  if (score >= 15) return 'LOW'
-  return 'SKIP'
+  return qualifyCanonicalScore(score).qualification
 }

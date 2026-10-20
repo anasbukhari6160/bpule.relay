@@ -16,6 +16,10 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   const auth = await getAuthContext()
   if (!auth) return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 })
+  // Samples carry raw pasted sources and message text: admin surface only.
+  if (!auth.isAdmin && !auth.isOwner && !auth.isManager) {
+    return NextResponse.json({ error: 'Admin or owner access required.' }, { status: 403 })
+  }
 
   const url = new URL(request.url)
   const sp = url.searchParams

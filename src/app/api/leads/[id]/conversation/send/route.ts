@@ -6,6 +6,7 @@ import { loadConversation, logSentMessage } from '@/lib/conversation/service'
 import type { ComposeIntent } from '@/lib/conversation/types'
 import { captureSent, findLatestSampleForLead } from '@/lib/dataset/service'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
 
 export const maxDuration = 60
 
@@ -40,7 +41,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const sentText = typeof body.text === 'string' ? body.text : ''
     const repId = store.getCurrentRepId()
     const datasetClient = createServiceSupabase()
-    const sampleId = await findLatestSampleForLead(datasetClient, 'all-orgs', id)
+    const auth = await getAuthContext()
+    const sampleId = auth ? await findLatestSampleForLead(datasetClient, auth.orgId, id) : null
     if (sampleId) void captureSent(datasetClient, sampleId, sentText, repId).catch(() => {})
 
     const loaded = await loadConversation(store, id)

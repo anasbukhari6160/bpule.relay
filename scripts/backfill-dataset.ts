@@ -10,6 +10,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -25,6 +26,12 @@ try {
 
 import { createServiceSupabase } from '@/lib/supabase/service'
 import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
+
+/** SHA-256 of the whitespace-normalised source (same as src/lib/scoring-v4/opportunity-key.ts). */
+function sha256Normalized(raw: string): string {
+  const normalised = raw.replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  return createHash('sha256').update(normalised).digest('hex')
+}
 
 async function main() {
   const client = createServiceSupabase()
@@ -74,7 +81,7 @@ async function main() {
           platform: 'linkedin',
           version: 1,
           raw_input: lead.raw_input ?? null,
-          raw_input_hash: lead.raw_input ? `${lead.raw_input.length}:${lead.raw_input.slice(0, 100)}` : null,
+          raw_input_hash: lead.raw_input ? sha256Normalized(lead.raw_input) : null,
           extracted_identity: {
             name: person.fullName ?? lead.contact_name ?? null,
             title: person.title ?? null,
@@ -223,7 +230,7 @@ async function main() {
           platform: 'upwork',
           version: 1,
           raw_input: job.raw_input ?? null,
-          raw_input_hash: job.raw_input ? `${job.raw_input.length}:${job.raw_input.slice(0, 100)}` : null,
+          raw_input_hash: job.raw_input ? sha256Normalized(job.raw_input) : null,
           extracted_identity: { company: job.title ?? null },
           canonical_score: job.canonical_score ?? null,
           display_score: job.canonical_score != null ? Math.round(job.canonical_score / 10) : null,

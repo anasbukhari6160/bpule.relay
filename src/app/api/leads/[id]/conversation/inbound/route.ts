@@ -4,6 +4,7 @@ import { safeErrorResponse } from '@/lib/errors'
 import { loadConversation } from '@/lib/conversation/service'
 import { captureClientReply, findLatestSampleForLead } from '@/lib/dataset/service'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
 
 export const maxDuration = 60
 
@@ -38,7 +39,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     // Dataset: capture CLIENT_REPLY event (uses service role for system capture).
     const datasetClient = createServiceSupabase()
-    const sampleId = await findLatestSampleForLead(datasetClient, 'all-orgs', id)
+    const auth = await getAuthContext()
+    const sampleId = auth ? await findLatestSampleForLead(datasetClient, auth.orgId, id) : null
     if (sampleId) void captureClientReply(datasetClient, sampleId, text).catch(() => {})
 
     const loaded = await loadConversation(store, id)

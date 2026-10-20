@@ -5,46 +5,43 @@
  * how PII is handled: REDACTED (safe default) or ANONYMIZED (linkable IDs).
  */
 
+import { createHmac } from 'node:crypto'
 import type { ExportFormat, ExportMode, IntelligenceSample, PrivacyMode } from './types'
 
 // ── Anonymization ──────────────────────────────────────────────
 
-const ANON_MAP = new Map<string, string>()
-let anonCounter = 0
-
-function anonId(prefix: string, original: string | null): string | null {
+/**
+ * Stable, longitudinal anonymous ids: the same lead or sample maps to the
+ * same anonymous id in every export of the same organisation, without any
+ * table that could reverse it. Keyed HMAC-SHA256 over the original id; the
+ * key is the organisation scope plus DATASET_ANON_SALT when set.
+ */
+export function anonId(prefix: string, original: string | null, scope: string): string | null {
   if (!original) return null
-  const key = `${prefix}:${original}`
-  if (!ANON_MAP.has(key)) {
-    anonCounter++
-    ANON_MAP.set(key, `${prefix}_${anonCounter.toString(36)}`)
-  }
-  return ANON_MAP.get(key)!
+  const key = `${process.env.DATASET_ANON_SALT ?? 'relay-dataset-anon'}:${scope}`
+  const digest = createHmac('sha256', key).update(`${prefix}:${original}`).digest('hex').slice(0, 16)
+  return `${prefix}_${digest}`
 }
 
 const PII_PATTERNS: Array<[RegExp, string]> = [
-  [/([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/, 'redact-email'],
-  [/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/, 'redact-phone'],
-  [/linkedin\.com\/in\/[\w%-]+\/?/i, 'redact-li-url'],
-  [/https?:\/\/[^\s]+/i, 'redact-url'],
+  [/([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, 'redact-email'],
+  [/\+?\(?\d{1,3}\)?[\s.-]?\d{2,4}[\s.-]?\d{3,4}[\s.-]?\d{3,4}\b/g, 'redact-phone'],
+  [/linkedin\.com\/in\/[\w%-]+\/?/gi, 'redact-li-url'],
+  [/https?:\/\/[^\s)]+/gi, 'redact-url'],
 ]
 
-/** Strip or replace PII from free text. */
-function sanitizeText(text: string | null, mode: PrivacyMode): string | null {
+/** Strip PII from free text. Both privacy modes redact; ANONYMIZED only differs in keeping linkable ids. */
+export function sanitizeText(text: string | null, mode: PrivacyMode): string | null {
   if (!text) return null
-  if (mode === 'REDACTED') {
-    let result = text
-    for (const [pattern] of PII_PATTERNS) {
-      result = result.replace(pattern, '[REDACTED]')
-    }
-    return result
+  let result = text
+  for (const [pattern] of PII_PATTERNS) {
+    result = result.replace(pattern, mode === 'REDACTED' ? '[REDACTED]' : '[ANONYMIZED]')
   }
-  // ANONYMIZED: preserve structure, replace identifiers with anon IDs
-  return text
+  return result
 }
 
 /** Build a privacy-safe copy of a sample for export. */
-function safeSample(sample: IntelligenceSample, mode: PrivacyMode, forExport: ExportMode): Record<string, unknown> {
+function safeSample(sample: IntelligenceSample, mode: PrivacyMode, forExport: ExportMode, scope: string): Record<string, unknown> {
   if (mode === 'REDACTED') {
     return {
       id: sample.id,
@@ -76,11 +73,15 @@ function safeSample(sample: IntelligenceSample, mode: PrivacyMode, forExport: Ex
     }
   }
 
-  // ANONYMIZED: keep longitudinal linkability via stable anon IDs
+  // ANONYMIZED: keep longitudinal linkability via stable anon IDs; the real
+  // ids never leave the system.
   return {
-    id: sample.id,
-    anon_lead_id: anonId('lead', sample.leadId),
-    anon_sample_id: anonId('sample', sample.id),
+    anon_lead_id: anonId('lead', sample.leadId, scope),
+    anon_sample_id: anonId('sample', sample.id, scope),
+    anon_job_id: anonId('job', sample.upworkJobId, scope),
+    anon_sender_id: anonId('sender', sample.senderProfileId, scope),
+    decision_run_id: sample.decisionRunId,
+    raw_input_hash: sample.rawInputHash,
     platform: sample.platform,
     version: sample.version,
     funnel_stage: sample.funnelStage,
@@ -99,7 +100,25 @@ function safeSample(sample: IntelligenceSample, mode: PrivacyMode, forExport: Ex
     connection_note: sanitizeText(sample.connectionNote, mode),
     first_dm: sanitizeText(sample.firstDm, mode),
     final_sent_text: sanitizeText(sample.finalSentText, mode),
+    human_edited_text: (sample.humanEditedText ?? []).map(e => ({
+      generatedText: sanitizeText(e.generatedText, mode),
+      editedText: sanitizeText(e.editedText, mode),
+      finalSentText: sanitizeText(e.finalSentText, mode),
+      anon_editor_id: anonId('rep', e.editorId, scope),
+      timestamp: e.timestamp,
+    })),
+    client_replies: (sample.clientReplies ?? []).map(r => sanitizeText(r, mode)),
+    human_feedback: (sample.humanFeedback ?? []).map(f => ({ feedbackType: f.feedbackType, timestamp: f.timestamp })),
     score_dimensions: sample.scoreDimensions,
+    source_facts: sample.sourceFacts,
+    rejected_signals: sample.rejectedSignals,
+    sender_rankings: (sample.senderRankings ?? []).map(r => ({ anon_sender_id: anonId('sender', r.senderId, scope), profileMatch: r.profileMatch })),
+    anon_best_sender_id: anonId('sender', sample.bestSenderId, scope),
+    anon_current_sender_id: anonId('sender', sample.currentSenderId, scope),
+    versions: {
+      scoring: sample.scoringVersion, sourceFacts: sample.sourceFactsVersion, buyerIntent: sample.buyerIntentVersion,
+      attribution: sample.attributionVersion, routing: sample.routingVersion, prompt: sample.promptVersion, model: sample.modelVersion,
+    },
   }
 }
 
@@ -115,20 +134,20 @@ interface ExportResult {
 const DATASET_SCHEMA_VERSION = 'intelligence_dataset_v1'
 
 /**
- * Export samples in the requested mode + format.
- * Resets anonymization state per call so exports are independent.
+ * Export samples in the requested mode + format. `anonScope` (the
+ * organisation id) keys the anonymous ids so they are stable across exports
+ * of one organisation and different between organisations.
  */
 export function exportSamples(
   samples: IntelligenceSample[],
   mode: ExportMode,
   format: ExportFormat,
   privacy: PrivacyMode,
+  opts: { anonScope?: string } = {},
 ): ExportResult {
-  ANON_MAP.clear()
-  anonCounter = 0
-
+  const scope = opts.anonScope ?? 'unscoped'
   const filtered = filterForMode(samples, mode)
-  const safe = filtered.map(s => safeSample(s, privacy, mode))
+  const safe = filtered.map(s => safeSample(s, privacy, mode, scope))
 
   const meta = {
     dataset_schema_version: DATASET_SCHEMA_VERSION,

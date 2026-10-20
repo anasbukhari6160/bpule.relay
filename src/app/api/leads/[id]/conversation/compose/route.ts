@@ -5,6 +5,7 @@ import { composeForLead } from '@/lib/conversation/service'
 import type { ComposeIntent } from '@/lib/conversation/types'
 import { captureMessageGeneration, findLatestSampleForLead } from '@/lib/dataset/service'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
 
 export const maxDuration = 120
 
@@ -38,7 +39,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     // Dataset: capture MESSAGE_GENERATION (uses service role for system capture).
     const datasetClient = createServiceSupabase()
-    const sampleId = await findLatestSampleForLead(datasetClient, 'all-orgs', id)
+    const auth = await getAuthContext()
+    const sampleId = auth ? await findLatestSampleForLead(datasetClient, auth.orgId, id) : null
     if (sampleId && composed.draft) {
       void captureMessageGeneration(datasetClient, sampleId, {
         generatedText: composed.draft.text,

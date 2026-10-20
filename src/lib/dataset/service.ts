@@ -8,7 +8,10 @@
  * sample but never throw to the caller. Idempotency keys prevent double-capture.
  */
 
+import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { normalizeForHash } from '@/lib/intelligence-v2/input-hash'
+import { opportunityKey } from '@/lib/scoring-v4/opportunity-key'
 import type {
   CaptureFailure,
   CreateSampleInput,
@@ -24,9 +27,13 @@ import type {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * SHA-256 of the whitespace-normalised source. The same function as the
+ * scoring program's opportunityKey, so a sample, a lead and a captured
+ * prospect of one paste share one hash. Never stores source text.
+ */
 export function hashRawInput(raw: string): string {
-  const s = (raw ?? '').trim()
-  return `${s.length}:${s.slice(0, 100)}`
+  return opportunityKey(raw) ?? createHash('sha256').update(normalizeForHash(raw ?? '')).digest('hex')
 }
 
 function tbl(client: SupabaseClient) {
@@ -437,24 +444,28 @@ export async function flagForReview(
   } catch { /* best-effort */ }
 }
 
-/** Explicitly approve a sample for training (admin/reviewer action). */
+/** Explicitly approve a sample for training (admin/reviewer action). The only path to TRAINING_APPROVED. */
 export async function approveForTraining(
   client: SupabaseClient,
   sampleId: string,
   approverId: string,
 ): Promise<void> {
+  const now = new Date().toISOString()
   await tbl(client).update({
     training_approved: true,
     approved_by: approverId,
-    approved_at: new Date().toISOString(),
+    approved_at: now,
     review_status: 'approved',
     reviewed_by: approverId,
-    reviewed_at: new Date().toISOString(),
+    reviewed_at: now,
     needs_review: false,
-    label_status: 'HUMAN_REVIEWED',
+    label_status: 'TRAINING_APPROVED',
     label_source: 'review',
-    updated_at: new Date().toISOString(),
+    updated_at: now,
   }).eq('id', sampleId)
+  try {
+    await appendEvent(client, sampleId, 'LABEL_APPROVED', { approver_id: approverId }, approverId, `label_approved:${sampleId}:${approverId}`)
+  } catch { /* best-effort */ }
 }
 
 // ── Query ────────────────────────────────────────────────────────────────────
@@ -484,10 +495,9 @@ export async function querySamples(
     .order('created_at', { ascending: false })
     .range(from, from + limit - 1)
 
-  // orgId 'all-orgs' skips org filter (for service-role exports)
-  if (orgId !== 'all-orgs') {
-    query = query.eq('organization_id', orgId)
-  }
+  // Always organisation-scoped: the service role bypasses RLS, so this is
+  // the only tenant boundary on reads.
+  query = query.eq('organization_id', orgId)
 
   if (filter.platform) query = query.eq('platform', filter.platform)
   if (filter.qualification) query = query.eq('qualification', filter.qualification)
@@ -525,14 +535,13 @@ export async function countSamples(
   return count ?? 0
 }
 
-/** Find the most recent sample for a lead. orgId='all-orgs' skips org filter. */
+/** Find the most recent sample for a lead, inside one organisation. */
 export async function findLatestSampleForLead(
   client: SupabaseClient,
   orgId: string,
   leadId: string,
 ): Promise<string | null> {
-  let query = tbl(client).select('id').eq('lead_id', leadId)
-  if (orgId !== 'all-orgs') query = query.eq('organization_id', orgId)
+  const query = tbl(client).select('id').eq('lead_id', leadId).eq('organization_id', orgId)
   const { data } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle()
   return (data?.id as string | null) ?? null
 }

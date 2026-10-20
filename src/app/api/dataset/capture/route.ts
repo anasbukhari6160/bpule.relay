@@ -60,6 +60,15 @@ export async function POST(request: Request) {
   const payload = (body.payload ?? {}) as Record<string, unknown>
   const client = createServiceSupabase()
 
+  // Service role bypasses RLS: a caller may only capture onto a sample in
+  // their own organisation.
+  if (sampleId) {
+    const { data: owner } = await client.from('intelligence_samples').select('organization_id').eq('id', sampleId).maybeSingle()
+    if (!owner || owner.organization_id !== auth.orgId) {
+      return NextResponse.json({ error: 'Sample not found.' }, { status: 404 })
+    }
+  }
+
   // Create new sample if no sample_id
   let sid = sampleId
   if (!sid) {

@@ -30,13 +30,19 @@ export type SampleEventType =
   | 'CLIENT_REPLY'
   | 'OUTCOME_CHANGED'
   | 'FEEDBACK_SUBMITTED'
+  | 'LABEL_APPROVED'
 
+/**
+ * Label states. Only TRAINING_APPROVED is a training label, and only an
+ * explicit reviewer action sets it; outcomes and edits never do.
+ */
 export type LabelStatus =
   | 'UNLABELED'
   | 'AI_ONLY'
   | 'HUMAN_REVIEWED'
   | 'HUMAN_CORRECTED'
   | 'OUTCOME_VERIFIED'
+  | 'TRAINING_APPROVED'
 
 export type LabelSource = 'ai' | 'human' | 'outcome' | 'review'
 

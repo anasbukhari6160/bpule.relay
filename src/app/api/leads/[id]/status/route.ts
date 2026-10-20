@@ -109,7 +109,9 @@ export async function POST(
     if (newStatus) {
       const sampleId = await findLatestSampleForLead(store.getSupabaseClient(), lead.organizationId, id)
       if (sampleId) {
-        const datasetOutcome = statusType === 'meeting_booked' ? 'won' : statusType === 'interested' ? 'meeting' : 'lost'
+        // A booked meeting is a meeting, not a won deal: the dataset keeps
+        // the stages apart even where the lead status collapses them.
+        const datasetOutcome = statusType === 'meeting_booked' ? 'meeting' : statusType === 'interested' ? 'positive_reply' : 'lost'
         void captureOutcome(store.getSupabaseClient(), sampleId, datasetOutcome).catch(() => {})
       }
     }

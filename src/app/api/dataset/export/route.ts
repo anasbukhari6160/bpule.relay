@@ -36,20 +36,25 @@ export async function GET(request: Request) {
   if (!VALID_FORMATS.includes(format)) return NextResponse.json({ error: `format must be one of ${VALID_FORMATS.join(', ')}` }, { status: 400 })
   if (!VALID_PRIVACY.includes(privacy)) return NextResponse.json({ error: `privacy must be one of ${VALID_PRIVACY.join(', ')}` }, { status: 400 })
 
+  // ANONYMIZED keeps stable longitudinal ids and message text: admin or owner only.
+  if (privacy === 'ANONYMIZED' && !auth.isAdmin && !auth.isOwner) {
+    return NextResponse.json({ error: 'Anonymized exports require admin or owner access.' }, { status: 403 })
+  }
   if (privacy === 'ANONYMIZED' && mode === 'FULL_AUDIT' && sp.get('confirm') !== 'true') {
     return NextResponse.json({ error: 'Add confirm=true to export anonymized full data.' }, { status: 400 })
   }
 
-  // Query ALL samples (service role bypasses RLS, org filter not needed)
+  // Service role bypasses RLS, so the organisation scope is applied here —
+  // an export is always and only the caller's organisation.
   const client = createServiceSupabase()
-  const samples = await querySamples(client, 'all-orgs', {
+  const samples = await querySamples(client, auth.orgId, {
     platform: (sp.get('platform') === 'linkedin' || sp.get('platform') === 'upwork') ? sp.get('platform') as 'linkedin' | 'upwork' : undefined,
     limit: 1000,
   })
 
   console.info(`[dataset/export] returning ${samples.length} samples (mode=${mode}, format=${format}, privacy=${privacy})`)
 
-  const result = exportSamples(samples, mode, format, privacy)
+  const result = exportSamples(samples, mode, format, privacy, { anonScope: auth.orgId })
 
   return new Response(result.content, {
     status: 200,

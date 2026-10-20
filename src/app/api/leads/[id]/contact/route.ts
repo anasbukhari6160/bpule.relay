@@ -4,6 +4,9 @@ import { createScoutStore } from '@/lib/store'
 import type { MessageType } from '@/lib/domain/types'
 import { computeEditDelta, classifySendDisposition, inferFeedbackReasons } from '@/lib/relay/edit-learning'
 import { safeErrorResponse } from '@/lib/errors'
+import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
+import { captureHumanEdit, captureSent, findLatestSampleForLead } from '@/lib/dataset/service'
 
 const TYPES: MessageType[] = ['dm', 'connection', 'followup', 'reply']
 
@@ -125,6 +128,22 @@ export async function POST(
         { status: 429 },
       )
     }
+
+    // Dataset: SENT, and HUMAN_EDIT when the rep changed the draft. This is
+    // the main "Log Sent" path, which never reached the dataset before.
+    try {
+      const auth = await getAuthContext()
+      if (auth) {
+        const datasetClient = createServiceSupabase()
+        const sampleId = await findLatestSampleForLead(datasetClient, auth.orgId, id)
+        if (sampleId) {
+          if (originalDraft !== sentText) {
+            void captureHumanEdit(datasetClient, sampleId, { generatedText: originalDraft, editedText: sentText, finalSentText: sentText, editorId: auth.repId, timestamp: new Date().toISOString() }).catch(() => {})
+          }
+          void captureSent(datasetClient, sampleId, sentText, auth.repId).catch(() => {})
+        }
+      }
+    } catch { /* dataset capture never breaks a send */ }
 
     try {
       const delta = computeEditDelta(originalDraft, sentText)
