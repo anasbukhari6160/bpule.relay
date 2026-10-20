@@ -143,11 +143,12 @@ describe('Stability Gate — Score Reliability', () => {
     expect(key1).not.toBe(key2)
   })
 
-  it('reuse key includes profile context', () => {
+  it('reuse key is sender-independent (opportunity ≠ sender match)', () => {
     const text = TEST_INPUTS[0].text
     const keyNoProfile = buildV3ReuseKey({ rawText: text })
     const keyWithProfile = buildV3ReuseKey({ rawText: text, profileId: 'prof_123' })
-    expect(keyNoProfile).not.toBe(keyWithProfile)
+    expect(keyNoProfile).toBe(keyWithProfile)
+    expect(buildV3ReuseKey({ rawText: text, orgCapabilities: ['react'] })).not.toBe(keyNoProfile)
   })
 
   it('forceReanalyze skips reuse', async () => {

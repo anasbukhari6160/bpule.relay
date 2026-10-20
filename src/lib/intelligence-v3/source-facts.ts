@@ -7,6 +7,14 @@
  * decision guard, the score engine and the evidence ledger.
  */
 
+import {
+  ML_CANDIDATE_SEEKING,
+  ML_EMPLOYMENT_HIRING,
+  ML_EXTERNAL_REQUEST,
+  ML_SELLER_OWNERSHIP,
+  mlMatches,
+} from './multilingual'
+
 export interface SourceLine {
   /** Verbatim line from the source (trimmed). */
   line: string
@@ -96,7 +104,7 @@ function isHistoricalHiring(line: string): boolean {
  * service offering — NOT a buyer request, NOT a hiring event.
  */
 const SERVICE_OFFERING =
-  /\b(?:if\s+you(?:'|’)?re\s+(?:hiring|looking|seeking|need)|if\s+you\s+(?:hiring|looking|seeking|need)|hiring\?|looking\?|need\?)\b.*\b(?:let(?:|')s\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome)|i\s+(?:can|may)|message\s+(?:me|us))\b/i
+  /\b(?:if\s+you(?:'|’)?re\s+(?:hiring|looking|seeking|need)|if\s+you\s+(?:are\s+)?(?:hiring|looking|seeking|need)|if\s+your\s+(?:team|company)\s+(?:is\s+)?(?:hiring|looking|needs?)|hiring\?|looking\?|need\?)\b.*\b(?:let(?:'|’)?s\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome)|i\s+(?:can|may)|message\s+(?:me|us)|we\s+(?:can|have\s+capacity)|our\s+team\s+has)\b/i
 
 /**
  * Customer discovery patterns: asking for feedback on a product, talking to
@@ -110,7 +118,7 @@ const CUSTOMER_DISCOVERY =
  * "I'm open to contract/full-time opportunities" is CANDIDATE, not HIRING.
  */
 const JOB_SEEKING =
-  /\b(?:(?:i(?:|')m|i\s+am)\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+(?:new\s+)?(?:contract|full[- ]time|part[- ]time|permanent|freelance|work|employment|opportunities|roles|positions|challenges|gigs|projects)|open\s+to\s+(?:new\s+)?(?:work|opportunities|roles|positions|contract|freelance)|available\s+for\s+(?:hire|work|contract|freelance|projects)|looking\s+for\s+(?:my\s+)?(?:next\s+(?:role|position|opportunity|challenge|gig)))\b/i
+  /\b(?:(?:i(?:'|’)?m|i\s+am)\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+(?:my\s+|a\s+|new\s+){0,2}(?:contract|full[- ]time|part[- ]time|permanent|freelance|work|employment|opportunities|opportunity|roles?|positions?|challenges?|gigs|projects|next\s+(?:role|position|opportunity|challenge|gig))|open\s+to\s+(?:new\s+)?(?:work|opportunities|roles|positions|contract|freelance)|#?opentowork|available\s+for\s+(?:hire|work|contract|freelance|projects|new\s+missions?)|available\s+for\s+(?:contract|freelance)\s+(?:work|projects|react|node|\w+\s+projects)|looking\s+for\s+(?:my\s+)?(?:next\s+(?:role|position|opportunity|challenge|gig))|(?:seeking|looking\s+for)\s+(?:a\s+)?(?:cto|vp|head|senior|staff|lead|engineering)\s+(?:\w+\s+){0,2}?(?:position|role)\b|my\s+role\s+was\s+affected|recent\s+layoffs?,?\s+i)\b/i
 
 /**
  * Employment metadata rows like "Tencyle · Full-time", "CEO · Full-time",
@@ -139,11 +147,21 @@ function firstAffirmedMatch(line: string, re: RegExp): RegExpExecArray | null {
   return null
 }
 
+/** "developer tools", "developer advocate", "freelancer friends": the noun is not a provider being sought. */
+const PROVIDER_NOUN_AS_MODIFIER = /\b(?:developer|developers|freelancer|freelancers|contractor|contractors|vendor|vendors|agency|agencies|consultancy)\s+(?:tools?|advocate|advocacy|experience|community|conference|friends?|relations|lock-?in|market|ecosystem|portal|renovation|fees?|list)\b/i
+
 function isExternalServiceLine(line: string): boolean {
-  if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return true
-  const provider = firstAffirmedMatch(line, EXTERNAL_PROVIDER)
+  if (hasThirdPartySubject(line) || isAdviceOrHypothetical(line) || isNonProviderRequest(line)) return false
+  if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line) && !PROVIDER_NOUN_AS_MODIFIER.test(line)) return true
+  const request = line.match(REQUEST_CONTEXT)
+  if (!request) return false
+  // The provider noun must be the object of the request: within the clause
+  // that follows the request verb, not anywhere in the line.
+  const tail = line.slice(request.index ?? 0, (request.index ?? 0) + 90)
+  const provider = firstAffirmedMatch(tail, EXTERNAL_PROVIDER)
   if (!provider) return false
-  return REQUEST_CONTEXT.test(line)
+  if (PROVIDER_NOUN_AS_MODIFIER.test(tail)) return false
+  return true
 }
 
 /**
@@ -164,26 +182,74 @@ const RECRUITER_CTX = /\b(?:for\s+(?:my|our|multiple)\s+clients?|at\s+(?:my|our|
  * buyer-intent resolver read it from here.
  */
 const SELLER_OWNERSHIP: RegExp[] = [
-  /\bwe(?:(?:'|’)ve)?\s+(?:built|build|offer|provide|help|deliver|specialize\s+in|evaluate|assess|automate|serve|work\s+with|partner\s+with)\b/i,
+  // Offering services to the reader / to clients. "We build a payments
+  // platform" is a PRODUCT statement (builder), not an offer — building
+  // words only count when the beneficiary is clients, companies or "you".
+  /\bwe(?:(?:'|’)ve)?\s+(?:offer|provide|help|deliver|specialize\s+in|specialise\s+in|evaluate|assess|serve|work\s+with|partner\s+with|advise)\b/i,
+  /\b(?:we|i)\s+(?:build|built|develop|design|create|ship)\s+(?:\w+\s+){0,4}?(?:for|with)\s+(?:our\s+)?(?:clients?|customers|companies|brands|startups|founders|teams|businesses|enterprises|you)\b/i,
+  /\b(?:i|we)\s+(?:help|partner\s+with|advise|coach|consult\s+(?:for|with))\s+(?:\w+\s+){0,2}?(?:companies|startups|founders|teams|businesses|brands|clients|enterprises|leaders|organi[sz]ations|smbs|smes)\b/i,
+  /\bhelping\s+(?:\w+\s+){0,2}?(?:companies|startups|founders|teams|businesses|brands|clients|enterprises|organi[sz]ations|smbs|smes)\s+(?:\w+\s+){0,3}?(?:build|ship|scale|grow|launch|modernize|modernise|succeed|hire|find|streamline|reduce|accelerate|automate)\b/i,
+  /\bi\s+(?:specialize|specialise)\s+in\b/i,
   // Modal offers to the reader: "we can help you…", "we'll evaluate it…".
   /\bwe(?:(?:'|’)ll|\s+can|\s+will|\s+could)\s+(?:help|offer|provide|deliver|evaluate|assess|audit|automate|handle|get\s+you|take\s+care)\b/i,
-  /\bour\s+(?:product|platform|tool|software|solution|service|team|agency|firm|practice)s?\s+(?:helps?|lets?|enables?|evaluates?|assesses?|automates?|gives?|delivers?|provides?|is\s+(?:used|trusted|built))\b/i,
-  /\bour\s+(?:services?|solutions?|offerings?|customers?|clients?)\b/i,
+  /\bour\s+(?:product|platform|tool|software|solution|service|team|agency|firm|practice|studio)s?\s+(?:helps?|lets?|enables?|evaluates?|assesses?|automates?|gives?|delivers?|provides?|has\s+capacity|is\s+(?:used|trusted|built))\b/i,
+  /\bour\s+(?:services?|solutions?|offerings?)\b|\bour\s+(?:customers|clients)\b(?!\s+(?:portal|dashboard|app|data|tracking|support|success|onboarding|experience|platform))/i,
   /\bbring\s+us\b/i,
-  /\b(?:try|book|request|get)\s+(?:a\s+|our\s+)?(?:product|demo|services?|free\s+trial|trial|consultation|assessment)\b/i,
+  /\b(?:try|book|request|get|schedule)\s+(?:a\s+|our\s+|your\s+)?(?:product|demo|services?|free\s+trial|trial|(?:free\s+)?consultation|assessment|call\s+with\s+(?:our|us|me))\b/i,
   /\bhire\s+(?:us|me|our\s+team)\b/i,
   /\blet\s+(?:us|me)\s+(?:help|build|create|design|handle)\b/i,
-  /\bwe(?:'|’)?re\s+(?:an?\s+)?(?:agency|consultancy|dev\s+shop|studio)\b/i,
+  /\bwe(?:'|’)?re\s+(?:an?\s+)?(?:agency|consultancy|dev\s+shop|studio)\b|\bwe\s+are\s+an?\s+(?:\w+\s+){0,2}?(?:agency|consultancy|dev\s+shop|studio|software\s+house)\b/i,
+  // "I run AgentAce, a software development agency…" — first-person ownership of a services firm.
+  /\b(?:i|we)\s+(?:run|own|lead|founded|started|operate)\s+[^.\n]{0,50}?,\s+an?\s+(?:\w+[\s-]+){0,3}?(?:agency|consultancy|dev\s+shop|studio|software\s+house|outsourcing\s+(?:company|firm)|services\s+(?:company|firm))\b/i,
   /\bworking\s+with\s+(?:\w+\s+){0,3}clients\b/i,
   /\bclient\s+(?:work|projects?|engagements?)\b/i,
+  /\b(?:your|the)\s+(?:next\s+)?project\s+could\s+be\s+next\b|\bfor\s+your\s+next\s+(?:project|build|app)\b|\bdiscuss\s+your\s+project\b/i,
+  /\b(?:fractional|interim)\s+(?:cto|cmo|cfo|coo)\b|\bconsulting\s+engagements?\b|\bavailable\s+for\s+consulting\b/i,
+  /\bcase\s+stud(?:y|ies)\b.*\b(?:client|customer)\b|\bnew\s+case\s+study\b/i,
+  /\b(?:rate\s+card|pricing\s+starts\s+at|starts\s+at\s+[$€£]\d)\b/i,
+  // A services menu: "Services: Web Development, …", "Our services include…".
+  /^(?:services?|our\s+services?|what\s+we\s+offer|offerings?)\s*:/i,
+  /\b(?:services|solutions)\s+(?:for|to)\s+(?:websites|businesses|companies|startups|enterprises|brands|clients)\b/i,
 ]
 
 /** The prospect asking for something themselves — overrides a seller reading on the same line. */
 const FIRST_PERSON_REQUEST =
-  /\b(?:we(?:'|’)?re|we\s+are|i(?:'|’)?m|i\s+am|we|i)\s+(?:(?:currently|now|actively|urgently|also)\s+)?(?:looking\s+for|seeking|searching\s+for|need|hiring|want\s+to\s+(?:hire|engage|work\s+with))\b|^(?:looking\s+for|seeking|searching\s+for|need|hiring)\b/i
+  /\b(?:we(?:'|’)?re|we\s+are|i(?:'|’)?m|i\s+am|we|i)\s+(?:(?:currently|now|actively|urgently|also)\s+)?(?:looking\s+for|seeking|searching\s+for|need|hiring|want\s+to\s+(?:hire|engage|work\s+with)|(?:issuing|running|launching|opening)\s+an?\s+rfp|requesting\s+proposals|evaluating\s+(?:vendors|agencies|partners))\b|^(?:looking\s+for|seeking|searching\s+for|need|hiring)\b/i
+
+/**
+ * The need belongs to someone else: customers, companies in general, a
+ * friend, a client, a reposted author. A request with a third-party subject
+ * is never the prospect's own.
+ */
+const THIRD_PARTY_SUBJECT =
+  /^(?:\W*(?:via|reposting|reposted|rt)\b)|\b(?:our\s+customers?|our\s+clients?|customers|clients|companies|teams|startups|founders|everyone|people|a\s+friend|my\s+friend|friend\s+of\s+mine|one\s+of\s+my\s+clients|my\s+clients?|a\s+client|the\s+market|they|their)\s+(?:(?:are|is|were|keep|still|all)\s+)?(?:need|needs|looking|seeking|searching|hiring|want|wants|should\s+hire|struggle)\b/i
+
+/** Advice, hypotheticals and second-person framing are not requests. */
+const ADVICE_OR_HYPOTHETICAL =
+  /\b(?:pro\s+tip|tip:|advice:|lesson:|imagine|say\s+you|suppose|if\s+you(?:'|’)?re|if\s+you\s+are|if\s+you\s+ever|would\s+you|should\s+you|you\s+need\s+a|you(?:'|’)?ll\s+need|most\s+(?:companies|teams|startups)|every\s+(?:company|team|startup|cto|founder))\b/i
+
+/** Requests that are not for a delivery provider: mentors, investors, partners, speakers, testers, co-founders. */
+const NON_PROVIDER_REQUEST =
+  /\b(?:mentors?|investors?|advisors?|speakers?|panel(?:l)?ists?|beta\s+testers?|design\s+partners?|testers|co-?founders?|partnerships?|resellers?|sponsors?|interns?|volunteers?|feedback|referrals?|recommendations?\s+for\s+(?:books?|tools?|podcasts?)|a\s+book|books)\b/i
+
+export function hasThirdPartySubject(line: string): boolean {
+  return THIRD_PARTY_SUBJECT.test(line)
+}
+
+export function isAdviceOrHypothetical(line: string): boolean {
+  return ADVICE_OR_HYPOTHETICAL.test(line)
+}
+
+export function isNonProviderRequest(line: string): boolean {
+  // "Looking for a technical co-founder", "looking for mentors" — not a vendor search.
+  const m = line.match(/\b(?:looking\s+for|seeking|searching\s+for|need(?:s|ed)?|want(?:s|ed)?)\s+(?:(?:a|an|some|new|more|great|good|technical)\s+){0,3}([\w-]+(?:\s+[\w-]+)?)/i)
+  if (!m) return false
+  return NON_PROVIDER_REQUEST.test(m[1])
+}
 
 export function isSellerOwnedLine(line: string): boolean {
-  return SELLER_OWNERSHIP.some((re) => re.test(line)) && !FIRST_PERSON_REQUEST.test(line)
+  if (FIRST_PERSON_REQUEST.test(line) || mlMatches(ML_EXTERNAL_REQUEST, line)) return false
+  return SELLER_OWNERSHIP.some((re) => re.test(line)) || mlMatches(ML_SELLER_OWNERSHIP, line)
 }
 
 export interface SellerOwnership {
@@ -203,23 +269,43 @@ export function detectSellerOwnership(rawText: string): SellerOwnership {
  */
 export type LineClassification = 'service_offering' | 'seller_offering' | 'customer_discovery' | 'job_seeking' | 'recruiter' | 'external_request' | 'employment_hiring' | 'neutral'
 
+/** "Say you are hiring…", "if you're hiring…", "right now the hiring market…" — not an opening. */
+const SECOND_PERSON_OR_GENERIC_HIRING = /\b(?:say\s+you(?:'|’)?(?:re|\s+are)?\s+hiring|if\s+you(?:'|’)?(?:re|\s+are)?\s+(?:hiring|looking|need)|when\s+you(?:'|’)?(?:re|\s+are)?\s+hiring|you(?:'|’)?re\s+hiring|you\s+are\s+hiring|the\s+hiring\s+market|hiring\s+market|hiring\s+manager\s+(?:for|is)|hiring\s+is\s+(?:brutal|hard|tough|broken))\b/i
+/** Openings that are closed: paused, frozen, filled, no longer. */
+const HIRING_CLOSED = /\b(?:no\s+longer\s+hiring|paused\s+hiring|hiring\s+(?:freeze|paused|is\s+paused|stopped)|role\s+(?:has\s+been\s+)?filled|position\s+(?:has\s+been\s+)?filled|not\s+hiring)\b/i
+/** "We are not looking for an agency", "we don't need outside help", "never outsourced". */
+const NEGATED_REQUEST = /\b(?:not|never|no\s+longer|aren(?:'|’)?t|don(?:'|’)?t|do\s+not|won(?:'|’)?t|without|haven(?:'|’)?t|have\s+never)\s+(?:currently\s+|actively\s+|really\s+|ever\s+)?(?:looking|seeking|searching|hiring|need|needed|want|in\s+the\s+market|outsourced?|hired?\s+an?\s+agency|used\s+an?\s+agency)\b/i
+
+export function isNegatedRequest(line: string): boolean {
+  return NEGATED_REQUEST.test(line)
+}
+
 export function classifyLine(line: string): LineClassification {
   if (SERVICE_OFFERING.test(line)) return 'service_offering'
   if (isSellerOwnedLine(line)) return 'seller_offering'
   if (CUSTOMER_DISCOVERY.test(line)) return 'customer_discovery'
-  if (JOB_SEEKING.test(line)) return 'job_seeking'
+  if (JOB_SEEKING.test(line) || mlMatches(ML_CANDIDATE_SEEKING, line)) return 'job_seeking'
   if (RECRUITER_CTX.test(line)) return 'recruiter'
-  if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return 'external_request'
-  if (PROJECT_TEAM_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return 'external_request'
-    if (!isHistoricalHiring(line) && EMPLOYMENT_HIRING.some((re) => firstAffirmedMatch(line, re))) return 'employment_hiring'
+  const thirdParty = hasThirdPartySubject(line) || isAdviceOrHypothetical(line)
+  if (isNegatedRequest(line)) return 'neutral'
+  if (!thirdParty && !isNonProviderRequest(line)) {
+    if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line) && !PROVIDER_NOUN_AS_MODIFIER.test(line)) return 'external_request'
+    if (PROJECT_TEAM_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line)) return 'external_request'
+    if (mlMatches(ML_EXTERNAL_REQUEST, line)) return 'external_request'
+  }
+  const hiringBlocked = thirdParty || SECOND_PERSON_OR_GENERIC_HIRING.test(line) || HIRING_CLOSED.test(line) || isHistoricalHiring(line)
+  if (!hiringBlocked && EMPLOYMENT_HIRING.some((re) => firstAffirmedMatch(line, re))) return 'employment_hiring'
+  if (!hiringBlocked && mlMatches(ML_EMPLOYMENT_HIRING, line)) return 'employment_hiring'
   if (EMPLOYMENT_METADATA.test(line) && !HIRING_VERB.test(line)) return 'neutral'
   if (isExternalServiceLine(line)) return 'external_request'
   return 'neutral'
 }
 
+const ML_RECRUITER_HEADER = /\b(?:personalberater(?:in)?|recruiter(?:in)?|talent\s+acquisition|chasseur\s+de\s+têtes|recruteur|recruteuse|reclutador[a]?|headhunter|işe\s+alım\s+uzmanı|yetenek\s+kazanımı)\b/i
+
 export function isRecruiterProfile(rawText: string): boolean {
   const header = lines(rawText).slice(0, 8).join('\n')
-  return RECRUITER_HEADER.test(header)
+  return RECRUITER_HEADER.test(header) || ML_RECRUITER_HEADER.test(header)
 }
 
 export function detectCommercialRequest(rawText: string): CommercialRequestFacts {

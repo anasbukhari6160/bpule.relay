@@ -3,10 +3,15 @@ import { produceCanonicalIntelligence } from '@/lib/intelligence-v2/orchestrator
 import { runV3Decision, type V2BridgeInput } from '@/lib/intelligence-v3/orchestrator'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
-import { V3_CANONICAL, V3_CONFIG_VERSION } from '@/lib/intelligence-v3/config'
+import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
 import { initializeV3 } from '@/lib/intelligence-v3/index'
-import { extractEventsFromSource } from './event-extractor'
-import { buildV3ReuseKey, buildV3ReuseCacheKey, ATTRIBUTION_VERSION } from './decision-reuse'
+import { extractEventsFromSource, type ExtractedEvent } from './event-extractor'
+import { buildV3ReuseKey, ATTRIBUTION_VERSION } from './decision-reuse'
+import { readSourceFacts } from './source-facts-model'
+import { extractEventsDeterministically } from './deterministic-events'
+import { isPacketCurrent, SCORING_VERSION } from './versions'
+import { qualifyCanonicalScore, toStoredQualification } from '@/lib/scoring/qualification'
+import type { V3DecisionProvider } from './decision/decision-provider'
 import { cleanCompanyName } from '@/lib/leads/normalize'
 import { extractHiringOrganization, extractStatedLocation, isPlausibleCompanyName, looksLikeJobAd, separateRoleFromEmployer } from '@/lib/intelligence-v2/extraction-pipeline'
 import { deriveCommercialReading } from '@/lib/intelligence-v2/commercial-reading'
@@ -18,8 +23,13 @@ export function buildV3BridgeInput(
   canonical: CanonicalProspectIntelligence,
   rawText: string,
   extractedEvents: Awaited<ReturnType<typeof extractEventsFromSource>>,
+  referenceDate: Date = new Date(),
 ): V2BridgeInput {
   const intel = canonical.intelligence
+  // Event timestamps are anchored to the SAME reference date the episode
+  // builder measures age against. Anchoring to the wall clock made the age
+  // (and therefore status/timing/score) flip across a day boundary mid-run.
+  const refMs = referenceDate.getTime()
   return {
     person: {
       fullName: intel.person.fullName,
@@ -93,7 +103,7 @@ export function buildV3BridgeInput(
       applicationChannels: e.applicationChannels,
       applyInstructions: e.applyInstructions,
       contactRoute: null,
-      occurredAt: e.ageDays ? new Date(Date.now() - e.ageDays * 86400000).toISOString() : null,
+      occurredAt: e.ageDays ? new Date(refMs - e.ageDays * 86400000).toISOString() : null,
       ageDays: e.ageDays,
       evidenceType: e.confidence > 0.7 ? 'FACT' as const : e.confidence > 0.4 ? 'STRONG_INFERENCE' as const : 'WEAK_INFERENCE' as const,
     })),
@@ -101,20 +111,15 @@ export function buildV3BridgeInput(
 }
 
 
-function v3PacketToCanonical(
+export function v3PacketToCanonical(
   packet: V3LeadDecisionPacket,
   v2Canonical: CanonicalProspectIntelligence,
 ): CanonicalProspectIntelligence {
-  const v2Qualification: CanonicalProspectIntelligence['qualification'] = (() => {
-    switch (packet.qualification) {
-      case 'STRONG': return 'strong'
-      case 'WORTH_PURSUING': return 'worth_pursuing'
-      case 'MAYBE': return 'maybe'
-      case 'SKIP': return 'skip'
-      case 'INELIGIBLE': return 'skip'
-      default: return 'maybe'
-    }
-  })()
+  // One qualification policy, derived from the score so a stored packet can
+  // never carry a band that disagrees with its own number.
+  const v2Qualification: CanonicalProspectIntelligence['qualification'] = packet.qualification === 'INELIGIBLE'
+    ? 'skip'
+    : toStoredQualification(qualifyCanonicalScore(packet.score).qualification)
 
   const scoreBreakdown = {
     dimensions: packet.dimensions ?? [],
@@ -161,18 +166,19 @@ function v3PacketToCanonical(
     ? { ...baseIntelligence, company: { ...baseIntelligence.company, industry: currentIndustry } }
     : baseIntelligence
 
+  const analyzedAt = packet.versions?.analyzedAt ?? new Date().toISOString()
   return {
     ...v2Canonical,
     intelligence,
     confidence: Math.round((packet.confidence ?? 0) * 100),
     evidenceLedger: evidenceLedger.length > 0 ? evidenceLedger : v2Canonical.evidenceLedger,
     intelligenceRunId: packet.decisionRunId,
-    intelligenceVersion: V3_CONFIG_VERSION,
+    intelligenceVersion: SCORING_VERSION,
     attributionVersion: ATTRIBUTION_VERSION,
-    computedAt: new Date().toISOString(),
+    computedAt: analyzedAt,
     canonicalScore: packet.score,
     scoreVersion: packet.scoreVersion,
-    scoredAt: new Date().toISOString(),
+    scoredAt: analyzedAt,
     qualification: v2Qualification,
     scoreBreakdown: scoreBreakdown as unknown as CanonicalProspectIntelligence['scoreBreakdown'],
     // Preserve V3 packet in the intelligence blob for downstream access
@@ -192,16 +198,29 @@ export interface V3BridgeResult {
 }
 
 export interface V3IntelligenceOptions {
+  /** @deprecated sender data never enters the opportunity decision. */
   senderCapabilities?: string[]
   onStatus?: (msg: string) => void
-  /** Selected profile ID for sender context */
+  /** @deprecated the opportunity decision is sender-independent; kept for callers. */
   profileId?: string | null
-  /** Profile intelligence version for cache key */
+  /** @deprecated */
   profileIntelligenceVersion?: string | null
   /** Reuse callback — looks up cached DecisionPacket by reuse key */
   reuseIfUnchanged?: (reuseKey: string) => Promise<V3LeadDecisionPacket | null>
   /** Force reanalysis even if cache match exists */
   forceReanalyze?: boolean
+  /** Pre-extracted events (tests, shadow runs). Skips the event-extraction model. */
+  events?: ExtractedEvent[]
+  /** Inject a decision provider (tests, shadow runs). */
+  decisionProvider?: V3DecisionProvider | null
+  /** Run with no model calls at all: deterministic events + deterministic decision. */
+  deterministicOnly?: boolean
+  /** Keep the decision model but never call the event-extraction model (replays, saves). */
+  skipEventModel?: boolean
+  /** Organization capability set for fit. */
+  orgCapabilities?: string[]
+  /** Reference date for staleness. */
+  referenceDate?: Date
 }
 
 /**
@@ -537,12 +556,10 @@ export async function produceV3Intelligence(
   options: V3IntelligenceOptions = {},
 ): Promise<V3BridgeResult> {
   const {
-    senderCapabilities = [],
     onStatus,
-    profileId = null,
-    profileIntelligenceVersion = null,
     reuseIfUnchanged,
     forceReanalyze = false,
+    orgCapabilities,
   } = options
 
   // Step 1: Run V2 extraction (V3 mode uses it for normalization + fallback)
@@ -550,7 +567,7 @@ export async function produceV3Intelligence(
 
   let v2Canonical: CanonicalProspectIntelligence
 
-  if (!V3_CANONICAL) {
+  if (!V3_CANONICAL && !options.deterministicOnly && !options.decisionProvider && !options.events) {
     const v2Result = await produceCanonicalIntelligence(rawText, {
       onStatus: (msg) => emitV3Status(msg, onStatus),
     })
@@ -564,22 +581,24 @@ export async function produceV3Intelligence(
   }
 
   // V3 canonical mode: Build minimal V2 structure deterministically (no AI calls).
-  // V3's extractEventsFromSource re-extracts events from raw text independently,
-  // so we only need the basic normalization here — not a full AI extraction.
   v2Canonical = buildMinimalV2Canonical(rawText)
-
-  // Step 3: Check for reusable DecisionPacket
-  const reuseKey = buildV3ReuseKey({
-    rawText,
-    profileId,
-    profileIntelligenceVersion,
-    senderCapabilities,
+  const sourceFacts = readSourceFacts(rawText, {
+    identity: {
+      name: v2Canonical.intelligence.person.fullName,
+      title: v2Canonical.intelligence.person.title,
+      company: v2Canonical.intelligence.company.name,
+      location: v2Canonical.intelligence.person.location,
+    },
   })
+
+  // Step 3: Check for a reusable DecisionPacket. The key is sender-independent;
+  // a cached packet from an older scoring version is never served.
+  const reuseKey = buildV3ReuseKey({ rawText, orgCapabilities })
 
   if (reuseIfUnchanged && !forceReanalyze) {
     onStatus?.('Checking for existing decision...')
     const cached = await reuseIfUnchanged(reuseKey)
-    if (cached) {
+    if (cached && isPacketCurrent(cached.versions)) {
       onStatus?.('Reusing existing decision — inputs unchanged.')
       const canonical = v3PacketToCanonical(cached, v2Canonical)
       return {
@@ -591,46 +610,109 @@ export async function produceV3Intelligence(
     }
   }
 
-  // Step 4: Run V3 decision on top of V2 extraction
+  // Step 4: Events. The structured model extracts them when available; the
+  // verified source facts are the fallback, so a failed API call never
+  // loses an explicit request.
   onStatus?.('Running V3 opportunity analysis...')
+  const runPipeline = async (deterministicOnly: boolean) => {
+    if (!deterministicOnly) initializeV3()
+    let events: ExtractedEvent[] = []
+    let eventSource: 'model' | 'deterministic' | 'none' = 'none'
+    if (options.events) {
+      events = options.events
+      eventSource = 'model'
+    } else if (!deterministicOnly && !options.skipEventModel && process.env.OPENAI_API_KEY) {
+      events = await extractEventsFromSource(rawText, v2Canonical)
+      eventSource = events.length > 0 ? 'model' : 'none'
+    }
+    if (events.length === 0) {
+      events = extractEventsDeterministically(rawText, sourceFacts)
+      eventSource = events.length > 0 ? 'deterministic' : 'none'
+    }
 
-  try {
-    // Initialize providers (registers OpenAI, LongCat, etc.)
-    initializeV3()
-
-    const extractedEvents = await extractEventsFromSource(rawText, v2Canonical)
-
-    const bridgeInput = buildV3BridgeInput(v2Canonical, rawText, extractedEvents)
-
+    const bridgeInput = buildV3BridgeInput(v2Canonical, rawText, events, options.referenceDate ?? new Date())
     const v3Result = await runV3Decision(bridgeInput, {
-      senderCapabilities,
-      productionScore: v2Canonical.canonicalScore ?? undefined,
-      productionAction: v2Canonical.qualification,
       onStatus: (msg) => emitV3Status(msg, onStatus),
       v2Canonical,
+      sourceFacts,
+      eventSource,
+      orgCapabilities,
+      decisionProvider: options.decisionProvider ?? undefined,
+      deterministicOnly,
+      referenceDate: options.referenceDate,
     })
+    return v3Result.packet
+  }
 
-    const packet = v3Result.packet
-
-    // Step 5: Map V3 packet to canonical output
-    const canonical = v3PacketToCanonical(packet, v2Canonical)
-
+  try {
+    const packet = await runPipeline(options.deterministicOnly === true)
     return {
-      intelligence: canonical,
+      intelligence: v3PacketToCanonical(packet, v2Canonical),
       v3Packet: packet,
       v3Canonical: true,
       v2Fallback: false,
     }
   } catch (err) {
-    // V3 failed — fall back to V2
-    console.warn('[V3 Bridge] V3 decision failed, falling back to V2:', err instanceof Error ? err.message : err)
-    return {
-      intelligence: v2Canonical,
-      v3Packet: null,
-      v3Canonical: false,
-      v2Fallback: true,
+    // The model path failed. Never return an invented score: run the same
+    // pipeline with no model calls, which keeps the verified facts, reports
+    // LOW confidence and marks the packet as a fallback.
+    console.warn('[V3 Bridge] V3 decision failed, using deterministic fallback:', err instanceof Error ? err.message : err)
+    try {
+      const packet = await runPipeline(true)
+      return {
+        intelligence: v3PacketToCanonical(packet, v2Canonical),
+        v3Packet: packet,
+        v3Canonical: true,
+        v2Fallback: true,
+      }
+    } catch (inner) {
+      console.error('[V3 Bridge] deterministic fallback failed:', inner instanceof Error ? inner.message : inner)
+      throw inner
     }
   }
+}
+
+/**
+ * Re-derive a packet from a stored one WITHOUT a model call: the stored
+ * bounded decision is replayed through the current deterministic layers
+ * (source facts, buyer intent, score, confidence, action). Used by save to
+ * make the persisted score the server's own, and by shadow runs.
+ */
+export async function recomputePacketFromStored(
+  rawText: string,
+  stored: V3LeadDecisionPacket,
+  opts: { orgCapabilities?: string[]; referenceDate?: Date } = {},
+): Promise<V3LeadDecisionPacket> {
+  const replay: V3DecisionProvider = {
+    id: stored.decisionProvider || 'replay',
+    modelVersion: stored.decisionModel || 'replay',
+    isAvailable: () => true,
+    decide: async () => ({
+      answers: {
+        relationship: stored.decision.relationship,
+        buyerRequestProbability: stored.buyerIntent?.claims.modelBuyerProbability ?? stored.decision.buyerRequestProbability,
+        externalNeedProbability: stored.buyerIntent?.claims.modelExternalNeedProbability ?? stored.decision.externalNeedProbability,
+        needOwner: stored.decision.needOwnerType,
+        fit: stored.decision.fit,
+        timing: stored.decision.timing,
+        access: stored.decision.access,
+        messageEligible: stored.decision.messageEligible,
+      },
+      providerId: stored.decisionProvider || 'replay',
+      modelVersion: stored.decisionModel || 'replay',
+      latencyMs: 0,
+      confidence: stored.decision.providerConfidence,
+    }),
+  }
+  const result = await produceV3Intelligence(rawText, {
+    decisionProvider: replay,
+    orgCapabilities: opts.orgCapabilities,
+    referenceDate: opts.referenceDate,
+    // Deterministic events only — never a second extraction call on save.
+    skipEventModel: true,
+  })
+  if (!result.v3Packet) throw new Error('recomputePacketFromStored: no packet produced')
+  return result.v3Packet
 }
 
 function emitV3Status(v2Msg: string, onStatus?: (msg: string) => void) {

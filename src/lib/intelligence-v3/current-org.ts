@@ -10,6 +10,7 @@
 
 import { classifyTemporalProvenance, isHistoricalYear, analyzeProductActivity } from '@/lib/scoring/signal-attribution'
 import { detectSellerOwnership } from './source-facts'
+import { ML_PAST_PHRASE, ML_PRODUCT_ACTIVITY } from './multilingual'
 
 const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?'
 const DATE_RANGE = new RegExp(
@@ -43,7 +44,7 @@ function sentences(line: string): string[] {
 }
 
 function isPastSentence(sentence: string): boolean {
-  return PAST_ROLE_PHRASE.test(sentence) || classifyTemporalProvenance(sentence) === 'HISTORICAL' || isHistoricalYear(sentence)
+  return PAST_ROLE_PHRASE.test(sentence) || ML_PAST_PHRASE.test(sentence) || classifyTemporalProvenance(sentence) === 'HISTORICAL' || isHistoricalYear(sentence)
 }
 
 /**
@@ -92,14 +93,19 @@ export function splitCurrentAndPastLines(rawText: string): CurrentAndPastLines {
 
 export const INDUSTRY_TAXONOMY: ReadonlyArray<{ name: string; pattern: RegExp }> = [
   { name: 'AI Governance / RegTech', pattern: /\b(?:ai\s+governance|model\s+governance|ai\s+(?:risk|compliance|assurance|audits?)|regtech|regulatory\s+(?:technology|compliance|reporting|frameworks?)|compliance\s+(?:automation|platform|workflows?)|responsible\s+ai|governance,?\s+risk)\b/i },
-  { name: 'healthcare', pattern: /\b(?:healthcare|health|medical|pharma|biotech|clinical)\b/i },
-  { name: 'fintech', pattern: /\b(?:fintech|finance|banking|insurance|payments|trading)\b/i },
-  { name: 'cybersecurity', pattern: /\b(?:cybersecurity|security|infosec)\b/i },
-  { name: 'edtech', pattern: /\b(?:edtech|education|e-learning|training)\b/i },
-  { name: 'logistics', pattern: /\b(?:logistics|supply\s+chain|shipping|freight|transportation)\b/i },
-  { name: 'ecommerce', pattern: /\b(?:ecommerce|e-commerce|retail|dtc|shopify)\b/i },
-  { name: 'proptech', pattern: /\b(?:real\s+estate|proptech|construction)\b/i },
-  { name: 'media', pattern: /\b(?:media|entertainment|gaming|streaming)\b/i },
+  { name: 'healthcare', pattern: /\b(?:healthcare|health(?:tech|care)?|tele-?health|medical|medizin\w*|pharma|biotech|clinical|clinics?|cliniques?|clínicas?|klinik\w*|hospitals?|hôpita\w+|hospitales|krankenh\w+|patients?|therapists?|santé|gesundheit\w*|salud|sağlık)\b/i },
+  { name: 'fintech', pattern: /\b(?:fintech|finance|financial|banking|banks?|banken|banque|bancos?|insurance|insurtech|versicherung\w*|assurance|seguros|payments?|zahlung\w*|paiements?|pagos|trading|lending|ödeme)\b/i },
+  { name: 'cybersecurity', pattern: /\b(?:cybersecurity|cyber\s*security|infosec|security\s+(?:platform|software|tooling|audits?))\b/i },
+  { name: 'edtech', pattern: /\b(?:edtech|education|educational|e-learning|online\s+learning|vocational|schools?|universit\w+|bildung\w*|éducation|educación|eğitim)\b/i },
+  { name: 'logistics', pattern: /\b(?:logistics|logistik|logistique|logística|lojistik|supply\s+chain|shipping|freight|transportation|transport\w*|delivery\s+(?:fleets?|companies|operators?)|last[- ]mile|fleets?|dispatch|kargo|spediteur|spedition|container\w*|bus\s+operators?)\b/i },
+  { name: 'ecommerce', pattern: /\b(?:ecommerce|e-commerce|e-ticaret|retail(?!\s+banks?)|retailers?|dtc|shopify|merchants?|skincare|marketplace)\b/i },
+  { name: 'proptech', pattern: /\b(?:real\s+estate|proptech|construction|immobilien)\b/i },
+  { name: 'media', pattern: /\b(?:media|entertainment|gaming|streaming|podcast\w*)\b/i },
+  { name: 'agtech', pattern: /\b(?:agtech|agriculture|farmers?|çiftçi\w*|tarım|agricult\w+|producteurs\s+locaux)\b/i },
+  { name: 'energy', pattern: /\b(?:energy|grid\s+operators?|smart\s+grid|utilities|solar|renewables?)\b/i },
+  { name: 'legaltech', pattern: /\b(?:legal\s*tech|legal\s+teams?|law\s+firms?|contract\s+review)\b/i },
+  { name: 'robotics', pattern: /\b(?:robotics|robots?|warehouse\s+automation|automation\s+software\s+for\s+warehouses)\b/i },
+  { name: 'developer tools', pattern: /\b(?:developer\s+tools?|devtools?|pair-programming|ci\/cd\s+platform|code\s+review\s+tool)\b/i },
 ]
 
 const OWNERSHIP = /\b(?:we\s+(?:are|build|built|offer|provide|evaluate|help|work\s+with)|our\s+(?:company|startup|platform|product|agency|firm)|(?:co[- ]?founder|founder|ceo|cto|cfo|vp|director|head)\s+(?:of|at|@)|is\s+an?\s+)/i
@@ -114,9 +120,12 @@ export interface CurrentIndustry {
  * prefers lines that state ownership ("Founder at…", "We build…"), and
  * returns null rather than falling back to a past role's industry.
  */
+/** Reposts and lines about customers/clients describe someone else's business. */
+const SOMEONE_ELSE = /\b(?:via\s+@\w+|repost(?:ed|ing)?|shared\s+from|originally\s+posted\s+by|our\s+(?:customers|clients)\s+(?:are|include)|one\s+of\s+(?:our|my)\s+(?:customers|clients)|portfolio\s+compan(?:y|ies))\b/i
+
 export function resolveCurrentIndustry(rawText: string): CurrentIndustry | null {
   const { current } = splitCurrentAndPastLines(rawText)
-  const candidates = current.filter((l) => !EXAMPLE_LINE.test(l))
+  const candidates = current.filter((l) => !EXAMPLE_LINE.test(l) && !SOMEONE_ELSE.test(l))
   const owned = candidates.filter((l) => OWNERSHIP.test(l))
   for (const pool of [owned, candidates]) {
     for (const ind of INDUSTRY_TAXONOMY) {
@@ -138,12 +147,28 @@ export interface CurrentOrgContext {
 
 const PRODUCT_WORD = /\b(?:product|platform|tool|software|app|saas|engine)\b|\bwe(?:(?:'|’)ve)?\s+built\b/i
 
+/**
+ * The organization makes a product: "X is a payments startup", "we build
+ * routing software for fleets", "Quillstack helps legal teams review…".
+ * Describes the current company, independent of post recency.
+ */
+const PRODUCT_COMPANY_LINE = new RegExp([
+  String.raw`\b(?:is|are)\s+an?\s+(?:[\w-]+\s+){0,4}?(?:startup|platform|saas|app|software|marketplace|tool|product|api|infrastructure|brand|company\s+building)\b`,
+  String.raw`\b(?:we|i)\s+(?:are\s+)?(?:build|builds|building|develop|develops|developing|make|makes|making|run|runs|operate|ship|shipping)\s+(?:[\w-]+\s+){0,4}?(?:software|platform|app|apps|product|products|saas|tool|tools|api|apis|marketplace|infrastructure|copilots?|dashboards?|engine|store|brand)\b`,
+  String.raw`\b[A-Z][\w&.-]*(?:\s+[A-Z][\w&.-]*){0,2}\s+(?:builds|develops|makes|provides|automates|connects|moves|runs|provides|edits|édite|entwickelt|construye|geliştiriyor)\s+`,
+  String.raw`\b(?:building|shipping|launching|launched|scaling)\s+(?:[\w-]+\s+){0,3}?(?:platform|product|app|saas|tool|infrastructure|copilot|marketplace)\b`,
+  String.raw`\b(?:paying\s+customers|beta\s+users|design\s+partners|firms\s+use\s+it|stores\s+live|users\s+every\s+day|customers\s+this\s+spring|downloads)\b`,
+].join('|'), 'i')
+
 export function resolveCurrentOrgContext(rawText: string): CurrentOrgContext {
   const split = splitCurrentAndPastLines(rawText)
   const industry = resolveCurrentIndustry(rawText)
   const seller = detectSellerOwnership(split.current.join('\n'))
-  const currentProductActivity = analyzeProductActivity(split.current.join('\n')).hasCurrentProductActivity
+  const currentText = split.current.join('\n')
+  const currentProductActivity = analyzeProductActivity(currentText).hasCurrentProductActivity
     || seller.lines.some((l) => PRODUCT_WORD.test(l))
+    || ML_PRODUCT_ACTIVITY.test(currentText)
+    || split.current.some((l) => PRODUCT_COMPANY_LINE.test(l))
   return {
     currentIndustry: industry?.industry ?? null,
     currentIndustryLine: industry?.line ?? null,

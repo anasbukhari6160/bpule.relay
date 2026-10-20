@@ -13,6 +13,8 @@
  *   Cold 5/10 + inbound "tell me more" → ENGAGE
  */
 
+import { qualifyCanonicalScore } from '@/lib/scoring/qualification'
+
 export type ConversationIntent =
   | 'INTERESTED'
   | 'NOT_INTERESTED'
@@ -102,8 +104,10 @@ export function resolveEffectiveAction(
 
   // Needs more info → engage if fit is reasonable
   if (intent === 'NEEDS_MORE_INFO') {
+    // They asked; we answer. Band only decides how much proof to bring.
+    const band = coldScore === null ? null : qualifyCanonicalScore(coldScore).qualification
     return {
-      effectiveAction: coldScore !== null && coldScore >= 30 ? 'ENGAGE' : 'REPLY',
+      effectiveAction: band !== null && band !== 'SKIP' ? 'ENGAGE' : 'REPLY',
       coldScore,
       conversationOverride: true,
       reason: 'Client wants more information — respond with relevant proof',

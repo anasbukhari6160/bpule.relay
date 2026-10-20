@@ -1,202 +1,140 @@
 /**
- * Score Engine V3
+ * Canonical Opportunity Score — V3.2
  *
- * Scores OPPORTUNITY EPISODES, not persons.
+ * Scores OPPORTUNITY EPISODES, not persons. One formula, seven bounded,
+ * additive dimensions, no hidden floors, no multiplicative collapse, no
+ * second scorer blended in.
  *
- * Principles:
- * - Score each episode independently
- * - Best active episode = lead display score
- * - No global identity penalties that zero unrelated episodes
- * - Timing and intent are SEPARATE dimensions
- * - Commercial potential is SEPARATE from buyer intent
- * - Service provider status is context, not a gate
- * - Configurable weights, one versioned config
+ *   buyerIntent          0.25   verified request / canonical buyer decision
+ *   commercialPotential  0.20   could this org plausibly become a customer
+ *   fit                  0.15   org-level capability overlap (sender-independent)
+ *   authority            0.10   decision authority of the person
+ *   timing               0.10   buyer timing (60%) + activity recency (40%)
+ *   access               0.10   one access authority
+ *   evidenceQuality      0.10   verbatim support, completeness, corroboration
+ *
+ * Bounded adjustments (each documented, each visible in the trace):
+ *   - CLOSED/negated episode: buyer intent and timing credit withdrawn; SKIP.
+ *   - COMPETITOR relationship (model): −6 points. A direct competitor rarely
+ *     buys the same services; the penalty is small so a verified request
+ *     from a competitor still ranks above a passive founder.
+ *
+ * "Unknown" lowers confidence (separate object); it never halves the score.
+ * Changing the sender never changes this score: proof relevance lives in
+ * Sender Match (rankSendersForLead), not here.
  */
 
 import type {
   V3OpportunityEpisode,
   V3BoundedDecision,
-  V3EpisodeScore,
-  V3MultiEpisodeResult,
-  V3EpisodeStatus,
   CommercialPotentialAssessment,
+  V3DimensionEvidence,
+  V3DimensionGroup,
+  V3ScoreCalculation,
+  V3ScoreCalculationStep,
 } from '../types'
+import { V3_SCORING_WEIGHTS } from '../config'
+import { readSourceFacts, type SourceFacts } from '../source-facts-model'
+import { resolveBuyerIntentFromSource, resolveVerifiedBuyerIntent, type VerifiedBuyerIntent } from '../buyer-intent'
 import {
-  V3_SCORING_WEIGHTS,
-  FIT_SCORES,
-  TIMING_SCORES,
-  ACCESS_SCORES,
-  EPISODE_STATUS_SCORES,
-  RELATIONSHIP_CONTEXT,
-  NEED_OWNER_BUYER_RELEVANCE,
-} from '../config'
-import { extractSignals } from '@/lib/scoring/signal-extractor'
-import { computeCompositeScore } from '@/lib/scoring/composite-scorer'
-import { resolveBuyerIntentFromSource, type VerifiedBuyerIntent } from '../buyer-intent'
-import type { V3DimensionEvidence, V3DimensionGroup, V3ScoreCalculation, V3ScoreCalculationStep } from '../types'
-import {
-  detectCommercialRequest,
-  extractStatedBudget,
-  extractStatedTimeline,
-  findContactInstruction,
-  findLineMentioning,
-  type StatedTimeline,
-} from '../source-facts'
-
-
-/** How soon a source-stated start/deadline is, as a 0-1 timing value. */
-function statedTimelineTiming(timeline: StatedTimeline): number {
-  if (timeline.days <= 14) return 1.0
-  if (timeline.days <= 30) return 0.85
-  if (timeline.days <= 90) return 0.6
-  return 0.35
-}
-
-function computeTimingScore(
-  episode: V3OpportunityEpisode,
-  decision: V3BoundedDecision,
-  timeline: StatedTimeline | null,
-): number {
-  const modelTiming = TIMING_SCORES[decision.timing] ?? 0.4
-  // A post date is the strongest recency evidence; without one, a start
-  // date stated in the source is used instead of the neutral 0.5.
-  const ageTiming = episode.ageDays === null
-    ? (timeline ? statedTimelineTiming(timeline) : 0.5)
-    : episode.ageDays <= 7 ? 1.0
-    : episode.ageDays <= 14 ? 0.8
-    : episode.ageDays <= 30 ? 0.6
-    : episode.ageDays <= 45 ? 0.4
-    : episode.ageDays <= 90 ? 0.2
-    : 0.05
-  return Math.round((modelTiming * 0.6 + ageTiming * 0.4) * 100) / 100
-}
-
-function timingNote(episode: V3OpportunityEpisode, timeline: StatedTimeline | null): string {
-  if (episode.ageDays === null) {
-    return timeline ? `Start stated in source: ${timeline.label}` : 'Timing uncertain — no post date or start date in the source'
-  }
-  if (episode.ageDays <= 7) return `Current (${episode.ageDays}d ago)`
-  if (episode.ageDays <= 30) return `Recent (${episode.ageDays}d ago)`
-  if (episode.ageDays <= 60) return `Aging (${episode.ageDays}d ago)`
-  return `Stale (${episode.ageDays}d ago)`
-}
-
-function computeCommercialPotentialScore(cp?: CommercialPotentialAssessment): number {
-  if (!cp) return 0
-  const BUILD_INTENSITY_SCORES: Record<string, number> = {
-    NONE: 0, LOW: 0.2, MEDIUM: 0.5, HIGH: 0.8, VERY_HIGH: 1.0,
-  }
-  const buildScore = BUILD_INTENSITY_SCORES[cp.buildIntensity] ?? 0
-  const raw = (
-    cp.decisionAuthority * 0.25 +
-    buildScore * 0.25 +
-    cp.technicalRelevance * 0.15 +
-    cp.capacityNeedLikelihood * 0.15 +
-    cp.reachability * 0.10 +
-    cp.companyMaturity * 0.10
-  )
-  switch (cp.overallPotential) {
-    case 'HIGH': return Math.max(0.5, Math.min(1.0, raw))
-    case 'MEDIUM': return Math.max(0.25, Math.min(0.7, raw))
-    case 'LOW': return Math.min(0.3, raw)
-    default: return 0
-  }
-}
-
-function deriveAction(score: number, input: V3ScoreInput): V3EpisodeScore['action'] {
-  const explicitBuyer = buyerIntentFor(input).buyerIntentLevel === 'HIGH'
-  const directAccess = input.decision.access === 'DIRECT'
-  if (score >= 70 && explicitBuyer && directAccess) return 'CONTACT_NOW'
-  if (score >= 60 && explicitBuyer) return 'CONNECT_WITH_NOTE'
-  if (score >= 50) return 'CONNECT_WITH_NOTE'
-  if (score >= 35) return 'CONNECT_WITHOUT_NOTE'
-  if (score >= 20) return 'OBSERVE'
-  return 'SKIP'
-}
-
-function getScoreLabel(score: number): { label: string; qualification: V3ScoreOutput['qualification'] } {
-  if (score >= 75) return { label: 'Strong opportunity', qualification: 'STRONG' }
-  if (score >= 55) return { label: 'Worth pursuing', qualification: 'WORTH_PURSUING' }
-  if (score >= 35) return { label: 'Maybe — needs more signal', qualification: 'MAYBE' }
-  if (score >= 15) return { label: 'Weak fit', qualification: 'LOW' }
-  return { label: 'Not a fit', qualification: 'SKIP' }
-}
-
+  assessCommercialPotentialFromFacts,
+  assessEvidenceQuality,
+  isSoftwareServicesSeller,
+  resolveAccess,
+  resolveAuthorityDimension,
+  resolveCapabilityFit,
+  resolveTiming,
+  type AccessResolution,
+  type CommercialPotentialResolution,
+  type FitResolution,
+  type TimingResolution,
+  type AuthorityResolution,
+  type EvidenceQualityResolution,
+} from '../dimensions'
+import { qualifyCanonicalScore, type CanonicalQualification } from '@/lib/scoring/qualification'
+import { detectCommercialRequest } from '../source-facts'
 
 export interface V3ScoreInput {
   episode: V3OpportunityEpisode
   decision: V3BoundedDecision
-  /** Sender proof relevance for this episode's capabilities (0-1) */
-  proofRelevance?: number
-  /** Overall evidence quality (0-1) */
-  evidenceQuality?: number
-  /** Raw source text for deterministic signal extraction (enriches score) */
+  /** Raw source text; SourceFacts are read from it when not passed. */
   rawText?: string
-  /** Sender capabilities for fit assessment */
-  senderCapabilities?: string[]
-  /** Commercial potential assessment (separate from buyer intent) */
-  commercialPotential?: CommercialPotentialAssessment
-  /** Verbatim source quotes attached to this episode, for row evidence */
-  episodeQuotes?: string[]
-  /**
-   * The canonical buyer decision (resolveVerifiedBuyerIntent). Buyer request,
-   * external need, hiring and budget credit come only from here.
-   */
+  /** Pre-read SourceFacts (preferred — read once per analysis). */
+  sourceFacts?: SourceFacts
+  /** The canonical buyer decision; resolved from source + model claims when not passed. */
   buyerIntent?: VerifiedBuyerIntent
-}
-
-/** The canonical decision for this input; resolved from source + model claims when not passed. */
-export function buyerIntentFor(input: V3ScoreInput): VerifiedBuyerIntent {
-  if (!input.buyerIntent) {
-    const signals = (input.rawText ?? '').length > 50 ? extractSignals(input.rawText!) : null
-    input.buyerIntent = resolveBuyerIntentFromSource(input.rawText ?? '', {
-      modelBuyerProbability: input.decision.buyerRequestProbability,
-      modelExternalNeedProbability: input.decision.externalNeedProbability,
-      modelRelationship: input.decision.relationship,
-      signalCheck: signals ? {
-        explicitAsk: signals.intent.explicitAsk,
-        seekingVendor: signals.intent.seekingVendor,
-        hiring: signals.intent.hiring,
-        budgetMentioned: signals.intent.budgetMentioned,
-      } : null,
-    })
-  }
-  return input.buyerIntent
-}
-
-export interface V3ScoreOutput {
-  /** Final 0-100 score */
-  score: number
-  label: string
-  qualification: 'STRONG' | 'WORTH_PURSUING' | 'MAYBE' | 'LOW' | 'SKIP' | 'INELIGIBLE'
-  reasons: string[]
-  watchOut: string[]
-  /** Per-dimension breakdown */
-  dimensions: V3ScoreDimension[]
-  /** How the rows became the final score — every multiplier, blend and floor. */
-  calculation?: V3ScoreCalculation
+  /** Verbatim source quotes attached to this episode, for row evidence. */
+  episodeQuotes?: string[]
+  /** Organization capability set for fit (defaults to the agency's). */
+  orgCapabilities?: string[]
+  /** @deprecated kept for callers that pass it; ignored by the formula. */
+  proofRelevance?: number
+  /** @deprecated kept for callers that pass it; evidence quality is read from facts. */
+  evidenceQuality?: number
+  /** @deprecated ignored — commercial potential is assessed from SourceFacts. */
+  commercialPotential?: CommercialPotentialAssessment
+  /** @deprecated ignored — sender data never enters the opportunity score. */
+  senderCapabilities?: string[]
 }
 
 export interface V3ScoreDimension {
   key: string
   label: string
-  contribution: number  // weighted contribution to final score
-  raw: number           // raw 0-1 value
+  contribution: number
+  raw: number
   weight: number
   note: string
-  /** model = sums to the model subtotal; signals = deterministic check blended into the total */
   group?: V3DimensionGroup
-  /** Source quotes or detected signals behind this row; inference when nothing in the text supports it */
   evidence?: V3DimensionEvidence[]
 }
 
-const RECRUITER_HEADER = /\b(?:it recruiter|technical recruiter|tech recruiter|recruiter|rekruter(?:ka)?|talent acquisition|sourcer|headhunter)\b/i
+export interface V3ScoreOutput {
+  score: number
+  label: string
+  qualification: CanonicalQualification | 'INELIGIBLE'
+  reasons: string[]
+  watchOut: string[]
+  dimensions: V3ScoreDimension[]
+  calculation?: V3ScoreCalculation
+  /** Resolved dimension objects, for the packet and the decision trace. */
+  resolved?: {
+    access: AccessResolution
+    timing: TimingResolution
+    fit: FitResolution
+    authority: AuthorityResolution
+    commercialPotential: CommercialPotentialResolution
+    evidenceQuality: EvidenceQualityResolution
+  }
+}
 
-/**
- * Employee recruitment is not a purchase of outside services. A buyer
- * request needs a positive request to an external provider (agency, vendor,
- * contractor, outsourced team) somewhere in the source.
- */
+export const COMPETITOR_PENALTY = 6
+
+/** SourceFacts for this input; read once and cached on the input. */
+export function sourceFactsFor(input: V3ScoreInput): SourceFacts {
+  if (!input.sourceFacts) input.sourceFacts = readSourceFacts(input.rawText ?? '')
+  return input.sourceFacts
+}
+
+/** The canonical buyer decision for this input; resolved from source + model claims when not passed. */
+export function buyerIntentFor(input: V3ScoreInput): VerifiedBuyerIntent {
+  if (!input.buyerIntent) {
+    const facts = sourceFactsFor(input)
+    input.buyerIntent = resolveVerifiedBuyerIntent(facts.buyer, {
+      modelBuyerProbability: input.decision.buyerRequestProbability,
+      modelExternalNeedProbability: input.decision.externalNeedProbability,
+      modelRelationship: input.decision.relationship,
+      signalCheck: {
+        explicitAsk: facts.signals.intent.explicitAsk,
+        seekingVendor: facts.signals.intent.seekingVendor,
+        hiring: facts.signals.intent.hiring,
+        budgetMentioned: facts.signals.intent.budgetMentioned,
+      },
+    })
+  }
+  return input.buyerIntent
+}
+
+/** Kept for the decision assembler's guards. */
 export function isEmploymentHiringNotPurchase(
   rawText: string | undefined,
   episode?: Pick<V3OpportunityEpisode, 'anchorEvent' | 'explicitRequest'> | null,
@@ -205,432 +143,256 @@ export function isEmploymentHiringNotPurchase(
   const facts = detectCommercialRequest(text)
   if (facts.externalServiceRequest) return false
   if (facts.employmentHiring) return true
-  const header = text.split('\n').slice(0, 15).join('\n')
-  if (RECRUITER_HEADER.test(header)) return true
   if (isCandidateSeeking(text)) return true
   return episode?.anchorEvent?.eventType === 'HIRING' && !episode.explicitRequest
 }
 
-/**
- * Detect candidate-seeking language: prospect is looking for opportunities,
- * not hiring or buying services.
- */
 export function isCandidateSeeking(text: string): boolean {
   const lower = text.toLowerCase()
-
-  // Direct candidate indicators
-  if (/i'?m\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+.{0,30}?(?:contract|full[- ]time|part[- ]time|freelance|work|opportunities|roles|positions|gigs|projects)/i.test(lower)) {
-    return true
-  }
-  if (/if\s+you(?:'|')?re\s+(?:hiring|looking|seeking)\b[^.]*(?:let'?s?\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome))/i.test(lower)) {
-    return true
-  }
-  if (/i\s+(?:am|m)\s+(?:open|available|interested)\s+to\s+(?:new\s+)?(?:opportunities|work|roles|projects)/i.test(lower)) {
-    return true
-  }
-  if (/looking\s+for\s+(?:my\s+)?(?:next\s+(?:role|position|opportunity|gig|project))/i.test(lower)) {
-    return true
-  }
-
+  if (/i'?m\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+.{0,30}?(?:contract|full[- ]time|part[- ]time|freelance|work|opportunities|roles|positions|gigs|projects)/i.test(lower)) return true
+  if (/if\s+you(?:'|')?re\s+(?:hiring|looking|seeking)\b[^.]*(?:let'?s?\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome))/i.test(lower)) return true
+  if (/i\s+(?:am|m)\s+(?:open|available|interested)\s+to\s+(?:new\s+)?(?:opportunities|work|roles|projects)/i.test(lower)) return true
+  if (/looking\s+for\s+(?:my\s+)?(?:next\s+(?:role|position|opportunity|gig|project))/i.test(lower)) return true
   return false
 }
 
-const BUYER_CAP = 0.2
-
 function quote(line: string | null | undefined): V3DimensionEvidence[] {
   return line ? [{ text: line, kind: 'quote' }] : []
-}
-
-function inference(text: string): V3DimensionEvidence[] {
-  return [{ text, kind: 'inference' }]
 }
 
 function fmt(n: number, digits = 2): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(digits)
 }
 
+/**
+ * A request ages. Within a quarter it is current; by six months it is
+ * aging; after a year it is history that supports credibility, not a
+ * current buying signal.
+ */
+export function requestAgeFactor(ageDays: number | null): number {
+  if (ageDays === null) return 1
+  if (ageDays <= 90) return 1
+  if (ageDays <= 180) return 0.8
+  if (ageDays <= 365) return 0.6
+  return 0.35
+}
+
+/** Buyer-intent dimension value from the canonical decision only. */
+export function buyerIntentRaw(intent: VerifiedBuyerIntent, requestAgeDays: number | null = null): number {
+  const age = requestAgeFactor(requestAgeDays)
+  if (intent.buyerIntentLevel === 'HIGH') return Math.min(1, 0.9 + (intent.verifiedBudget ? 0.1 : 0)) * age
+  if (intent.buyerIntentLevel === 'MEDIUM') return Math.min(1, 0.65 + (intent.verifiedBudget ? 0.1 : 0) + (intent.askingForHelp ? 0.05 : 0)) * age
+  // UNKNOWN: a verified request that scorers contradicted keeps some credit;
+  // otherwise the capped effective probability (≤0.25 unverified, ≤0.2
+  // non-buyer). Unknown is not negative — but it is never evidence either.
+  if (intent.verifiedBuyerRequest) return 0.4 * age
+  return Math.min(0.25, intent.effectiveBuyerProbability)
+}
+
 export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   const { episode, decision } = input
-  const rawText = input.rawText ?? ''
-  const proofRelevance = input.proofRelevance ?? 0.5
-  const evidenceQuality = input.evidenceQuality ?? 0.5
+  const facts = sourceFactsFor(input)
+  const intent = buyerIntentFor(input)
   const reasons: string[] = []
   const watchOut: string[] = []
   const dimensions: V3ScoreDimension[] = []
   const steps: V3ScoreCalculationStep[] = []
+  const W = V3_SCORING_WEIGHTS
 
-  const intent = buyerIntentFor(input)
+  const closed = episode.status === 'CLOSED'
   const requestLine = intent.evidence.find((e) => e.kind === 'buyer_request')?.text ?? null
   const hiringLine = intent.evidence.find((e) => e.kind === 'hiring')?.text ?? null
   const budgetLine = intent.verifiedBudget ? intent.evidence.find((e) => e.kind === 'budget')?.text ?? null : null
-  const budget = budgetLine ? extractStatedBudget(budgetLine) : null
-  const budgetApproved = budgetLine ? /\b(?:approved|allocated|confirmed|secured|signed[- ]off)\b/i.test(budgetLine) : false
-  const timeline = extractStatedTimeline(rawText)
-  const contact = findContactInstruction(rawText)
   const episodeQuotes = (input.episodeQuotes ?? []).filter(Boolean)
 
-  // Employer hiring, including a recruiter's own role, is not a vendor purchase.
-  const capBuyer = isEmploymentHiringNotPurchase(rawText, episode)
-
-  // Buyer request comes only from the canonical decision: verified source
-  // facts, agreeing scorers, seller-side content capped.
-  const buyerRaw = capBuyer ? Math.min(intent.effectiveBuyerProbability, BUYER_CAP) : intent.effectiveBuyerProbability
-
+  // ── 1. Buyer intent ───────────────────────────────────────────────────
+  const requestAge = facts.buyerRequestAgeDays ?? (intent.verifiedBuyerRequest ? episode.ageDays : null)
+  const biRaw = closed ? 0 : Math.round(buyerIntentRaw(intent, requestAge) * 100) / 100
+  const ageNote = intent.verifiedBuyerRequest && requestAge !== null && requestAge > 90 ? ` — request is ${requestAge}d old` : ''
   dimensions.push({
-    key: 'buyerRequest',
-    label: 'Buyer Request',
-    contribution: buyerRaw * V3_SCORING_WEIGHTS.buyerRequestProbability * 100,
-    raw: buyerRaw,
-    weight: V3_SCORING_WEIGHTS.buyerRequestProbability,
+    key: 'buyerIntent',
+    label: 'Buyer Intent',
+    contribution: biRaw * W.buyerIntent * 100,
+    raw: biRaw,
+    weight: W.buyerIntent,
     group: 'model',
-    note: capBuyer
-      ? 'Recruitment activity detected; external-service buying need not verified.'
+    note: closed
+      ? 'Episode closed or negated — no current request'
       : intent.contradictions.length > 0
         ? 'Buyer signals disagree — treated as unknown'
         : intent.buyerIntentLevel === 'HIGH'
-          ? 'Explicit request to an external provider (verified)'
-          : intent.verifiedBuyerRequest
-            ? 'Moderate buyer signal (verified)'
+          ? `Explicit request to an external provider (verified)${intent.verifiedBudget ? ', budget stated' : ''}${ageNote}`
+          : intent.buyerIntentLevel === 'MEDIUM'
+            ? `Verified request; scorer agreement partial${ageNote}`
             : intent.relationshipRole === 'SELLER'
               ? 'Seller-side content — no request to buy'
-              : 'Weak or no buyer request',
+              : intent.relationshipRole === 'RECRUITER'
+                ? 'Recruiter — hiring for clients, not buying services'
+                : intent.relationshipRole === 'CANDIDATE'
+                  ? 'Candidate seeking work — not a buyer'
+                  : intent.verifiedHiringNeed
+                    ? 'Hiring employees — not a request for outside services'
+                    : 'No request for outside help in the source',
     evidence: requestLine
-      ? quote(requestLine)
-      : capBuyer && hiringLine
+      ? [...quote(requestLine), ...quote(budgetLine)]
+      : hiringLine
         ? quote(hiringLine)
         : episodeQuotes.length > 0
           ? episodeQuotes.slice(0, 1).map((text) => ({ text, kind: 'quote' as const }))
-          : inference('No request for outside help in the source'),
+          : [{ text: 'No request for outside help in the source', kind: 'inference' }],
   })
-  if (!capBuyer && intent.buyerIntentLevel === 'HIGH') reasons.push('Explicit buyer request detected (verified)')
-  if (!capBuyer && !intent.verifiedBuyerRequest && (intent.claims.modelBuyerProbability ?? 0) >= 0.7) reasons.push('Model detected possible buyer intent — NOT verified against source')
-  if (capBuyer) reasons.push('Recruitment activity detected; external-service buying need not verified')
+  if (intent.buyerIntentLevel === 'HIGH') reasons.push('Explicit buyer request detected (verified)')
+  else if (intent.buyerIntentLevel === 'MEDIUM') reasons.push('Buyer request verified in the source')
+  if (intent.verifiedBuyerRequest && requestAge !== null && requestAge > 180) watchOut.push(`The request is ${requestAge} days old — confirm it is still open`)
+  if (budgetLine) reasons.push(`Budget stated: ${facts.budgetEvidence?.amount ?? 'stated'}${facts.budgetEvidence?.approved ? ' (approved)' : ''}`)
   if (intent.contradictions.length > 0) watchOut.push('Buyer signals disagree — intent treated as UNKNOWN')
-  if (buyerRaw < 0.3) watchOut.push(capBuyer
-    ? 'Buying intent is unproven. Employee hiring is not a request to buy services. Research before treating this as a buyer.'
-    : 'No clear buyer request signal')
+  if (!intent.verifiedBuyerRequest && (intent.claims.modelBuyerProbability ?? 0) >= 0.7) watchOut.push('Model claimed buyer intent the source does not state — not credited')
+  if (intent.verifiedHiringNeed && !intent.verifiedBuyerRequest) watchOut.push('Employee hiring is not a request to buy services')
+  if (biRaw < 0.3 && !closed) watchOut.push('No clear buyer request signal')
 
-  // Separated from buyer intent. A founder building a product can have
-  // buyerIntent=UNKNOWN but commercialPotential=HIGH. A verified budget is
-  // direct evidence of commercial value and sets a floor.
-  const assessedCp = computeCommercialPotentialScore(input.commercialPotential)
-  const budgetFloor = intent.verifiedBudget ? (budgetApproved ? 0.6 : 0.5) : 0
-  const budgetLabel = budget?.amount ?? (budgetLine ? 'stated' : null)
-  const cpRaw = Math.max(assessedCp, budgetFloor)
+  // ── 2. Commercial potential ───────────────────────────────────────────
+  const cp = assessCommercialPotentialFromFacts(facts, intent)
   dimensions.push({
     key: 'commercialPotential',
     label: 'Commercial Potential',
-    contribution: cpRaw * V3_SCORING_WEIGHTS.commercialPotential * 100,
-    raw: cpRaw,
-    weight: V3_SCORING_WEIGHTS.commercialPotential,
+    contribution: cp.raw * W.commercialPotential * 100,
+    raw: cp.raw,
+    weight: W.commercialPotential,
     group: 'model',
-    note: [
-      budgetLabel ? `Budget stated: ${budgetLabel}${budgetApproved ? ' (approved)' : ''}.` : null,
-      cpRaw >= 0.6
-        ? 'Strong commercial potential.'
-        : cpRaw >= 0.3
-          ? 'Moderate commercial potential.'
-          : 'Limited commercial potential.',
-      budgetLabel && budgetFloor > assessedCp ? `Floor ${fmt(budgetFloor)} applied for the stated budget (profile assessment ${fmt(assessedCp)}).` : null,
-    ].filter(Boolean).join(' '),
-    evidence: budgetLine
-      ? quote(budgetLine)
-      : (input.commercialPotential?.signals?.length ?? 0) > 0
-        ? input.commercialPotential!.signals.slice(0, 3).map((text): V3DimensionEvidence => ({ text, kind: 'signal' }))
-        : inference('Assessed from role and company context; no budget in the source'),
+    note: cp.note,
+    evidence: cp.evidence,
   })
-  if (budgetLabel) reasons.push(`Budget stated: ${budgetLabel}${budgetApproved ? ' (approved)' : ''}`)
-  if (cpRaw >= 0.5 && intent.effectiveBuyerProbability < 0.4) {
-    reasons.push('High commercial potential despite no explicit buyer request')
-  }
+  const cpHigh = cp.overallPotential === 'HIGH' || cp.overallPotential === 'VERY_HIGH'
+  if (cpHigh && biRaw < 0.4) reasons.push('High commercial potential despite no explicit buyer request')
+  else if (cpHigh) reasons.push('Strong commercial potential')
 
-  const needOwnerRelevance = NEED_OWNER_BUYER_RELEVANCE[episode.needOwnerType] ?? 0.4
-  const externalProb = capBuyer ? Math.min(intent.effectiveExternalNeedProbability, BUYER_CAP) : intent.effectiveExternalNeedProbability
-  const externalRaw = externalProb * needOwnerRelevance
-  dimensions.push({
-    key: 'externalNeed',
-    label: 'External Need',
-    contribution: externalRaw * V3_SCORING_WEIGHTS.externalNeedProbability * 100,
-    raw: externalRaw,
-    weight: V3_SCORING_WEIGHTS.externalNeedProbability,
-    group: 'model',
-    note: externalRaw >= 0.6 ? 'Clear external need' : capBuyer ? 'Need is internal hiring, not outside help' : 'Need signal weak or internal-only',
-    evidence: intent.verifiedExternalNeed && requestLine
-      ? quote(requestLine)
-      : inference('No request for outside help in the source'),
-  })
-
-  const fitRaw = FIT_SCORES[decision.fit] ?? 0.5
-  const capabilityLine = findLineMentioning(rawText, episode.requestedCapabilities)
+  // ── 3. Fit ────────────────────────────────────────────────────────────
+  const fit = resolveCapabilityFit(facts, decision.fit, input.orgCapabilities, { relationshipRole: intent.relationshipRole, verifiedBuyerRequest: intent.verifiedBuyerRequest })
   dimensions.push({
     key: 'fit',
     label: 'Capability Fit',
-    contribution: fitRaw * V3_SCORING_WEIGHTS.fit * 100,
-    raw: fitRaw,
-    weight: V3_SCORING_WEIGHTS.fit,
+    contribution: fit.raw * W.fit * 100,
+    raw: fit.raw,
+    weight: W.fit,
     group: 'model',
-    note: `Fit: ${decision.fit}${episode.requestedCapabilities.length > 0 ? ` for ${episode.requestedCapabilities.slice(0, 4).join(', ')}` : ''}`,
-    evidence: capabilityLine
-      ? quote(capabilityLine.line)
-      : inference('Model fit assessment; no requested capability named in the source'),
+    note: `Fit: ${fit.level.toLowerCase()} — ${fit.note}`,
+    evidence: fit.evidence,
   })
-  if (fitRaw >= 0.8) reasons.push('Strong capability fit')
+  if (fit.raw >= 0.7) reasons.push('Strong capability fit')
+  if (fit.level === 'UNKNOWN') watchOut.push('Capability fit unverified — no stack or need named')
 
-  // Attribution guard: verify model timing against source temporal evidence.
-  // Model may say URGENT based on building language, not actual buyer urgency.
-  const hasTimingEvidence = (timeline && timeline.days <= 30) || (episode.ageDays !== null && episode.ageDays <= 14)
-  const modelSaysUrgent = decision.timing === 'URGENT'
-  const modelSaysCurrent = decision.timing === 'CURRENT'
+  // ── 4. Authority ──────────────────────────────────────────────────────
+  const authority = resolveAuthorityDimension(facts, intent)
+  dimensions.push({
+    key: 'authority',
+    label: 'Authority',
+    contribution: authority.raw * W.authority * 100,
+    raw: authority.raw,
+    weight: W.authority,
+    group: 'model',
+    note: authority.note,
+    evidence: authority.evidence,
+  })
+  if (authority.raw >= 0.75) reasons.push('Decision-maker role')
 
-  // If model says URGENT but no timing evidence exists, downgrade
-  const verifiedTiming = modelSaysUrgent && !hasTimingEvidence
-    ? 'WEAK' as const
-    : modelSaysCurrent && !hasTimingEvidence
-      ? 'WEAK' as const
-      : decision.timing
-
-  const timingInput = { ...decision, timing: verifiedTiming }
-  const timingRaw = computeTimingScore(episode, timingInput, timeline)
+  // ── 5. Timing ─────────────────────────────────────────────────────────
+  const timing = resolveTiming(facts, intent, episode, decision.timing)
+  const timingRaw = closed ? Math.min(timing.raw, 0.15) : timing.raw
   dimensions.push({
     key: 'timing',
     label: 'Timing',
-    contribution: timingRaw * V3_SCORING_WEIGHTS.timing * 100,
+    contribution: timingRaw * W.timing * 100,
     raw: timingRaw,
-    weight: V3_SCORING_WEIGHTS.timing,
+    weight: W.timing,
     group: 'model',
-    note: modelSaysUrgent && !hasTimingEvidence
-      ? 'Model said urgent — NOT verified (no current timing evidence in source)'
-      : timingNote(episode, timeline),
-    evidence: timeline
-      ? quote(timeline.line)
-      : episode.ageDays !== null
-        ? [{ text: `Post dated ${episode.ageDays}d ago`, kind: 'signal' }]
-        : inference('No post date or start date in the source'),
+    note: closed ? 'Episode closed — timing credit withdrawn' : timing.note,
+    evidence: timing.evidence,
   })
-  if (timeline && timeline.days <= 30) reasons.push(`Start stated: ${timeline.label}`)
-  else if (timingRaw >= 0.8 && hasTimingEvidence) reasons.push('Current/recent opportunity')
-  else if (modelSaysUrgent && !hasTimingEvidence) watchOut.push('Urgent timing claimed — NOT verified against source dates')
-  if (timingRaw <= 0.3) watchOut.push('Event may be stale or expired')
+  if (timing.buyerTiming === 'URGENT') reasons.push(`Start or deadline stated: ${facts.timelineEvidence?.label ?? 'soon'}`)
+  else if (timing.buyerTiming === 'CURRENT') reasons.push('Current buyer timing')
+  if (timing.urgencyRejected) watchOut.push('Urgent timing claimed by the model — not verified against source dates')
+  if (timing.activityRecency === 'STALE') watchOut.push('Most recent activity is stale')
+  if (timing.activityRecency === 'UNKNOWN') watchOut.push('No post date or start date in the source')
 
-  const accessRaw = ACCESS_SCORES[decision.access] ?? 0.3
+  // ── 6. Access ─────────────────────────────────────────────────────────
+  const access = resolveAccess(facts, decision.access, { relationshipRole: intent.relationshipRole, verifiedBuyerRequest: intent.verifiedBuyerRequest })
   dimensions.push({
     key: 'access',
     label: 'Access',
-    contribution: accessRaw * V3_SCORING_WEIGHTS.access * 100,
-    raw: accessRaw,
-    weight: V3_SCORING_WEIGHTS.access,
+    contribution: access.raw * W.access * 100,
+    raw: access.raw,
+    weight: W.access,
     group: 'model',
-    note: `Access: ${decision.access}`,
-    evidence: contact ? quote(contact.line) : inference('No contact or apply instruction in the source'),
+    note: `Access: ${access.level} — ${access.reasons[0] ?? ''}`,
+    evidence: access.evidence,
   })
-  if (accessRaw >= 0.7) reasons.push('Direct access available')
+  if (access.level === 'DIRECT') reasons.push('Direct access available')
 
-  dimensions.push({
-    key: 'proofRelevance',
-    label: 'Proof Relevance',
-    contribution: proofRelevance * V3_SCORING_WEIGHTS.proofRelevance * 100,
-    raw: proofRelevance,
-    weight: V3_SCORING_WEIGHTS.proofRelevance,
-    group: 'model',
-    note: proofRelevance >= 0.6 ? 'Relevant proof available' : 'Weak proof match',
-    evidence: inference('Matched against your proof library, not the prospect text'),
-  })
-
+  // ── 7. Evidence quality ───────────────────────────────────────────────
+  const eq = assessEvidenceQuality(facts, intent, { evidenceCount: episode.evidenceRefs.length, verbatimCount: episodeQuotes.length })
   dimensions.push({
     key: 'evidenceQuality',
     label: 'Evidence Quality',
-    contribution: evidenceQuality * V3_SCORING_WEIGHTS.evidenceQuality * 100,
-    raw: evidenceQuality,
-    weight: V3_SCORING_WEIGHTS.evidenceQuality,
+    contribution: eq.raw * W.evidenceQuality * 100,
+    raw: eq.raw,
+    weight: W.evidenceQuality,
     group: 'model',
-    note: evidenceQuality >= 0.6 ? 'Good evidence quality' : 'Limited evidence',
-    evidence: [{ text: `${episode.evidenceRefs.length} evidence item(s) attached to this opportunity`, kind: 'signal' }],
+    note: eq.note,
+    evidence: eq.evidence,
   })
+  if (eq.raw < 0.4) watchOut.push('Limited evidence — research before acting')
 
-  const modelSubtotal = dimensions.reduce((sum, d) => sum + d.contribution, 0)
-  steps.push({
-    label: 'Opportunity model subtotal',
-    value: `${fmt(modelSubtotal)}/100`,
-    detail: 'Sum of the eight weighted model rows.',
-  })
+  // ── Aggregate ─────────────────────────────────────────────────────────
+  const subtotal = dimensions.reduce((sum, d) => sum + d.contribution, 0)
+  steps.push({ label: 'Dimension subtotal', value: `${fmt(subtotal)}/100`, detail: 'Sum of the seven weighted dimensions. No multipliers.' })
 
-  // An undated episode is uncertain, unless the source itself states a
-  // near-term start — that is direct evidence the opportunity is live.
-  const timelineMakesCurrent = episode.status === 'UNKNOWN' && timeline !== null && timeline.days <= 45
-  const effectiveStatus = timelineMakesCurrent ? 'CURRENT' : episode.status
-  const statusMultiplier = EPISODE_STATUS_SCORES[effectiveStatus] ?? 0.5
-  if (statusMultiplier < 1.0) {
-    watchOut.push(episode.status === 'UNKNOWN'
-      ? 'Episode status: UNKNOWN — no post date or start date in the source'
-      : `Episode status: ${episode.status}`)
-  }
-  steps.push({
-    label: 'Episode status',
-    value: `×${fmt(statusMultiplier)}`,
-    detail: timelineMakesCurrent
-      ? `Treated as CURRENT: the source states "${timeline!.label}".`
-      : statusMultiplier < 1
-        ? `${episode.status} episode${episode.status === 'UNKNOWN' ? ' (no post date or start date in the source)' : ''}.`
-        : 'Current episode, no reduction.',
-  })
-
-  const relContext = RELATIONSHIP_CONTEXT[decision.relationship] ?? RELATIONSHIP_CONTEXT.UNKNOWN
-  // Relationship multiplier is dampened when commercial potential is high:
-  // a service provider building a real product has commercial worth of its own.
-  const relationshipMultiplier = (buyerRaw >= 0.5)
-    ? 1.0
-    : relContext.multiplier + (1.0 - relContext.multiplier) * cpRaw * 0.7
-  if (relationshipMultiplier < 1.0 && buyerRaw < 0.5) {
-    watchOut.push(`Primary role: ${decision.relationship} (context, not gate)`)
-  }
-  steps.push({
-    label: 'Relationship context',
-    value: `×${fmt(relationshipMultiplier)}`,
-    detail: relationshipMultiplier < 1
-      ? `${decision.relationship} relationship without a strong buyer request.`
-      : 'No reduction.',
-  })
-
-  const modelScore = Math.round(Math.max(0, Math.min(100, modelSubtotal * statusMultiplier * relationshipMultiplier)))
-  steps.push({
-    label: 'Model score',
-    value: `${modelScore}/100`,
-    detail: `${fmt(modelSubtotal)} × ${fmt(statusMultiplier)} × ${fmt(relationshipMultiplier)}, rounded.`,
-  })
-  let score = modelScore
-  let signalCheckTotal: number | null = null
-  let modelWeight = 1
-
-  // Blend in deterministic signals from the composite scorer. This catches
-  // signals the model missed (tech overlap, company growth, hiring velocity).
-  if (rawText.length > 50) {
-    try {
-      const signals = extractSignals(rawText)
-      const composite = computeCompositeScore({
-        aiBuyerProbability: buyerRaw,
-        aiFitLevel: decision.fit,
-        aiAccessLevel: decision.access,
-        aiIntentLevel: intent.buyerIntentLevel,
-        signals,
-        proofScore: input.proofRelevance,
-        senderCapabilities: input.senderCapabilities,
-        rawText,
-        buyerIntent: intent,
-      })
-
-      modelWeight = score >= 75 || score <= 25 ? 0.8 : score >= 60 || score <= 40 ? 0.7 : 0.6
-      signalCheckTotal = composite.total
-      score = Math.round(score * modelWeight + composite.total * (1 - modelWeight))
-      steps.push({
-        label: 'Signal check blend',
-        value: `${score}/100`,
-        detail: `${Math.round(modelWeight * 100)}% model score ${modelScore} + ${Math.round((1 - modelWeight) * 100)}% signal check ${composite.total}, rounded.`,
-      })
-
-      const topCompositeEvidence = composite.dimensions
-        .filter((d) => d.score >= 60)
-        .flatMap((d) => d.evidence)
-        .filter((e) => !reasons.includes(e) && !(capBuyer && /buyer signal|asking for help|seeking vendor/i.test(e)))
-        .slice(0, 3)
-      reasons.push(...topCompositeEvidence)
-
-      for (const dim of composite.dimensions) {
-        dimensions.push({
-          key: `signal_${dim.key}`,
-          label: dim.label,
-          contribution: dim.weighted,
-          raw: dim.score / 100,
-          weight: dim.weight,
-          group: 'signals',
-          note: dim.evidence[0] || '',
-          evidence: dim.evidence.map((text) => ({ text, kind: 'signal' as const })),
-        })
-      }
-    } catch {
-      // Composite scoring is best-effort; the model score stands alone.
-    }
+  let adjusted = subtotal
+  let penaltyApplied: number | null = null
+  const competitor = !intent.verifiedBuyerRequest
+    && (decision.relationship === 'COMPETITOR' || (intent.relationshipRole === 'SELLER' && isSoftwareServicesSeller(facts)))
+  if (competitor) {
+    adjusted -= COMPETITOR_PENALTY
+    penaltyApplied = -COMPETITOR_PENALTY
+    steps.push({ label: 'Competitor context', value: `−${COMPETITOR_PENALTY}`, detail: 'Sells software delivery or consulting themselves and has no verified request to buy.' })
+    watchOut.push('Sells the same services — treat as a competitor unless they ask for help')
   }
 
-  if (capBuyer) {
-    for (let i = reasons.length - 1; i >= 0; i--) {
-      if (/explicit buyer request|strong buyer signal|AI: (?:strong|moderate) buyer/i.test(reasons[i])) reasons.splice(i, 1)
-    }
-  }
+  const score = Math.round(Math.max(0, Math.min(100, adjusted)))
+  steps.push({ label: 'Canonical score', value: `${score}/100`, detail: 'Rounded, bounded 0-100.' })
 
-  const scoreLabel = getScoreLabel(score)
-  const label = scoreLabel.label
-  let qualification = scoreLabel.qualification
+  const band = qualifyCanonicalScore(score)
+  let qualification: V3ScoreOutput['qualification'] = band.qualification
   let finalReasons = reasons
-  const floorApplied: number | null = null
-
-  // Builder floor removed: corrected dimensions (commercialPotential,
-  // decisionAuthority, buildIntensity) now naturally produce scores in the
-  // 40-60 range for high-potential founders, mapping to MAYBE/CONNECT actions.
-  if (episode.status === 'CLOSED' && qualification !== 'SKIP') {
+  if (closed && qualification !== 'SKIP') {
     qualification = 'SKIP'
     finalReasons = ['Episode closed — not resurrected']
+    steps.push({ label: 'Closed episode', value: 'SKIP', detail: 'A closed or negated episode is never qualified.' })
   }
 
   return {
     score,
-    label,
+    label: closed ? 'Closed episode' : band.label,
     qualification,
     reasons: [...new Set(finalReasons)],
-    watchOut,
+    watchOut: [...new Set(watchOut)],
     dimensions,
     calculation: {
-      modelSubtotal: Math.round(modelSubtotal * 100) / 100,
-      statusMultiplier,
-      relationshipMultiplier: Math.round(relationshipMultiplier * 100) / 100,
-      modelScore,
-      signalCheckTotal,
-      modelWeight,
-      floorApplied,
+      modelSubtotal: Math.round(subtotal * 100) / 100,
+      statusMultiplier: 1,
+      relationshipMultiplier: 1,
+      modelScore: score,
+      signalCheckTotal: null,
+      modelWeight: 1,
+      floorApplied: penaltyApplied,
       finalScore: score,
       steps,
     },
+    resolved: { access, timing, fit, authority, commercialPotential: cp, evidenceQuality: eq },
   }
 }
 
-
-export function scoreAllEpisodes(
-  inputs: V3ScoreInput[],
-): V3MultiEpisodeResult {
-  const episodeScores: V3EpisodeScore[] = []
-
-  for (const input of inputs) {
-    const result = scoreEpisode(input)
-    const isClosed = input.episode.status === 'CLOSED'
-    // Builder floor removed: dimensions produce natural scores for builders.
-    const qualification = result.qualification
-    episodeScores.push({
-      episodeId: input.episode.id,
-      score: result.score,
-      label: result.label,
-      qualification,
-      action: deriveAction(result.score, input),
-      messageEligible: result.score >= 40 && qualification !== 'SKIP' && !isClosed,
-      reasons: result.reasons,
-    })
-  }
-
-  // Best active episode score = lead display score
-  const activeEpisodes = episodeScores.filter((es) => {
-    const input = inputs.find((i) => i.episode.id === es.episodeId)
-    return input && input.episode.status !== 'CLOSED'
-  })
-
-  const bestActive = activeEpisodes.length > 0
-    ? activeEpisodes.reduce((best, current) => current.score > best.score ? current : best)
-    : episodeScores[0] ?? null
-
-  return {
-    episodes: episodeScores,
-    bestActiveScore: bestActive?.score ?? 0,
-    bestActiveEpisodeId: bestActive?.episodeId ?? null,
-  }
+/** Convenience for callers without a model: score a source with the deterministic decision. */
+export function scoreSourceWithoutModel(rawText: string, episode: V3OpportunityEpisode, decision: V3BoundedDecision): V3ScoreOutput {
+  const facts = readSourceFacts(rawText)
+  return scoreEpisode({ episode, decision, rawText, sourceFacts: facts, buyerIntent: resolveBuyerIntentFromSource(rawText) })
 }
-
-
-
-

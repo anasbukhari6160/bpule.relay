@@ -1,18 +1,20 @@
 /**
  * Admin Routing Opportunities API
  *
- * Returns leads where the current sender is not the best sender,
- * computed using the SAME engine as the rep lead detail view.
+ * Returns leads where the current sender is not the best sender, computed
+ * with the SAME inputs and the SAME engine as the rep's lead detail view
+ * (routing-context.ts → rankSendersForLead). The mismatch threshold is the
+ * action policy's, so admin and rep agree on what "mismatch" means.
  *
  * GET /api/admin/routing-opportunities
  */
 
 import { NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
-import { loadSenderCandidates } from '@/lib/relay/sender-suggestion'
-import { rankSendersForLead, type SenderProfile } from '@/lib/relay/sender-routing-engine'
-import { computeHistoricalOutcomes, toRoutingFormat } from '@/lib/relay/historical-outcomes'
 import { getAuthContext } from '@/lib/auth/organization'
+import { loadSenderProfiles, parsePacket, routeLead } from '@/lib/relay/routing-context'
+import { ROUTING_MISMATCH_DELTA } from '@/lib/intelligence-v3/action/recommended-action'
+import { QUALIFICATION_BANDS } from '@/lib/scoring/qualification'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,53 +25,35 @@ export async function GET() {
   const store = await createScoutStore()
   const client = store.getSupabaseClient()
 
-  // Load all active leads with scores
+  // Leads worth routing: MAYBE and above (the canonical band, not a local number).
+  const minScore = QUALIFICATION_BANDS.find((b) => b.qualification === 'MAYBE')!.min
   const { data: leads, error: leadsError } = await client
     .from('leads')
-    .select('id, company, contact_name, canonical_score, canonical_intelligence, sender_profile_id, owner_rep_id, status')
+    .select('id, company, contact_name, contact_title, raw_input, canonical_score, canonical_intelligence, sender_profile_id, owner_rep_id, status')
     .eq('organization_id', authCtx.orgId)
     .not('canonical_score', 'is', null)
-    .gte('canonical_score', 50)
+    .gte('canonical_score', minScore)
     .in('status', ['new', 'contacted', 'followed_up', 'replied'])
     .order('canonical_score', { ascending: false })
     .limit(50)
 
   if (leadsError) return NextResponse.json({ error: leadsError.message }, { status: 500 })
-  if (!leads || leads.length === 0) return NextResponse.json({ opportunities: [] })
+  if (!leads || leads.length === 0) return NextResponse.json({ opportunities: [], routingVersion: null })
 
-  // Load all sender profiles once
-  const senderCandidates = await loadSenderCandidates(client, authCtx.orgId, '')
+  const senderProfiles = await loadSenderProfiles(client, authCtx.orgId, authCtx.repId)
 
-  // Historical outcomes
-  const historicalMap = await computeHistoricalOutcomes(client, authCtx.orgId)
-
-  const senderProfiles: SenderProfile[] = senderCandidates.map((c) => ({
-    ...c,
-    industries: [],
-    historicalOutcomes: toRoutingFormat(historicalMap.get(c.id)),
-  }))
-
-  // Compute routing for each lead
   const opportunities = []
+  let routingVersion: string | null = null
   for (const lead of leads) {
-    const ci = parseCI(lead.canonical_intelligence)
-    const v3Packet = (ci?.v3DecisionPacket ?? (ci as Record<string, unknown>)?.v3DecisionPacket) as Record<string, unknown> | null
-
-    const capabilities = extractCaps(v3Packet)
-    const routing = rankSendersForLead(
-      {
-        capabilities,
-        industries: [],
-        buyerRequestProbability: 0.5,
-        fitLevel: 'MEDIUM',
-        rawTerms: [lead.company, lead.contact_name].filter(Boolean) as string[],
-        platform: null,
-      },
+    const packet = parsePacket(lead.canonical_intelligence)
+    const routing = routeLead(
+      { company: lead.company, contactName: lead.contact_name, contactTitle: lead.contact_title, rawInput: lead.raw_input, senderProfileId: lead.sender_profile_id },
+      packet,
       senderProfiles,
-      lead.sender_profile_id,
     )
+    routingVersion = routing.routingVersion
 
-    if (routing.mismatchDelta !== null && routing.mismatchDelta >= 15) {
+    if (routing.mismatchDelta !== null && routing.mismatchDelta >= ROUTING_MISMATCH_DELTA) {
       const best = routing.rankings[0]
       const current = routing.rankings.find((r) => r.senderId === lead.sender_profile_id)
       opportunities.push({
@@ -84,6 +68,8 @@ export async function GET() {
         bestSenderId: best?.senderId ?? null,
         bestSenderName: best?.name ?? null,
         bestSenderMatch: best?.profileMatch ?? 0,
+        bestSenderAccessible: best?.accessibleToRep ?? false,
+        holders: best?.holders ?? [],
         mismatchDelta: routing.mismatchDelta,
         reasons: best?.reasons ?? [],
         routingVersion: routing.routingVersion,
@@ -93,25 +79,5 @@ export async function GET() {
 
   opportunities.sort((a, b) => b.mismatchDelta - a.mismatchDelta)
 
-  return NextResponse.json({ opportunities })
-}
-
-function parseCI(ci: unknown): Record<string, unknown> | null {
-  if (!ci) return null
-  if (typeof ci === 'object') return ci as Record<string, unknown>
-  if (typeof ci === 'string') {
-    try { return JSON.parse(ci) as Record<string, unknown> } catch { return null }
-  }
-  return null
-}
-
-function extractCaps(v3Packet: Record<string, unknown> | null): string[] {
-  if (!v3Packet) return []
-  const episodes = (v3Packet.episodes as Array<Record<string, unknown>>) ?? []
-  const caps = new Set<string>()
-  for (const ep of episodes) {
-    const reqCaps = ep.requestedCapabilities as string[] ?? []
-    reqCaps.forEach((c: string) => caps.add(c))
-  }
-  return [...caps]
+  return NextResponse.json({ opportunities, routingVersion, mismatchThreshold: ROUTING_MISMATCH_DELTA })
 }

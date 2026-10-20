@@ -24,9 +24,10 @@ import {
 import { splitCurrentAndPastLines } from './current-org'
 import { classifyTemporalProvenance, isHistoricalYear, verifyBudgetProvenance, verifyHiringProvenance } from '@/lib/scoring/signal-attribution'
 import { parseHiringCount } from '@/lib/evidence/provenance'
+import { ML_CANDIDATE_SEEKING, ML_FOUNDER_ROLE, ML_PAST_PHRASE, mlMatches } from './multilingual'
 
 /** Bump when buyer-intent rules change; part of the V3 decision reuse key. */
-export const BUYER_INTENT_VERSION = 'buyer_intent_v1'
+export const BUYER_INTENT_VERSION = 'buyer_intent_v2'
 
 export type BuyerIntentLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
 export type RelationshipRole = 'BUYER' | 'SELLER' | 'BUILDER' | 'RECRUITER' | 'CANDIDATE' | 'UNKNOWN'
@@ -106,13 +107,13 @@ export interface VerifiedBuyerIntent {
 }
 
 const HIRING_URGENT = /\b(?:immediately|asap|urgent(?:ly)?|right\s+now|this\s+week|starting\s+now)\b/i
-const CANDIDATE = /\b(?:i(?:'|’)?m|i\s+am)\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+(?:new\s+)?(?:contract|full[- ]time|part[- ]time|freelance|work|opportunities|roles|positions)\b|\bopen\s+to\s+work\b/i
+const CANDIDATE = /\b(?:i(?:'|’)?m|i\s+am)\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+(?:my\s+|a\s+|new\s+){0,2}(?:contract|full[- ]time|part[- ]time|freelance|work|opportunities|opportunity|roles?|positions?|next\s+(?:role|opportunity|position|challenge))\b|\bopen\s+to\s+work\b|#opentowork\b|\bavailable\s+for\s+(?:contract|freelance)\s+(?:work|projects)\b|\blooking\s+for\s+my\s+next\s+(?:role|opportunity|position|challenge)\b|\b(?:seeking|looking\s+for)\s+(?:a\s+)?(?:cto|vp|head|senior|staff|lead)\s+(?:\w+\s+){0,2}?(?:position|role)\b|\bmy\s+role\s+was\s+affected\b/i
 const FOUNDER = /\b(?:founder|co-?founder|ceo|cto|owner|building)\b/i
 /** A request told as a story ("we started looking for an agency") is past, not a current ask. */
 const PAST_NARRATIVE = /\b(?:started|began|were|was)\s+(?:looking|searching)\s+for\b|\bwe\s+(?:looked|searched)\s+for\b|\bback\s+then\b/i
-const HYPOTHETICAL = /\b(?:thinking\s+about|considering|might|could|would\s+love\s+to|hope\s+to|someday|one\s+day|eventually|if\s+(?:we|i)\s+(?:ever|could|had))\b/i
+const HYPOTHETICAL = /\b(?:thinking\s+about|considering|might|could|would\s+love\s+to|hope\s+to|someday|one\s+day|eventually|if\s+(?:we|i)\s+(?:ever|could|had)|imagine|say\s+you|suppose|pro\s+tip|would\s+you\s+know)\b/i
 /** Someone else's post shared by the prospect. Applies to its own block of lines. */
-const REPOST = /\b(?:repost(?:ed)?|via\s+@\w+|shared\s+from|originally\s+posted\s+by|courtesy\s+of|great\s+(?:post|thread|insight|advice)\s+from)\b/i
+const REPOST = /\b(?:repost(?:ed|ing)?|via\s+@\w+|shared\s+from|originally\s+posted\s+by|courtesy\s+of|great\s+(?:post|thread|insight|advice)\s+from|for\s+a\s+friend)\b/i
 const HELP_REQUEST = /\b(?:(?:we|i)\s+(?:really\s+|urgently\s+|also\s+)?need\s+(?:\w+\s+){0,2}help|help\s+us\s+(?:build|ship|scale|fix|automate|rebuild|migrate|launch))\b/i
 const BUDGET_LINE = /\b(?:budget(?:ed)?|funded|allocated|fixed\s+price|project\s+value)\b/i
 const PRODUCT_METRIC = /\b(?:cpi|ltv|roi|roas|arpu|cac|mrr|arr|revenue|profit|burn\s+rate|runway|churn)\b/i
@@ -136,6 +137,7 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     && classifyTemporalProvenance(line) !== 'HISTORICAL'
     && !isHistoricalYear(line)
     && !PAST_NARRATIVE.test(line)
+    && !ML_PAST_PHRASE.test(line)
     && !HYPOTHETICAL.test(line)
     && !inRepostBlock(idx)
 
@@ -177,8 +179,8 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     statedBudget,
     sellerLines: seller.lines,
     recruiter: isRecruiterProfile(text),
-    candidateSeeking: CANDIDATE.test(text),
-    founderOrBuilder: FOUNDER.test(header),
+    candidateSeeking: CANDIDATE.test(text) || mlMatches(ML_CANDIDATE_SEEKING, text),
+    founderOrBuilder: FOUNDER.test(header) || ML_FOUNDER_ROLE.test(header),
   }
 }
 

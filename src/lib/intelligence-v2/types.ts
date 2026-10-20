@@ -5,6 +5,8 @@
  * Once persisted, NO surface may independently recompute the lead score.
  */
 
+import { QUALIFICATION_BANDS, qualifyCanonicalScore, toStoredQualification, displayScoreForCanonical } from '@/lib/scoring/qualification'
+
 
 export type WorkplaceType = 'REMOTE' | 'HYBRID' | 'ONSITE' | 'UNKNOWN'
 
@@ -402,7 +404,7 @@ export interface CanonicalProspectIntelligence {
   /** Extraction confidence 0-100 */
   confidence: number
   /** Qualification verdict */
-  qualification: 'strong' | 'worth_pursuing' | 'maybe' | 'skip'
+  qualification: 'strong' | 'worth_pursuing' | 'maybe' | 'low' | 'skip'
   /** Normalized intelligence */
   intelligence: NormalizedIntelligence
   /** Raw source data — never destroyed */
@@ -444,13 +446,9 @@ export interface CanonicalProspectIntelligence {
 }
 
 
-export const SCORE_LABELS: Array<{ min: number; max: number; label: string; qualification: CanonicalProspectIntelligence['qualification'] }> = [
-  { min: 85, max: 100, label: 'Strong opportunity', qualification: 'strong' },
-  { min: 70, max: 84, label: 'Worth pursuing', qualification: 'worth_pursuing' },
-  { min: 55, max: 69, label: 'Maybe — needs more signal', qualification: 'maybe' },
-  { min: 40, max: 54, label: 'Weak fit', qualification: 'skip' },
-  { min: 0, max: 39, label: 'Not a fit', qualification: 'skip' },
-]
+/** Qualification bands live in one place: @/lib/scoring/qualification. */
+export const SCORE_LABELS: Array<{ min: number; max: number; label: string; qualification: CanonicalProspectIntelligence['qualification'] }> =
+  QUALIFICATION_BANDS.map((b) => ({ min: b.min, max: b.max, label: b.label, qualification: toStoredQualification(b.qualification) }))
 
 /**
  * WriterInput — the ONLY data the message writer may receive.
@@ -497,15 +495,11 @@ export interface WriterInput {
 }
 
 export function scoreLabel(score: number): { label: string; qualification: CanonicalProspectIntelligence['qualification'] } {
-  for (const entry of SCORE_LABELS) {
-    if (score >= entry.min && score <= entry.max) {
-      return { label: entry.label, qualification: entry.qualification }
-    }
-  }
-  return { label: 'Not a fit', qualification: 'skip' }
+  const band = qualifyCanonicalScore(score)
+  return { label: band.label, qualification: toStoredQualification(band.qualification) }
 }
 
-/** Convert canonical 0-100 score to display /10 */
+/** Convert canonical 0-100 score to display /10 — the one display policy. */
 export function canonicalToDisplay(score: number): number {
-  return Math.round(score / 10)
+  return displayScoreForCanonical(score)
 }

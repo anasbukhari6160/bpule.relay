@@ -2,21 +2,22 @@
  * Lead Decision Context API
  *
  * Returns the full runtime context for a lead:
- * - Opportunity score + dimensions (from V3 packet)
- * - Sender routing (ranked senders with match %)
- * - Conversation override (if client replied)
- * - Mismatch detection
+ * - Opportunity (from the stored V3 packet — never recomputed here)
+ * - Sender routing (rankSendersForLead through routing-context, like admin)
+ * - Live conversation state
+ * - The one recommended action (deriveRecommendedAction) with the cold
+ *   action preserved, plus the routing overlay (REFER / ASSIGN / ASK_FOR_HELP)
  *
- * No AI calls — deterministic from stored data + sender profiles.
+ * No AI calls. Deterministic from stored data + sender profiles.
  */
 
 import { NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
-import { loadSenderCandidates } from '@/lib/relay/sender-suggestion'
-import { rankSendersForLead, type SenderProfile } from '@/lib/relay/sender-routing-engine'
-import { resolveEffectiveAction, classifyConversationIntent } from '@/lib/relay/conversation-override'
-import type { ConversationState } from '@/lib/relay/conversation-override'
-import { computeHistoricalOutcomes, toRoutingFormat } from '@/lib/relay/historical-outcomes'
+import { loadSenderProfiles, parsePacket, routeLead } from '@/lib/relay/routing-context'
+import { classifyConversationIntent, type ConversationState } from '@/lib/relay/conversation-override'
+import { deriveRecommendedAction } from '@/lib/intelligence-v3/action/recommended-action'
+import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
+import { ROUTING_MISMATCH_DELTA } from '@/lib/intelligence-v3/action/recommended-action'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,152 +33,118 @@ export async function GET(
     return NextResponse.json({ error: 'Lead not found' }, { status: 404 })
   }
 
-  // Load all org sender profiles with proof
-  const senderCandidates = await loadSenderCandidates(
-    store.getSupabaseClient(),
-    lead.organizationId,
-    lead.ownerRepId ?? '',
-  )
-  // Historical outcomes — bounded evidence, only for senders with 5+ leads
-  const historicalMap = await computeHistoricalOutcomes(store.getSupabaseClient(), lead.organizationId)
-
-  const senderProfiles: SenderProfile[] = senderCandidates.map((c) => ({
-    ...c,
-    industries: [],
-    historicalOutcomes: toRoutingFormat(historicalMap.get(c.id)),
-  }))
-
-  // Parse V3 decision packet
-  const ci = parseCanonicalIntelligence(lead.canonicalIntelligence)
-  const v3Packet = (ci?.v3DecisionPacket ?? (ci as Record<string, unknown>)?.v3DecisionPacket) as Record<string, unknown> | null
-  const decision = (v3Packet?.decision as Record<string, unknown> | null) ?? null
-
-  const capabilities = extractCapabilities(v3Packet)
-  const industries: string[] = []
-  if (ci) {
-    const intel = (ci.intelligence as Record<string, unknown> | null)
-    if (intel?.company) {
-      const company = intel.company as Record<string, unknown>
-      if (typeof company.industry === 'string') industries.push(company.industry)
-    }
-  }
-
-  const routing = rankSendersForLead(
-    {
-      capabilities,
-      industries,
-      buyerRequestProbability: (decision?.buyerRequestProbability as number) ?? 0.5,
-      fitLevel: (decision?.fitLevel as string) ?? 'MEDIUM',
-      rawTerms: buildRawTerms(lead, ci),
-      platform: null,
-    },
+  const senderProfiles = await loadSenderProfiles(store.getSupabaseClient(), lead.organizationId, lead.ownerRepId ?? '')
+  const packet = parsePacket(lead.canonicalIntelligence)
+  const routing = routeLead(
+    { company: lead.company, contactName: lead.contactName, contactTitle: lead.contactTitle, rawInput: lead.rawInput, senderProfileId: lead.senderProfileId ?? null },
+    packet,
     senderProfiles,
-    lead.senderProfileId ?? null,
   )
 
-  // Conversation state
   const conversation = buildConversationState(lead)
-  const coldScore = (v3Packet?.score as number) ?? lead.canonicalScore ?? null
-  const coldAction = (v3Packet?.action as string) ?? null
-  const override = resolveEffectiveAction(coldScore, coldAction, conversation)
+  const coldScore = packet?.score ?? lead.canonicalScore ?? null
+  const band = coldScore === null ? null : qualifyCanonicalScore(coldScore)
+  const best = routing.rankings[0] ?? null
+  const current = routing.rankings.find((r) => r.senderId === lead.senderProfileId) ?? null
+
+  const action = deriveRecommendedAction({
+    opportunity: {
+      score: coldScore,
+      qualification: band?.qualification ?? null,
+      buyerIntentLevel: packet?.buyerIntent?.buyerIntentLevel ?? 'UNKNOWN',
+      verifiedBuyerRequest: packet?.buyerIntent?.verifiedBuyerRequest ?? false,
+      relationshipRole: packet?.buyerIntent?.relationshipRole ?? 'UNKNOWN',
+      access: packet?.resolved?.access ?? 'CONNECTION',
+      buyerTiming: packet?.resolved?.buyerTiming ?? 'NONE',
+      activityRecency: packet?.resolved?.activityRecency ?? 'UNKNOWN',
+      commercialPotential: packet?.resolved?.commercialPotential ?? 'LOW',
+      episodeClosed: false,
+    },
+    confidence: { label: packet?.confidenceDetail?.label ?? 'LOW', researchMore: packet?.confidenceDetail?.researchMore ?? false },
+    conversation,
+    sender: {
+      currentSenderMatch: current?.profileMatch ?? null,
+      bestSenderMatch: best?.profileMatch ?? null,
+      bestSenderId: best?.senderId ?? null,
+      currentSenderId: lead.senderProfileId ?? null,
+      bestSenderAccessible: best?.accessibleToRep ?? false,
+    },
+    channel: 'linkedin',
+  })
 
   return NextResponse.json({
     leadId: lead.id,
     company: lead.company,
     contactName: lead.contactName,
+    // === OPPORTUNITY (independent of sender) ===
     opportunityScore: coldScore,
-    qualification: ci?.qualification ?? null,
-    label: (v3Packet?.label as string) ?? null,
-    buyerRequestProbability: (decision?.buyerRequestProbability as number) ?? 0,
-    fitLevel: (decision?.fitLevel as string) ?? 'UNKNOWN',
-    coldAction,
-    dimensions: extractDimensions(v3Packet),
+    displayScore: coldScore === null ? null : displayScoreForCanonical(coldScore),
+    qualification: band?.qualification ?? null,
+    qualificationLabel: band?.label ?? null,
+    label: packet?.label ?? band?.label ?? null,
+    buyerIntent: packet?.buyerIntent?.buyerIntentLevel ?? 'UNKNOWN',
+    relationshipRole: packet?.buyerIntent?.relationshipRole ?? 'UNKNOWN',
+    commercialPotential: packet?.resolved?.commercialPotential ?? null,
+    fit: packet?.resolved?.fit ?? packet?.decision?.fit ?? 'UNKNOWN',
+    access: packet?.resolved?.access ?? null,
+    buyerTiming: packet?.resolved?.buyerTiming ?? null,
+    activityRecency: packet?.resolved?.activityRecency ?? null,
+    confidence: packet?.confidenceDetail?.label ?? null,
+    confidenceReasons: packet?.confidenceDetail?.reasons ?? [],
+    buyerRequestProbability: packet?.decision?.buyerRequestProbability ?? 0,
+    fitLevel: packet?.resolved?.fit ?? packet?.decision?.fit ?? 'UNKNOWN',
+    coldAction: action.coldAction,
+    dimensions: (packet?.dimensions ?? []).map((d) => ({ key: d.key, label: d.label, contribution: d.contribution, raw: d.raw, note: d.note })),
+    rejectedSignals: packet?.sourceFacts?.rejectedSignals ?? [],
+    // === SENDER ROUTING (independent of opportunity) ===
     routing,
-    conversationOverride: override.conversationOverride,
-    effectiveAction: override.effectiveAction,
-    actionReason: override.reason,
-    actionConfidence: override.confidence,
-    lastInboundIntent: conversation?.latestInboundIntent ?? null,
-    hasMismatch: (routing.mismatchDelta ?? 0) >= 20,
+    hasMismatch: (routing.mismatchDelta ?? 0) >= ROUTING_MISMATCH_DELTA,
     mismatchDelta: routing.mismatchDelta,
-    scoringVersion: (v3Packet?.scoreVersion as string) ?? 'unknown',
+    // === ACTION (one policy; live > cold) ===
+    effectiveAction: action.action,
+    actionReason: action.reason,
+    conversationOverride: action.conversationOverride,
+    routingRecommendation: action.routing,
+    messageEligible: action.messageEligible,
+    lastInboundIntent: conversation?.latestInboundIntent ?? null,
+    // === VERSIONS ===
+    scoringVersion: packet?.versions?.scoringVersion ?? packet?.scoreVersion ?? 'unknown',
+    versions: packet?.versions ?? null,
     routingVersion: routing.routingVersion,
+    actionPolicyVersion: action.version,
     generatedAt: new Date().toISOString(),
   })
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+function buildConversationState(lead: {
+  status?: string | null
+  connectionAcceptedAt?: string | null
+  followupCount?: number
+  messages?: Array<{ direction?: string; sentText?: string | null; sentAt?: string | null; type?: string | null }>
+}): (ConversationState & { lastDirection: 'inbound' | 'outbound' | null; daysSinceLastOutbound: number | null; followupCount: number; followupLimit: number; connectionAccepted: boolean }) | null {
+  const messages = (lead.messages ?? []).filter((m) => m.sentAt)
+  const terminal = lead.status === 'won' || lead.status === 'lost' || lead.status === 'dead'
+  if (messages.length === 0 && !terminal && !lead.connectionAcceptedAt) return null
 
-function parseCanonicalIntelligence(ci: unknown): Record<string, unknown> | null {
-  if (!ci) return null
-  if (typeof ci === 'object') return ci as Record<string, unknown>
-  if (typeof ci === 'string') {
-    try { return JSON.parse(ci) as Record<string, unknown> } catch { return null }
-  }
-  return null
-}
-
-function extractCapabilities(v3Packet: Record<string, unknown> | null): string[] {
-  if (!v3Packet) return []
-  const episodes = (v3Packet.episodes as Array<Record<string, unknown>>) ?? []
-  const caps = new Set<string>()
-  for (const ep of episodes) {
-    const reqCaps = ep.requestedCapabilities as string[] ?? []
-    reqCaps.forEach((c: string) => caps.add(c))
-  }
-  return [...caps]
-}
-
-function buildRawTerms(lead: { company?: string | null; contactName?: string | null; contactTitle?: string | null }, ci: Record<string, unknown> | null): string[] {
-  const terms: string[] = []
-  if (lead.company) terms.push(lead.company)
-  if (lead.contactName) terms.push(lead.contactName)
-  if (lead.contactTitle) terms.push(lead.contactTitle)
-  if (ci) {
-    const intel = (ci.intelligence as Record<string, unknown> | null) ?? ci
-    if (intel?.opportunity) {
-      const opp = intel.opportunity as Record<string, unknown>
-      if (Array.isArray(opp.signals)) terms.push(...(opp.signals as string[]))
-    }
-  }
-  return terms
-}
-
-function buildConversationState(lead: { messages?: Array<{ direction?: string; sentText?: string | null; sentAt?: string | null }> }): ConversationState | null {
-  const messages = lead.messages ?? []
-  if (messages.length === 0) return null
-
-  const inboundMessages = messages.filter((m) => m.direction === 'inbound')
-  const lastInbound = [...inboundMessages].sort((a, b) =>
-    (b.sentAt ?? '').localeCompare(a.sentAt ?? '')
-  )[0] ?? null
-
-  if (!lastInbound) return null
-
-  const intent = lastInbound.sentText
-    ? classifyConversationIntent(lastInbound.sentText)
-    : 'UNKNOWN'
+  const sorted = [...messages].sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+  const last = sorted[sorted.length - 1] ?? null
+  const lastInbound = [...sorted].reverse().find((m) => m.direction === 'inbound') ?? null
+  const lastOutbound = [...sorted].reverse().find((m) => m.direction !== 'inbound') ?? null
+  const intent = lastInbound?.sentText ? classifyConversationIntent(lastInbound.sentText) : 'UNKNOWN'
+  const stage: ConversationState['stage'] = lead.status === 'won' ? 'closed' : lead.status === 'lost' || lead.status === 'dead' ? 'lost'
+    : lastInbound ? 'replied' : lastOutbound || lead.connectionAcceptedAt ? 'contacted' : 'cold'
+  const daysSinceLastOutbound = lastOutbound?.sentAt ? Math.floor((Date.now() - new Date(lastOutbound.sentAt).getTime()) / 86_400_000) : null
 
   return {
     latestInboundIntent: intent,
-    lastInboundAt: lastInbound.sentAt ?? null,
-    stage: 'replied',
+    lastInboundAt: lastInbound?.sentAt ?? null,
+    stage,
     messageCount: messages.length,
-    lastInboundQuote: lastInbound.sentText ?? null,
+    lastInboundQuote: lastInbound?.sentText ?? null,
+    lastDirection: last ? (last.direction === 'inbound' ? 'inbound' : 'outbound') : null,
+    daysSinceLastOutbound,
+    followupCount: lead.followupCount ?? 0,
+    followupLimit: 3,
+    connectionAccepted: Boolean(lead.connectionAcceptedAt),
   }
 }
-
-function extractDimensions(v3Packet: Record<string, unknown> | null): Array<{ key: string; label: string; contribution: number; raw: number; note: string }> {
-  if (!v3Packet) return []
-  const dims = (v3Packet.dimensions as Array<Record<string, unknown>>) ?? []
-  return dims.map((d) => ({
-    key: (d.key as string) ?? '',
-    label: (d.label as string) ?? '',
-    contribution: (d.contribution as number) ?? 0,
-    raw: (d.raw as number) ?? 0,
-    note: (d.note as string) ?? '',
-  })).filter((d) => d.key)
-}
-
-// Re-export for type consumers
-export type { SenderProfile }

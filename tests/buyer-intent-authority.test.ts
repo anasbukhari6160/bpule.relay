@@ -161,7 +161,7 @@ describe('cache invalidation', () => {
     const key = buildV3ReuseKey({ rawText: SELLER_FOUNDER })
     expect(key).toMatch(/^[0-9a-f]{64}$/)
     // The version is part of the preimage: a bump yields a different key.
-    expect(BUYER_INTENT_VERSION).toBe('buyer_intent_v1')
+    expect(BUYER_INTENT_VERSION).toBe('buyer_intent_v2')
   })
 })
 

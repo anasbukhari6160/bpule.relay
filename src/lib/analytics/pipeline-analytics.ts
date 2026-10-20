@@ -12,6 +12,7 @@ import {
   type PipelineStage,
 } from '@/components/leads/pipeline-utils'
 import { getLeadDisplayScore } from '@/lib/scoring/display-score'
+import { toStoredQualification } from '@/lib/scoring/qualification'
 import type { MarketRegion, MessageType } from '@/lib/domain/types'
 
 /** One sent or received message, without its text. */
@@ -144,11 +145,13 @@ const SOURCE_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
+/** The canonical bands, in display order. Keys match the stored qualification. */
 export const SCORE_BANDS = [
-  { key: 'strong', label: 'Strong', min: 0.8 },
-  { key: 'worth_pursuing', label: 'Worth pursuing', min: 0.6 },
-  { key: 'maybe', label: 'Maybe', min: 0.4 },
-  { key: 'skip', label: 'Skip', min: 0 },
+  { key: 'strong', label: 'Strong' },
+  { key: 'worth_pursuing', label: 'Worth pursuing' },
+  { key: 'maybe', label: 'Maybe' },
+  { key: 'low', label: 'Low' },
+  { key: 'skip', label: 'Skip' },
 ] as const
 
 /** YYYY-MM-DD of an instant in a time zone. */
@@ -180,12 +183,13 @@ function median(values: number[]): number | null {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
 }
 
-/** Score band of a lead from the one display policy: share of the scale it reaches. */
+/** Score band of a lead from the one qualification policy. Legacy 0-12 leads map by share of scale. */
 export function scoreBandOf(lead: LeadRow): (typeof SCORE_BANDS)[number]['key'] | 'unscored' {
   const s = getLeadDisplayScore(lead)
   if (s.value == null) return 'unscored'
+  if (s.qualification) return toStoredQualification(s.qualification)
   const ratio = s.value / s.max
-  return SCORE_BANDS.find((b) => ratio >= b.min)?.key ?? 'skip'
+  return ratio >= 0.8 ? 'strong' : ratio >= 0.6 ? 'worth_pursuing' : ratio >= 0.4 ? 'maybe' : ratio >= 0.2 ? 'low' : 'skip'
 }
 
 const STAGE_LABEL: Record<PipelineStage, string> = Object.fromEntries(

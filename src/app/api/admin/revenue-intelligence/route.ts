@@ -3,6 +3,7 @@ import { createServerSupabase } from '@/lib/supabase/server'
 import { getAuthContext, can } from '@/lib/auth/organization'
 import { validateFunnelOrdering, computeCostCoverage, validateLatencyConsistency, overallFunnelHealth, classifyFallback } from '@/lib/revenue-intelligence/metrics-health'
 import { generateInsights } from '@/lib/revenue-intelligence/insights'
+import { qualifyCanonicalScore } from '@/lib/scoring/qualification'
 
 export const maxDuration = 30
 
@@ -281,8 +282,9 @@ export async function GET(request: Request) {
   const confidenceBuckets = { high: 0, medium: 0, low: 0 }
   for (const lead of leads) {
     const ci = lead.canonical_intelligence as Record<string, unknown> | null
-    const score = lead.canonical_score ?? lead.score ?? 0
-    const fit = score >= 70 ? 'Strong' : score >= 55 ? 'Maybe' : score >= 40 ? 'Weak' : 'Not a fit'
+    // Canonical bands only; a legacy 0-12 score is scaled before banding.
+    const score = lead.canonical_score ?? (lead.score != null ? Math.round((lead.score / 12) * 100) : 0)
+    const fit = qualifyCanonicalScore(score).headline
     fitCounts.set(fit, (fitCounts.get(fit) ?? 0) + 1)
     const confidence = (ci?.confidence as number) ?? 0
     if (confidence >= 80) confidenceBuckets.high++

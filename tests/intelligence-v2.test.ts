@@ -1,3 +1,4 @@
+import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { describe, it, expect } from 'vitest'
 import { computeCanonicalScore, checkHardNegatives, SCORE_VERSION, DIMENSION_WEIGHTS } from '@/lib/intelligence-v2/scoring-engine'
 import { assessRemoteEligibility } from '@/lib/intelligence-v2/remote-eligibility'
@@ -279,7 +280,9 @@ describe('Hard Negatives', () => {
   })
 
   it('does not invent software demand from a clinician LinkedIn paste', async () => {
-    const { intelligence } = await produceCanonicalIntelligence(
+    // Canonical path (V3, offline): the legacy V2 scorer is only reachable
+    // with V3_CANONICAL=false and is not what production ships.
+    const { intelligence } = await produceV3Intelligence(
       `Yosief Berhe PMHNP-BC
 PMHNP-BC | Licensed in Oregon & California | Founder of Clarity Psychiatry
 Portland, Oregon Metropolitan Area
@@ -288,14 +291,18 @@ I'm a board-certified Psychiatric Mental Health Nurse Practitioner and the found
 Please feel free to reach out.
 I raised my hand and helped.
 Psychiatric Nurse Practitioner Intern`,
+      { deterministicOnly: true, skipEventModel: true },
     )
-    expect(intelligence.qualification).toBe('skip')
+    // Canonical bands: a clinician founder with no stack, no need and no
+    // product is LOW or SKIP — never MAYBE or better. Unknown ≠ negative, but
+    // nothing here is unknown: there is simply no software demand.
+    expect(['skip', 'low']).toContain(intelligence.qualification)
     expect(intelligence.intelligence.content.technicalSignals).not.toContain('react')
     expect(intelligence.intelligence.probableNeed).toBeNull()
     expect(intelligence.intelligence.opportunity.signals).not.toContain('funding')
     expect(intelligence.intelligence.opportunity.signals).not.toContain('explicit_ask')
     expect(intelligence.scoreBreakdown.watchOut.some((w) => /student/i.test(w))).toBe(false)
-    expect(intelligence.scoreBreakdown.watchOut.some((w) => /clinician/i.test(w))).toBe(true)
+    expect(intelligence.scoreBreakdown.watchOut.some((w) => /no clear buyer request|no capability|fit unverified|healthcare|clinic/i.test(w))).toBe(true)
   })
 })
 
@@ -409,27 +416,34 @@ describe('Remote Eligibility', () => {
 
 // ── Score Label Tests ──────────────────────────────────────────────────────
 
+// Labels delegate to the canonical bands in src/lib/scoring/qualification.ts:
+// STRONG 75-100, WORTH_PURSUING 55-74, MAYBE 35-54, LOW 15-34, SKIP 0-14.
 describe('Score Labels', () => {
-  it('85+ → Strong opportunity', () => {
+  it('75+ → Strong opportunity', () => {
     const { label, qualification } = scoreLabel(87)
     expect(label).toBe('Strong opportunity')
     expect(qualification).toBe('strong')
   })
 
-  it('70-84 → Worth pursuing', () => {
-    const { label, qualification } = scoreLabel(75)
+  it('55-74 → Worth pursuing', () => {
+    const { label, qualification } = scoreLabel(60)
     expect(label).toBe('Worth pursuing')
     expect(qualification).toBe('worth_pursuing')
   })
 
-  it('55-69 → Maybe', () => {
-    const { label, qualification } = scoreLabel(60)
+  it('35-54 → Maybe', () => {
+    const { label, qualification } = scoreLabel(42)
     expect(label).toBe('Maybe — needs more signal')
     expect(qualification).toBe('maybe')
   })
 
-  it('Below 40 → Not a fit', () => {
-    const { label, qualification } = scoreLabel(25)
+  it('15-34 → Low', () => {
+    const { qualification } = scoreLabel(25)
+    expect(qualification).toBe('low')
+  })
+
+  it('Below 15 → Not a fit', () => {
+    const { label, qualification } = scoreLabel(10)
     expect(label).toBe('Not a fit')
     expect(qualification).toBe('skip')
   })
@@ -438,18 +452,27 @@ describe('Score Labels', () => {
 // ── Display Score Conversion Tests ─────────────────────────────────────────
 
 describe('Display Score Conversion', () => {
-  it('converts canonical 0-100 to display /10', () => {
+  // Display is band-aligned (display_v2): every STRONG lead shows 8+, every
+  // WORTH_PURSUING 6-7, MAYBE 4-5, LOW 2-3, SKIP 1. Never 0 for a scored lead.
+  it('converts canonical 0-100 to display /10 along the band edges', () => {
     expect(canonicalToDisplay(87)).toBe(9)
     expect(canonicalToDisplay(75)).toBe(8)
     expect(canonicalToDisplay(50)).toBe(5)
     expect(canonicalToDisplay(100)).toBe(10)
-    expect(canonicalToDisplay(0)).toBe(0)
+    expect(canonicalToDisplay(0)).toBe(1)
   })
 
-  it('display score is always rounded', () => {
-    expect(canonicalToDisplay(83)).toBe(8)
-    expect(canonicalToDisplay(85)).toBe(9)
-    expect(canonicalToDisplay(84)).toBe(8)
+  it('display score is an integer and monotonic', () => {
+    expect(canonicalToDisplay(82)).toBe(8)
+    expect(canonicalToDisplay(83)).toBe(9)
+    expect(canonicalToDisplay(92)).toBe(10)
+    let prev = 0
+    for (let s = 0; s <= 100; s++) {
+      const d = canonicalToDisplay(s)
+      expect(Number.isInteger(d)).toBe(true)
+      expect(d).toBeGreaterThanOrEqual(prev)
+      prev = d
+    }
   })
 })
 

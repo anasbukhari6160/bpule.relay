@@ -194,8 +194,9 @@ describe('PRO-003: full-time hiring is not an external buyer request', () => {
     expect(packet.decision.externalNeedProbability).toBeLessThanOrEqual(0.2)
     expect(packet.decision.relationship).not.toBe('BUYER')
     expect(packet.decision.needOwnerType).toBe('HIRING_NEED')
-    expect(packet.reasons).not.toContain('Explicit buyer request detected')
-    expect(packet.reasons).toContain('Recruitment activity detected; external-service buying need not verified')
+    expect(packet.reasons.join(' ')).not.toMatch(/Explicit buyer request detected/)
+    expect(packet.buyerIntent?.buyerIntentLevel).not.toBe('HIGH')
+    expect(packet.watchOut.join(' ')).toMatch(/employee hiring|not credited|no clear buyer request/i)
     expect(packet.decisionAdjustments?.some((a) => /capped at 0\.20 \(model: 0\.98\)/.test(a))).toBe(true)
   })
 })
@@ -272,18 +273,16 @@ describe('PRO-006 / PRO-007 / PRO-008: score is explainable and cites the source
     const calc = packet.scoreCalculation!
     expect(calc).toBeTruthy()
     const modelRows = packet.dimensions.filter((d) => d.group === 'model')
-    expect(modelRows).toHaveLength(8)
+    expect(modelRows).toHaveLength(7)
     const subtotal = modelRows.reduce((sum, d) => sum + d.contribution, 0)
     expect(calc.modelSubtotal).toBeCloseTo(subtotal, 1)
-    expect(calc.modelScore).toBe(Math.round(Math.min(100, subtotal * calc.statusMultiplier * calc.relationshipMultiplier)))
-    if (calc.signalCheckTotal != null) {
-      expect(Math.round(calc.modelScore * calc.modelWeight + calc.signalCheckTotal * (1 - calc.modelWeight)))
-        .toBe(calc.floorApplied ?? calc.finalScore)
-    }
-    expect(calc.finalScore).toBe(packet.score)
-    // Undated but with a stated two-week start: not halved as UNKNOWN.
+    // No multipliers, no blend: the score is the rounded subtotal (plus any documented penalty).
     expect(calc.statusMultiplier).toBe(1)
-    expect(calc.steps.map((s) => s.label)).toEqual(expect.arrayContaining(['Opportunity model subtotal', 'Episode status', 'Model score']))
+    expect(calc.relationshipMultiplier).toBe(1)
+    expect(calc.signalCheckTotal).toBeNull()
+    expect(calc.finalScore).toBe(packet.score)
+    expect(calc.finalScore).toBe(Math.round(Math.min(100, subtotal + (calc.floorApplied ?? 0))))
+    expect(calc.steps.map((s) => s.label)).toEqual(expect.arrayContaining(['Dimension subtotal', 'Canonical score']))
   })
 
   it('cites verbatim source lines for buyer request, budget, timing and access', async () => {
@@ -292,19 +291,19 @@ describe('PRO-006 / PRO-007 / PRO-008: score is explainable and cites the source
       evidenceQuote: 'We are looking for an external software development agency to help us build a customer portal in React.',
     })])
     const row = (key: string) => packet.dimensions.find((d) => d.key === key)!
-    const quoteOf = (key: string) => row(key).evidence?.find((e) => e.kind === 'quote')?.text
-    expect(quoteOf('buyerRequest')).toMatch(/external software development agency/)
-    expect(quoteOf('commercialPotential')).toBe('Approved project budget: $20,000')
-    expect(quoteOf('timing')).toBe('Expected start: Within 2 weeks.')
-    expect(quoteOf('access')).toMatch(/should contact us/)
+    const quotesOf = (key: string) => (row(key).evidence ?? []).filter((e) => e.kind === 'quote').map((e) => e.text)
+    expect(quotesOf('buyerIntent')[0]).toMatch(/external software development agency/)
+    expect(quotesOf('buyerIntent')).toContain('Approved project budget: $20,000')
+    expect(quotesOf('timing')[0]).toBe('Expected start: Within 2 weeks.')
+    expect(quotesOf('access')[0]).toMatch(/should contact us/)
     for (const d of packet.dimensions) {
       for (const e of d.evidence ?? []) {
         if (e.kind === 'quote') expect(EXTERNAL_AGENCY).toContain(e.text)
       }
     }
-    expect(row('commercialPotential').note).toMatch(/Budget stated: \$20,000 \(approved\)/)
-    expect(row('timing').note).toMatch(/Within 2 weeks/i)
-    expect(row('proofRelevance').evidence?.[0].kind).toBe('inference')
+    expect(packet.reasons.join(' ')).toMatch(/Budget stated: \$20,000 \(approved\)/)
+    expect(row('timing').note).toMatch(/within 2 weeks/i)
+    expect(packet.dimensions.some((d) => d.key === 'proofRelevance')).toBe(false)
   })
 
   it('populates the evidence ledger only with verbatim quotes', async () => {

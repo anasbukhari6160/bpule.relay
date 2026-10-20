@@ -469,7 +469,7 @@ export function evaluateProspectQualification(params: {
    * a canonical score computed over garbage input isn't trustworthy either,
    * so it still blocks regardless of canonical.
    */
-  canonicalQualification?: 'strong' | 'worth_pursuing' | 'maybe' | 'skip' | null
+  canonicalQualification?: 'strong' | 'worth_pursuing' | 'maybe' | 'low' | 'skip' | null
 }): ProspectQualificationAssessment {
   const raw = scoreRawInput(params.rawText)
   const extractability = scoreExtractability(params.extracted)

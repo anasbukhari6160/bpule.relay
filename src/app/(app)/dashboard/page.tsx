@@ -17,6 +17,7 @@ import { AdminDashboard } from '@/components/dashboard/admin-dashboard'
 import { RepDashboard } from '@/components/dashboard/rep-dashboard'
 import { PipelineAnalyticsView } from '@/components/dashboard/analytics/pipeline-analytics-view'
 import { buildDashboardAnalytics, parseRange, type RangeDays } from '@/lib/analytics/pipeline-analytics'
+import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
 import { loadBoardData } from '@/lib/leads/board-rows'
 
 export const dynamic = 'force-dynamic'
@@ -455,22 +456,27 @@ function buildSignalFeedFromActionEvents(
   dash: { followupsDue: { lead: { id: string; company: string; contactName?: string | null; canonicalScore?: number | null } }[] },
   recentLeads: Array<{ id: string; company: string; canonicalScore?: number | null; createdAt: string }>,
 ) {
+  // The canonical band decides what "high-value" means; the label is the
+  // band's own label, never a local threshold.
   const items = recentLeads
-    .filter(l => (l.canonicalScore ?? 0) >= 70)
+    .filter((l) => l.canonicalScore != null && ['STRONG', 'WORTH_PURSUING'].includes(qualifyCanonicalScore(l.canonicalScore).qualification))
     .slice(0, 3)
-    .map((l, i) => ({
-      id: `feed-${l.id}`,
-      leadId: l.id,
-      company: l.company,
-      contactName: null,
-      title: `High-value lead (${l.canonicalScore}/100)`,
-      detail: `Score ${l.canonicalScore}/100 — worth pursuing`,
-      severity: 'notable' as const,
-      type: 'BUYER_REQUEST' as const,
-      createdAt: l.createdAt,
-      rankScore: (l.canonicalScore ?? 0) * (1 - i * 0.1),
-      cta: 'Review',
-    }))
+    .map((l, i) => {
+      const band = qualifyCanonicalScore(l.canonicalScore ?? 0)
+      return {
+        id: `feed-${l.id}`,
+        leadId: l.id,
+        company: l.company,
+        contactName: null,
+        title: `${band.label} (${displayScoreForCanonical(l.canonicalScore ?? 0)}/10)`,
+        detail: `Canonical ${l.canonicalScore}/100 — ${band.label.toLowerCase()}`,
+        severity: 'notable' as const,
+        type: 'OTHER_VERIFIED_EVENT' as const,
+        createdAt: l.createdAt,
+        rankScore: (l.canonicalScore ?? 0) * (1 - i * 0.1),
+        cta: 'Review',
+      }
+    })
   return items
 }
 

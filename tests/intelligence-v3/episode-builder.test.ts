@@ -335,7 +335,7 @@ describe('V3 Episode Builder', () => {
       expect(episodes[0]?.status).toBe('STALE')
     })
 
-    it('marks episode as CLOSED when 90+ days old', () => {
+    it('keeps a 90+ day old episode STALE — age alone never closes an episode', () => {
       const graph = createEvidenceGraph()
       const person = upsertPerson(graph, 'Test Person', null, null)
       const org = upsertOrganization(graph, 'TestCo', null, null)
@@ -364,7 +364,7 @@ describe('V3 Episode Builder', () => {
       linkEvidenceToEvent(graph, event.id, ev.id)
 
       const episodes = buildEpisodes(graph, { referenceDate: refDate })
-      expect(episodes[0]?.status).toBe('CLOSED')
+      expect(episodes[0]?.status).toBe('STALE')
     })
   })
 

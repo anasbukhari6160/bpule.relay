@@ -71,6 +71,7 @@ const MORE_NAV: Array<{
   { href: '/admin/command-center', label: 'Command', icon: Shield, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/accountability', label: 'Accountability', icon: TrendingUp, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/revenue-intelligence', label: 'Revenue', icon: BarChart3, exact: true, adminOnly: true, group: 'Admin' },
+  { href: '/admin/scoring-qa', label: 'Scoring QA', icon: Shield, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/targets', label: 'Targets', icon: Target, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/people', label: 'People', icon: Users, exact: true, adminOnly: true, group: 'Admin' },
   { href: '/admin/ai-usage', label: 'AI Usage', icon: Activity, exact: true, adminOnly: true, group: 'Admin' },

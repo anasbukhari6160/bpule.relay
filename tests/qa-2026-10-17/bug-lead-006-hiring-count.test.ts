@@ -1,13 +1,8 @@
 /** BUG-LEAD-006 — a hiring count is shown/scored only when the source states it. */
 import { describe, expect, it } from 'vitest'
 import { extractSignals } from '@/lib/scoring/signal-extractor'
-import { computeCompositeScore } from '@/lib/scoring/composite-scorer'
 import { parseHiringCount } from '@/lib/evidence/provenance'
-
-function companyEvidence(text: string): string[] {
-  const c = computeCompositeScore({ signals: extractSignals(text) })
-  return c.dimensions.find((d) => d.key === 'companyQuality')!.evidence
-}
+import { readSourceFacts } from '@/lib/intelligence-v3/source-facts-model'
 
 describe('BUG-LEAD-006 unsupported hiring count', () => {
   it('reported class: keyword-heavy text never becomes "Hiring 10+ roles"', () => {
@@ -17,7 +12,7 @@ describe('BUG-LEAD-006 unsupported hiring count', () => {
       'Seeking feedback on my position paper.', 'We are hiring. Looking for referrals. Seeking collaborators.',
     ].join('\n')
     expect(extractSignals(text).company.hiringCount).toBe(0)
-    expect(companyEvidence(text).join(' ')).not.toMatch(/\d+\+? roles/)
+    expect(readSourceFacts(text).hiringCount).toBe(0)
   })
 
   it.each([
@@ -39,11 +34,13 @@ describe('BUG-LEAD-006 unsupported hiring count', () => {
     expect(parseHiringCount(text)?.value ?? null).toBe(count)
   })
 
-  it('stated count is shown with provenance; generic hiring shows no number', () => {
-    expect(companyEvidence('We are hiring 3 developers.\nApply now.').join(' ')).toMatch(/Hiring 3 roles \(stated in source\)/)
-    const generic = companyEvidence("We're hiring a React developer to join our team.")
-    expect(generic.join(' ')).toMatch(/Hiring \(no role count stated\)/)
-    expect(generic.join(' ')).not.toMatch(/\d+ role/)
+  it('stated count is carried with provenance; generic hiring carries no number', () => {
+    const stated = readSourceFacts('Northwind Apps\nWe are hiring 3 developers.\nApply now.')
+    expect(stated.hiringCount).toBe(3)
+    expect(stated.currentHiringActivity).toMatch(/hiring 3 developers/)
+    const generic = readSourceFacts("Northwind Apps\nWe're hiring a React developer to join our team.")
+    expect(generic.hiringCount).toBe(0)
+    expect(generic.currentHiringActivity).toBeTruthy()
   })
 
   it('control: funding vocabulary is not a funding event', () => {
@@ -55,11 +52,6 @@ describe('BUG-LEAD-006 unsupported hiring count', () => {
 // Fourth review: real counts on lines that mention years/experience; a stated
 // opening earns hiring credit; someone else's hiring earns none.
 describe('BUG-LEAD-006 stated counts in context', () => {
-  function companyEvidenceWithSource(text: string): string[] {
-    const c = computeCompositeScore({ signals: extractSignals(text), rawText: text })
-    return c.dimensions.find((d) => d.key === 'companyQuality')!.evidence
-  }
-
   it.each([
     ['We are hiring 5 engineers this year', 5],
     ['Hiring 4 developers. Experience with React required.', 4],
@@ -71,12 +63,15 @@ describe('BUG-LEAD-006 stated counts in context', () => {
     expect(parseHiringCount(text)?.value ?? null).toBe(value)
   })
 
-  it('a stated opening of our own earns hiring credit', () => {
-    expect(companyEvidenceWithSource('Northwind Apps\nWe have 6 open positions on the mobile team.').join(' ')).toMatch(/Hiring 6 roles \(stated in source\)/)
+  it('a stated opening of our own is a current hiring fact', () => {
+    const facts = readSourceFacts('Northwind Apps\nWe have 6 open positions on the mobile team.')
+    expect(facts.currentHiringActivity).toMatch(/6 open positions/)
+    expect(facts.hiringCount).toBe(6)
   })
 
-  it("someone else's hiring earns no hiring credit", () => {
-    const evidence = companyEvidenceWithSource('Reposted from @founder:\nVia @founder: They are hiring 3 engineers for their fintech app.').join(' ')
-    expect(evidence).not.toMatch(/Hiring \d+ roles?/)
+  it("someone else's hiring earns no hiring credit and is listed as rejected", () => {
+    const facts = readSourceFacts('Reposted from @founder:\nVia @founder: They are hiring 3 engineers for their fintech app.')
+    expect(facts.currentHiringActivity).toBeNull()
+    expect(facts.rejectedSignals.some((r) => r.signal === 'hiring')).toBe(true)
   })
 })

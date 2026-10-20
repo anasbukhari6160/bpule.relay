@@ -76,15 +76,18 @@ describe('dashboard analytics', () => {
     const maybe = lead({ canonicalScore: 42, displayQualification: 'maybe', displayIntelligenceVersion: 'relay_decision_v3' })
     const legacy = lead({ score: 12 })
     const unscored = lead()
-    expect(getLeadDisplayScore(maybe).text).toBe('5/10')
+    // display_v2 is band-aligned: 42 is MAYBE → 4/10, 82 is STRONG → 8/10.
+    expect(getLeadDisplayScore(maybe).text).toBe('4/10')
+    expect(getLeadDisplayScore(strong).text).toBe('8/10')
     expect(scoreBandOf(strong)).toBe('strong')
     expect(scoreBandOf(maybe)).toBe('maybe')
     expect(scoreBandOf(legacy)).toBe('strong')
     expect(scoreBandOf(unscored)).toBe('unscored')
     const a = buildDashboardAnalytics({ leads: [strong, maybe, legacy, unscored], events: [], range: 30, now: NOW })
-    expect(Object.fromEntries(a.scoreBands.map((b) => [b.key, b.value]))).toEqual({ strong: 2, worth_pursuing: 0, maybe: 1, skip: 0, unscored: 1 })
-    // (9/10 + 5/10 + 12/12) / 3 → 8.0 on a /10 scale
-    expect(a.averageScore).toBe(8)
+    const bands = Object.fromEntries(a.scoreBands.map((b) => [b.key, b.value]))
+    expect(bands).toMatchObject({ strong: 2, worth_pursuing: 0, maybe: 1, skip: 0, unscored: 1 })
+    // (8/10 + 4/10 + 12/12) / 3 → 7.3 on a /10 scale
+    expect(a.averageScore).toBeCloseTo(7.3, 1)
   })
 
   it('KPIs count the current and previous windows separately', () => {

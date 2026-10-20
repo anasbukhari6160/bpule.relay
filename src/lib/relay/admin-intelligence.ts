@@ -1,5 +1,6 @@
 import type { SignalEvent } from './signal-watch'
 import type { Lead, Message } from '@/lib/domain/types'
+import { qualifyCanonicalScore } from '@/lib/scoring/qualification'
 
 export interface TodaysIntelligence {
   newHighValueSignals: number
@@ -76,8 +77,9 @@ export function generateTodaysIntelligence(params: {
   })
 
   // 4. High-value leads that went stale (no action in 14+ days)
+  const isHighValue = (l: { canonicalScore?: number | null }) => l.canonicalScore != null && ['STRONG', 'WORTH_PURSUING'].includes(qualifyCanonicalScore(l.canonicalScore).qualification)
   const staleHighValue = params.leads.filter(l => {
-    if ((l.canonicalScore ?? 0) < 70) return false
+    if (!isHighValue(l)) return false
     if (['won', 'lost', 'dead'].includes(l.status)) return false
     const lastAction = (l as any).updatedAt ? new Date((l as any).updatedAt).getTime() : new Date(l.createdAt).getTime()
     return (now - lastAction) > 14 * 86400000
@@ -94,9 +96,8 @@ export function generateTodaysIntelligence(params: {
 
   // 5. Leads that should be reassigned (low sender match)
   const reassignCandidates = params.leads.filter(l => {
-    if ((l.canonicalScore ?? 0) < 60) return false
     if (['won', 'lost', 'dead', 'new'].includes(l.status)) return false
-    return l.status === 'contacted' && (l.canonicalScore ?? 0) >= 70
+    return l.status === 'contacted' && isHighValue(l)
   }).slice(0, 3)
 
   // 6. Intelligence fallbacks today

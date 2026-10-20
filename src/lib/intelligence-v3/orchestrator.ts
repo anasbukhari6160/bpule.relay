@@ -14,21 +14,31 @@ import {
   linkEvidenceToEvent,
   markOrganizationAsServiceProvider,
 } from './graph/evidence-graph'
-import { buildEpisodes, eventNeedOwner } from './graph/episode-builder'
+import { buildEpisodes, eventNeedOwner, episodeContentKey } from './graph/episode-builder'
 import { buildCommercialEpisodesFromV2, convertCommercialEpisodeToV3 } from '@/lib/relay/commercial-episodes'
 import {
   getDecisionRegistry,
+  type V3DecisionProvider,
   type V3ProviderContext,
   type V3ProviderResult,
 } from './decision/decision-provider'
-import type { V3Person, V3Event } from './types'
 import { assembleDecisionPacket } from './decision/decision-assembler'
-import type { V3ScoreInput } from './scoring/score-v3'
+import type { SourceFacts } from './source-facts-model'
 
 
 export interface V3OrchestratorOptions {
-  /** Override decision provider */
+  /** Override decision provider by id */
   providerId?: string
+  /** Inject a decision provider instance (tests, shadow runs). Bypasses the registry. */
+  decisionProvider?: V3DecisionProvider | null
+  /** Skip the model entirely and use the deterministic decision. */
+  deterministicOnly?: boolean
+  /** Pre-read SourceFacts for this source. */
+  sourceFacts?: SourceFacts
+  /** Where the source events came from, for the packet trace. */
+  eventSource?: 'model' | 'deterministic' | 'none'
+  /** Organization capability set for fit. */
+  orgCapabilities?: string[]
   /** Sender capabilities for proof matching */
   senderCapabilities?: string[]
   /** Current production score for shadow comparison */
@@ -96,73 +106,48 @@ export async function runV3Decision(
 
   const episodeBuildMs = Date.now() - t2
 
-  if (episodes.length === 0) {
-    // No episodes — return empty packet
-    return {
-      packet: createEmptyPacket(v2Intelligence, shadowMode, options),
-      graph,
-      episodes: [],
-      version: V3_CONFIG_VERSION,
-      shadowMode,
-      timing: {
-        extractionMs,
-        episodeBuildMs,
-        decisionMs: 0,
-        totalMs: Date.now() - startTime,
-      },
-    }
-  }
-
-  // Phase 3: Select best episode for decision model
+  // Phase 3: Select best episode for decision model. With no episodes the
+  // assembler scores the organization itself (never an empty 0 packet).
   const bestEpisode = selectBestEpisodeForDecision(episodes)
 
   // Phase 4: Run decision provider
   options.onStatus?.('Running decision model...')
   const t3 = Date.now()
-  const providerContext = bestEpisode
-    ? buildProviderContext(graph, bestEpisode, v2Intelligence, options)
-    : null
+  const providerContext = buildProviderContext(graph, bestEpisode ?? emptyEpisode(), v2Intelligence, options)
   const registry = getDecisionRegistry()
-  const provider = registry.getAvailable(options.providerId)
+  const provider = options.deterministicOnly
+    ? null
+    : options.decisionProvider ?? registry.getAvailable(options.providerId)
 
-  let providerResult
-  if (providerContext) {
-    if (provider) {
-      try {
-        providerResult = await provider.decide(providerContext)
+  let providerResult: V3ProviderResult | undefined
+  if (provider && bestEpisode) {
+    try {
+      providerResult = await provider.decide(providerContext)
 
-        // Cascade: escalate to gpt-4.1 when primary model is uncertain
-        if (bestEpisode && shouldCascadeEscalate(providerResult, bestEpisode)) {
-          const escalationResult = await runEscalationDecision(providerContext)
-          if (escalationResult) {
-            providerResult = escalationResult
-          }
+      // Cascade: escalate to the stronger model when the primary is uncertain
+      if (!options.decisionProvider && shouldCascadeEscalate(providerResult, bestEpisode)) {
+        const escalationResult = await runEscalationDecision(providerContext)
+        if (escalationResult) {
+          providerResult = escalationResult
         }
-      } catch (e) {
-        // Primary provider failed after retry — try LongCat fallback
-        const longcat = registry.getAvailable('longcat_structured')
-        if (longcat && longcat.id !== provider.id) {
-          try {
-            providerResult = await longcat.decide(providerContext)
-          } catch {
-            // LongCat also failed — fall through to deterministic
-          }
+      }
+    } catch {
+      // Primary provider failed after retry — try LongCat fallback
+      const longcat = options.decisionProvider ? null : registry.getAvailable('longcat_structured')
+      if (longcat && longcat.id !== provider.id) {
+        try {
+          providerResult = await longcat.decide(providerContext)
+        } catch {
+          // LongCat also failed — fall through to deterministic
         }
       }
     }
+  }
 
-    // Final fallback: deterministic decision from graph analysis
-    if (!providerResult) {
-      providerResult = deterministicDecision(providerContext ?? {
-        person: Array.from(graph.persons.values())[0] ?? { id: 'unknown', fullName: null, firstName: null, linkedinUrl: null, location: null, affiliations: [] },
-        organization: null,
-        episode: episodes[0] ?? { id: 'empty', anchorEvent: { id: 'empty', eventType: 'OTHER', personId: null, organizationId: null, organizationName: null, occurredAt: null, channel: null, requestedCapability: [], targetAudience: 'PUBLIC', explicitness: 'INFERRED', applyInstructions: [], evidenceRefs: [], polarity: 'UNKNOWN' }, organizationId: null, organizationName: null, needOwnerPersonId: null, needOwnerType: 'UNKNOWN', explicitRequest: false, requestedCapabilities: [], applicationChannels: [], evidenceRefs: [], eventRefs: [], status: 'UNKNOWN', detectedAt: new Date().toISOString(), lastActivityAt: null, ageDays: null },
-        anchorEvent: { id: 'empty', eventType: 'OTHER', personId: null, organizationId: null, organizationName: null, occurredAt: null, channel: null, requestedCapability: [], targetAudience: 'PUBLIC', explicitness: 'INFERRED', applyInstructions: [], evidenceRefs: [], polarity: 'UNKNOWN' },
-        evidence: [],
-        currentDate: (options.referenceDate ?? new Date()).toISOString(),
-        senderCapabilities: options.senderCapabilities ?? [],
-      })
-    }
+  // Final fallback: deterministic decision. It never invents buyer intent;
+  // the verified source facts decide, confidence is LOW.
+  if (!providerResult) {
+    providerResult = deterministicDecision(providerContext)
   }
   const decisionMs = Date.now() - t3
 
@@ -170,13 +155,15 @@ export async function runV3Decision(
   const { packet } = await assembleDecisionPacket({
     graph,
     episodes,
-    providerResult: providerResult!,
+    providerResult,
     productionScore: options.productionScore,
     productionAction: options.productionAction,
-    senderCapabilities: options.senderCapabilities,
     v2Canonical: options.v2Canonical,
     rawText: v2Intelligence?.rawInput,
+    sourceFacts: options.sourceFacts,
+    orgCapabilities: options.orgCapabilities,
     decidedEpisodeId: bestEpisode?.id ?? null,
+    eventSource: options.eventSource ?? (episodes.length > 0 ? 'model' : 'none'),
   })
 
   return {
@@ -428,7 +415,12 @@ export interface V2BridgeInput {
   }>
 }
 
-function buildV3GraphFromV2(v2: V2BridgeInput): V3EvidenceGraph {
+function emptyEpisode(): V3OpportunityEpisode {
+  const anchorEvent = { id: 'empty', eventType: 'OTHER' as const, personId: null, organizationId: null, organizationName: null, occurredAt: null, channel: null, requestedCapability: [], targetAudience: 'PUBLIC' as const, explicitness: 'INFERRED' as const, applyInstructions: [], evidenceRefs: [], polarity: 'UNKNOWN' as const }
+  return { id: 'empty', anchorEvent, organizationId: null, organizationName: null, needOwnerPersonId: null, needOwnerType: 'UNKNOWN', explicitRequest: false, requestedCapabilities: [], applicationChannels: [], evidenceRefs: [], eventRefs: [], status: 'UNKNOWN', detectedAt: new Date().toISOString(), lastActivityAt: null, ageDays: null }
+}
+
+export function buildV3GraphFromV2(v2: V2BridgeInput): V3EvidenceGraph {
   const graph = createEvidenceGraph()
 
   const person = upsertPerson(graph, v2.person.fullName, v2.person.linkedinUrl, v2.person.location)
@@ -602,7 +594,7 @@ function buildV3GraphFromV2(v2: V2BridgeInput): V3EvidenceGraph {
   return graph
 }
 
-function selectBestEpisodeForDecision(episodes: V3OpportunityEpisode[]): V3OpportunityEpisode | null {
+export function selectBestEpisodeForDecision(episodes: V3OpportunityEpisode[]): V3OpportunityEpisode | null {
   if (episodes.length === 0) return null
   if (episodes.length === 1) return episodes[0]
 
@@ -612,7 +604,8 @@ function selectBestEpisodeForDecision(episodes: V3OpportunityEpisode[]): V3Oppor
     score: scoreEpisodeCommercialStrength(ep),
   }))
 
-  scored.sort((a, b) => b.score - a.score)
+  // Ties break on content, never on build order or generated ids.
+  scored.sort((a, b) => b.score - a.score || episodeContentKey(a.episode).localeCompare(episodeContentKey(b.episode)))
   return scored[0].episode
 }
 
@@ -683,7 +676,7 @@ function buildProviderContext(
   v2: V2BridgeInput,
   options: V3OrchestratorOptions,
 ): V3ProviderContext {
-  const person = Array.from(graph.persons.values())[0]!
+  const person = Array.from(graph.persons.values())[0] ?? { id: 'unknown', fullName: v2.person.fullName, firstName: v2.person.firstName, linkedinUrl: v2.person.linkedinUrl, location: v2.person.location, affiliations: [] }
   const org = episode.organizationId ? graph.organizations.get(episode.organizationId) ?? null : null
 
   const evidence = episode.evidenceRefs
@@ -707,26 +700,26 @@ function buildProviderContext(
   }
 }
 
-function deterministicDecision(context: V3ProviderContext): {
-  answers: import('./decision/bounded-questions').V3DecisionAnswers
-  providerId: string
-  modelVersion: string
-  latencyMs: number
-  confidence: number
-} {
+/**
+ * Deterministic decision when no model is available. It states nothing the
+ * episode does not: an explicit (verified) request is a buyer signal, employee
+ * hiring is not, relationship stays UNKNOWN, access/timing/fit are left for
+ * the source-facts resolvers to decide. Confidence is LOW so the action
+ * policy says "research more" rather than pitching.
+ */
+export function deterministicDecision(context: V3ProviderContext): V3ProviderResult {
   const ep = context.episode
   const isExplicit = ep.explicitRequest
-  const isHiring = ep.anchorEvent.eventType === 'HIRING'
   const isCurrent = ep.status === 'CURRENT' || ep.status === 'AGING'
 
   return {
     answers: {
-      relationship: isHiring ? 'BUYER' : 'UNKNOWN',
-      buyerRequestProbability: isExplicit ? 0.7 : isHiring ? 0.4 : 0.2,
-      externalNeedProbability: isHiring || isExplicit ? 0.6 : 0.3,
+      relationship: 'UNKNOWN',
+      buyerRequestProbability: isExplicit ? 0.7 : 0.15,
+      externalNeedProbability: isExplicit ? 0.6 : 0.2,
       needOwner: ep.needOwnerType,
       fit: 'MEDIUM',
-      timing: isCurrent ? 'CURRENT' : 'WEAK',
+      timing: isExplicit && isCurrent ? 'CURRENT' : 'WEAK',
       access: 'INDIRECT',
       messageEligible: isExplicit && isCurrent ? 0.6 : 0.2,
     },
@@ -734,57 +727,6 @@ function deterministicDecision(context: V3ProviderContext): {
     modelVersion: 'v3_fallback',
     latencyMs: 0,
     confidence: 0.3,
-  }
-}
-
-function createEmptyPacket(
-  v2: V2BridgeInput,
-  shadowMode: boolean,
-  options: V3OrchestratorOptions,
-): V3LeadDecisionPacket {
-  return {
-    version: 'relay_decision_v3',
-    decisionRunId: `v3run_empty_${Date.now().toString(36)}`,
-    selectedEpisodeId: null,
-    episodes: [],
-    decision: {
-      relationship: 'UNKNOWN',
-      buyerRequestProbability: 0,
-      externalNeedProbability: 0,
-      needOwnerType: 'UNKNOWN',
-      fit: 'POOR',
-      timing: 'STALE',
-      access: 'NONE',
-      messageEligible: 0,
-      providerConfidence: 0,
-    },
-    score: 0,
-    scoreVersion: V3_CONFIG_VERSION,
-    label: 'Not a fit',
-    qualification: 'SKIP',
-    action: 'SKIP',
-    messageEligible: false,
-    reasons: ['No opportunity episodes found'],
-    watchOut: [],
-    dimensions: [],
-    evidenceRefs: [],
-    proofStrength: 0,
-    confidence: 0,
-    decisionProvider: 'none',
-    decisionModel: 'none',
-    shadowComparison: shadowMode && options.productionScore !== undefined
-      ? {
-          productionScore: options.productionScore,
-          productionAction: options.productionAction ?? 'UNKNOWN',
-          v3Score: 0,
-          v3Action: 'SKIP',
-          scoreDelta: 0 - options.productionScore,
-          actionChanged: true,
-          productionDecision: options.productionAction ?? null,
-        }
-      : null,
-    latentPotential: null,
-    latentSignals: [],
   }
 }
 

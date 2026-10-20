@@ -8,18 +8,22 @@
 import type { V3ScoringWeights } from './types'
 
 
-export const V3_CONFIG_VERSION = 'relay_decision_v3.1.0'
+export const V3_CONFIG_VERSION = 'relay_decision_v3.2.0'
 
 
+/**
+ * Seven bounded, additive dimensions. Sender-specific proof is NOT here —
+ * it belongs to Sender Match, so changing the sender never changes this
+ * score. See docs/SCORING_ARCHITECTURE.md for the ownership table.
+ */
 export const V3_SCORING_WEIGHTS: V3ScoringWeights = {
-  buyerRequestProbability: 0.20,  // Explicit buyer request
-  commercialPotential: 0.20,      // Strategic worth without explicit intent
-  externalNeedProbability: 0.10,  // External/commercial need present
-  fit: 0.20,                      // Capability fit
-  timing: 0.10,                   // Recency/urgency
-  access: 0.10,                   // Can we reach them
-  proofRelevance: 0.05,           // We have relevant proof
-  evidenceQuality: 0.05,          // Evidence quality/completeness
+  buyerIntent: 0.25,          // Verified request to buy outside services
+  commercialPotential: 0.20,  // Could this org plausibly become a customer
+  fit: 0.15,                  // Org-level capability overlap
+  authority: 0.10,            // Decision authority of the person
+  timing: 0.10,               // Buyer timing (60%) + activity recency (40%)
+  access: 0.10,               // One access authority
+  evidenceQuality: 0.10,      // Verbatim support, completeness, corroboration
 }
 
 const _weightSum = Object.values(V3_SCORING_WEIGHTS).reduce((a, b) => a + b, 0)

@@ -9,7 +9,8 @@ import { runIntelligencePipeline, type ExtractionPipelineOptions, type Extractio
 import { assessExtractionCompleteness, repairExtraction, evaluateCompletenessGate } from './completeness-gate'
 import { computeCanonicalScore, SCORE_VERSION, type ScoreInput } from './scoring-engine'
 import { isNonBuyerProfessional, isLinkedInChromeText } from './role-signals'
-import { buildIntelligenceInputHash, INTELLIGENCE_PIPELINE_VERSION } from './input-hash'
+import { buildIntelligenceInputHash, INTELLIGENCE_PIPELINE_VERSION, normalizeForHash } from './input-hash'
+import { isPacketCurrent } from '@/lib/intelligence-v3/versions'
 import { classifyNeedOwnership, dominantNeedOwnership } from './need-ownership'
 import { displayScoreFromCanonical } from '@/lib/scoring/display-score'
 
@@ -800,6 +801,14 @@ export function isClientCanonicalStillValid(
   forceReanalyze: boolean,
 ): clientCanonical is CanonicalProspectIntelligence {
   if (!clientCanonical || forceReanalyze) return false
+  // V3 canonical: the packet must have been produced under the current
+  // opportunity versions for the same (whitespace-normalized) source text.
+  const packet = (clientCanonical as CanonicalProspectIntelligence & { v3DecisionPacket?: { versions?: Parameters<typeof isPacketCurrent>[0] } }).v3DecisionPacket
+  if (packet) {
+    if (!isPacketCurrent(packet.versions)) return false
+    const held = clientCanonical.rawSource?.rawInput ?? ''
+    return normalizeForHash(held) === normalizeForHash(rawText)
+  }
   if (clientCanonical.intelligenceInputHash !== buildIntelligenceInputHash({ rawText })) return false
   if (clientCanonical.intelligenceVersion !== INTELLIGENCE_PIPELINE_VERSION) return false
   if (clientCanonical.scoreVersion !== SCORE_VERSION) return false

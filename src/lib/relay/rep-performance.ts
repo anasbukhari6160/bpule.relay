@@ -1,4 +1,10 @@
 import type { Rep, Lead, Message } from '@/lib/domain/types'
+import { qualifyCanonicalScore } from '@/lib/scoring/qualification'
+
+/** High value = the canonical STRONG or WORTH_PURSUING band. One definition for every rep metric. */
+function isHighValueLead(l: { canonicalScore?: number | null }): boolean {
+  return l.canonicalScore != null && ['STRONG', 'WORTH_PURSUING'].includes(qualifyCanonicalScore(l.canonicalScore).qualification)
+}
 
 type RepActionEvent = { actionType: string; occurredAt: string; actorId?: string | null; metadata?: Record<string, unknown> }
 
@@ -65,7 +71,7 @@ export function computeRepPerformance(
   const followups = repMessages.filter(m => m.type === 'followup' && m.sentText && contactedIds.has(m.leadId))
 
   const wins = repLeads.filter(l => l.status === 'won')
-  const highValue = repLeads.filter(l => (l.canonicalScore ?? 0) >= 70)
+  const highValue = repLeads.filter(isHighValueLead)
 
   // Momentum: compare last 7 days vs prior 7 days
   const weekMs = 7 * 24 * 60 * 60 * 1000
@@ -186,7 +192,7 @@ export function generateDailyBrief(params: {
   // New high-value leads today
   const newHighValue = params.leads.filter(l => {
     const created = new Date(l.createdAt).getTime()
-    return created >= todayStart && created < todayEnd && (l.canonicalScore ?? 0) >= 70
+    return created >= todayStart && created < todayEnd && isHighValueLead(l)
   })
 
   // Replies needing action (inbound without outbound reply today)

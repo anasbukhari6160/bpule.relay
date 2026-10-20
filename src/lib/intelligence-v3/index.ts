@@ -118,13 +118,33 @@ export { assembleDecisionPacket } from './decision/decision-assembler'
 
 export {
   scoreEpisode,
-  scoreAllEpisodes,
+  scoreSourceWithoutModel,
 } from './scoring/score-v3'
 
 export type { V3ScoreInput, V3ScoreOutput, V3ScoreDimension } from './scoring/score-v3'
 
 
 export { determineAction, actionFromDecisionPacket } from './action/action-policy'
+export { deriveRecommendedAction } from './action/recommended-action'
+export type { RecommendedAction, DeriveActionInput, DeriveActionOutput } from './action/recommended-action'
+
+export { readSourceFacts, summarizeSourceFacts } from './source-facts-model'
+export type { SourceFacts, SourceFactsSummary, RejectedSignal, AccessFacts } from './source-facts-model'
+
+export {
+  resolveAccess,
+  resolveTiming,
+  resolveCapabilityFit,
+  resolveAuthorityDimension,
+  assessCommercialPotentialFromFacts,
+  assessEvidenceQuality,
+  computeConfidence,
+} from './dimensions'
+
+export { currentVersions, isPacketCurrent, SCORING_VERSION, SOURCE_FACTS_VERSION, ATTRIBUTION_VERSION, ACTION_POLICY_VERSION, DISPLAY_VERSION } from './versions'
+export type { ScoringVersions } from './versions'
+
+export { extractEventsDeterministically } from './deterministic-events'
 
 
 export {

@@ -33,6 +33,19 @@ import { ScoreBreakdown } from '@/components/score-breakdown'
 import { formatRoleLine } from '@/lib/leads/role-line'
 import { pasteGuard } from '@/lib/prospect/paste-guard'
 import { trackEvent } from '@/lib/analytics/tracker'
+import { RejectedSignalInspector, type RejectedSignalView } from '@/components/scoring/rejected-signal-inspector'
+import { ScoringFeedback } from '@/components/scoring/scoring-feedback'
+
+/** Canonical decision detail returned by /api/prospect/analyze (Phase 25-31). */
+interface DecisionDetail {
+  recommendedAction?: { action: string; reason: string; messageEligible: boolean; coldAction: string; conversationOverride: boolean; routing: { recommendation: string; reason: string | null; delta: number | null } } | null
+  routingRecommendation?: { action: string; reason: string; routing: { recommendation: string; reason: string | null; delta: number | null } } | null
+  confidenceDetail?: { label: 'HIGH' | 'MEDIUM' | 'LOW'; reasons: string[]; researchMore: boolean } | null
+  rejectedSignals?: RejectedSignalView[]
+  resolved?: { access?: string; activityRecency?: string; buyerTiming?: string; fit?: string; authority?: string; commercialPotential?: string } | null
+  versions?: { scoringVersion: string; modelVersion: string; analyzedAt: string } | null
+  decisionRunId?: string | null
+}
 
 type AnalyzeEvent =
   | { type: 'status'; message: string }
@@ -70,7 +83,7 @@ type AnalyzeEvent =
   senderSuggestion?: { profileId: string; name: string | null; role: string | null; platform: string | null; score: number; currentBestScore: number; matchedTerms: string[]; topProof: string | null; holders: string[]; reason: string } | null
       qualification: ProspectQualificationAssessment
       revenue?: RevenueLoopSnapshot
-    }
+    } & DecisionDetail
 
 interface AnalysisState {
   extracted: ExtractedLead | null
@@ -104,12 +117,14 @@ interface AnalysisState {
   demoMode: boolean
   qualification: ProspectQualificationAssessment
   revenue: RevenueLoopSnapshot | null
+  decision: DecisionDetail
 }
 
 const QUALIFICATION_META: Record<string, { label: string; color: string; bg: string }> = {
   strong: { label: 'Strong opportunity', color: 'text-status-success', bg: 'bg-status-success/10' },
   worth_pursuing: { label: 'Worth pursuing', color: 'text-status-success', bg: 'bg-status-success/10' },
   maybe: { label: 'Maybe — needs more signal', color: 'text-orange', bg: 'bg-orange/10' },
+  low: { label: 'Low priority', color: 'text-graphite', bg: 'bg-stone/10' },
   skip: { label: 'Probably skip', color: 'text-graphite', bg: 'bg-stone/10' },
 }
 
@@ -274,6 +289,15 @@ export default function ProspectCheckPage() {
                 inputStatus: event.inputStatus ?? null,
                 inputHeadline: event.inputHeadline ?? null,
                 extractionCompleteness: event.extractionCompleteness ?? null,
+                decision: {
+                  recommendedAction: event.recommendedAction ?? null,
+                  routingRecommendation: event.routingRecommendation ?? null,
+                  confidenceDetail: event.confidenceDetail ?? null,
+                  rejectedSignals: Array.isArray(event.rejectedSignals) ? event.rejectedSignals : [],
+                  resolved: event.resolved ?? null,
+                  versions: event.versions ?? null,
+                  decisionRunId: event.decisionRunId ?? null,
+                },
               })
               if (event.bestSender) {
                 setSelectedProfileId(event.bestSender.id)
@@ -623,6 +647,43 @@ export default function ProspectCheckPage() {
                       {w}
                     </p>
                   ))}
+                </div>
+              )}
+
+              {/* Why this decision: canonical action + reason, confidence reasons,
+                  routing recommendation, and every signal seen but not credited.
+                  Opportunity ≠ sender: switching the sender never changes this block. */}
+              {result.decision?.recommendedAction && (
+                <div className="mt-3 rounded-lg border border-line bg-bone-raised/20 p-3" data-testid="decision-why">
+                  <p className="text-[11px] font-medium text-ink">
+                    Next step: {result.decision.recommendedAction.action.replaceAll('_', ' ').toLowerCase()}
+                    {result.decision.confidenceDetail && (
+                      <span className={cn('ml-2 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide', result.decision.confidenceDetail.label === 'HIGH' ? 'bg-status-success/10 text-status-success' : result.decision.confidenceDetail.label === 'MEDIUM' ? 'bg-orange/10 text-orange' : 'bg-stone/10 text-graphite')}>
+                        {result.decision.confidenceDetail.label} confidence
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-1 text-[12px] text-graphite">{result.decision.recommendedAction.reason}</p>
+                  {result.decision.confidenceDetail?.reasons?.length ? (
+                    <ul className="mt-1 space-y-0.5">
+                      {result.decision.confidenceDetail.reasons.slice(0, 3).map((r) => <li key={r} className="text-[11px] text-graphite">• {r}</li>)}
+                    </ul>
+                  ) : null}
+                  {result.decision.routingRecommendation && result.decision.routingRecommendation.routing.recommendation !== 'KEEP' && (
+                    <p className="mt-2 text-[11px] text-orange" data-testid="routing-recommendation">
+                      Routing: {result.decision.routingRecommendation.routing.recommendation.replaceAll('_', ' ').toLowerCase()}. {result.decision.routingRecommendation.routing.reason}
+                    </p>
+                  )}
+                  {result.decision.rejectedSignals && result.decision.rejectedSignals.length > 0 && (
+                    <RejectedSignalInspector signals={result.decision.rejectedSignals} compact className="mt-2" />
+                  )}
+                  {result.decision.decisionRunId && (
+                    <ScoringFeedback
+                      className="mt-2"
+                      decisionRunId={result.decision.decisionRunId}
+                      observed={{ score: result.score.total, displayScore: result.score.displayScore, qualification: result.score.qualification, action: result.decision.recommendedAction.action, versions: result.decision.versions }}
+                    />
+                  )}
                 </div>
               )}
 

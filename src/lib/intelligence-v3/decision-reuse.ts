@@ -1,50 +1,42 @@
 /**
- * V3 Decision Reuse — deterministic cache key for DecisionPacket.
+ * V3 Decision Reuse — deterministic cache key for the opportunity decision.
  *
- * Same canonical inputs + same versions = same DecisionPacket.
+ * Same normalized source + same opportunity versions = same DecisionPacket.
  * No model call needed.
  *
- * Cache key includes:
- * - normalized input hash (from V2 input-hash module)
- * - V3 config/score version
- * - V3 prompt version (decision system prompt)
- * - selected profile ID (sender context)
- * - profile intelligence version
+ * What is NOT in the key, on purpose: the selected sender/profile and sender
+ * capabilities. The opportunity decision is sender-independent (changing the
+ * sender re-routes, it never re-scores), and keying on the profile made the
+ * writer (save with the best sender) and the reader (analyze with the
+ * requested profile) disagree, so the cache never hit.
  */
 
 import { createHash } from 'node:crypto'
-import { V3_CONFIG_VERSION } from './config'
 import { INTELLIGENCE_PIPELINE_VERSION, normalizeForHash } from '../intelligence-v2/input-hash'
-import { BUYER_INTENT_VERSION } from './buyer-intent'
+import { ATTRIBUTION_VERSION, V3_DECISION_PROMPT_VERSION, opportunityVersionTag } from './versions'
 
-export const V3_DECISION_PROMPT_VERSION = 'v3_decision_prompt_v2'
-
-// Attribution guard version — increment when signal attribution rules change
-// to invalidate cached decisions that used old attribution logic
-export const ATTRIBUTION_VERSION = 'v1'
+export { ATTRIBUTION_VERSION, V3_DECISION_PROMPT_VERSION }
 
 export interface V3ReuseKeyParams {
   rawText: string
+  /** @deprecated ignored — sender context is not part of the opportunity decision. */
   profileId?: string | null
+  /** @deprecated ignored. */
   profileIntelligenceVersion?: string | null
+  /** @deprecated ignored. */
   senderCapabilities?: string[]
+  /** Organization capability set, when an org overrides the default fit vocabulary. */
+  orgCapabilities?: string[]
 }
 
 export function buildV3ReuseKey(params: V3ReuseKeyParams): string {
   const normalized = normalizeForHash(params.rawText)
-  const profileId = params.profileId ?? 'none'
-  const profileVersion = params.profileIntelligenceVersion ?? 'none'
-  const capabilities = (params.senderCapabilities ?? []).sort().join(',')
+  const orgCaps = (params.orgCapabilities ?? []).map((c) => c.toLowerCase()).sort().join(',')
 
   const preimage = [
-    `v3_config:${V3_CONFIG_VERSION}`,
-    `v3_prompt:${V3_DECISION_PROMPT_VERSION}`,
-    `attribution:${ATTRIBUTION_VERSION}`,
-    `buyer_intent:${BUYER_INTENT_VERSION}`,
+    opportunityVersionTag(),
     `pipeline:${INTELLIGENCE_PIPELINE_VERSION}`,
-    `profile:${profileId}`,
-    `profile_ver:${profileVersion}`,
-    `caps:${capabilities}`,
+    `org_caps:${orgCaps}`,
     `text_len:${normalized.length}`,
     `text:${normalized}`,
   ].join('\n---\n')

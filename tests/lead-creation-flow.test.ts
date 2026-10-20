@@ -249,13 +249,15 @@ describe('Lead creation hardening flow', () => {
     expect(res.status).toBe(201)
     expect(createLeadMock).toHaveBeenCalledTimes(1)
     const payload = createLeadMock.mock.calls[0]?.[0]
-    // `score` MUST equal canonicalScore directly — same convention as
-    // /api/leads — not an independent computeScore() run over the extracted
-    // fields, nor a locally-converted scale, either of which could land on a
-    // different value for the same lead.
-    expect(payload.score).toBe(79)
+    const data = await res.json()
+    // Same convention as /api/leads: `canonicalScore` is the authority and the
+    // verdict follows its band. The legacy `score` column keeps the 0-12
+    // rubric for pre-canonical surfaces; it is the route's own computation
+    // (returned in the response), never a rescaled copy of the canonical.
     expect(payload.canonicalScore).toBe(79)
-    expect(payload.verdict).toBe('send') // 'worth_pursuing' qualification -> 'send'
+    expect(payload.score).toBe(data.score.total)
+    expect(payload.score).toBeLessThanOrEqual(12)
+    expect(payload.verdict).toBe('send') // 79 → STRONG band → 'send'
   })
 
   it('/api/prospect/save derives canonicalScore from the canonical object itself, not a separately-sent field that could disagree with it', async () => {
@@ -284,7 +286,7 @@ describe('Lead creation hardening flow', () => {
     expect(res.status).toBe(201)
     const payload = createLeadMock.mock.calls[0]?.[0]
     expect(payload.canonicalScore).toBe(79) // from canonical.canonicalScore, NOT the mismatched top-level 12
-    expect(payload.score).toBe(79) // derived directly from the SAME winning value, same scale
+    expect(payload.canonicalIntelligence.qualification).toBe('strong') // stored qualification follows the stored score
   })
 
   it('/api/prospect/save falls back to the legacy rubric score when NO canonical intelligence is provided (pre-canonical / manual-entry compatibility path)', async () => {

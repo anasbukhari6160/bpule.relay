@@ -119,10 +119,10 @@ We are looking for an agency to build our platform.`)
       rawText: `Michał Walasek\nIT Recruiter\nB2Bnetwork\nHelping companies hire engineers.`,
     })
     expect(result.reasons.join(' ')).not.toMatch(/explicit buyer request|strong buyer signal/i)
-    const buyer = result.dimensions.find((d) => d.key === 'buyerRequest')
+    const buyer = result.dimensions.find((d) => d.key === 'buyerIntent')
     expect(buyer?.raw).toBeLessThanOrEqual(0.2)
-    expect(buyer?.note).toMatch(/external-service buying need not verified/i)
-    expect(result.watchOut.join(' ')).toMatch(/research/i)
+    expect(buyer?.note).toMatch(/recruiter|not a request|no request|disagree/i)
+    expect(result.watchOut.join(' ')).toMatch(/buyer request|not credited|employee hiring/i)
   })
 })
 

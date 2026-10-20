@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { cn } from 'cn'
 import { StatusBadge } from '@/components/ui/status-badge'
+import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
 import {
   ArrowUpRight,
   CheckCircle2,
@@ -206,8 +207,8 @@ export function RepDayTimeline({ repId, date }: { repId: string; date: string })
                 >
                   <span className="truncate text-ink">{lead.company || 'Untitled'}</span>
                   <span className="text-stone">{lead.contact_name}</span>
-                  {lead.canonical_score != null && lead.canonical_score >= 60 && (
-                    <span className="text-orange">{lead.canonical_score}</span>
+                  {lead.canonical_score != null && ['STRONG', 'WORTH_PURSUING'].includes(qualifyCanonicalScore(lead.canonical_score).qualification) && (
+                    <span className="text-orange">{displayScoreForCanonical(lead.canonical_score)}/10</span>
                   )}
                   {isWaiting && <span className="text-status-warning">follow-up due</span>}
                   <span className="ml-auto shrink-0 text-stone">{cs?.stage || lead.status}</span>

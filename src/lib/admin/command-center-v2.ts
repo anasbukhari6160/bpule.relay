@@ -3,6 +3,7 @@
 
 // Command Center V2 data layer
 import { generateTodaysIntelligence } from '@/lib/relay/admin-intelligence'
+import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
 
 
 export type ExceptionSeverity = 'attention' | 'urgent' | 'critical'
@@ -503,7 +504,8 @@ export async function loadCommandCenterData(
     const repLeads = leadsByRep.get(rep.id) || []
     for (const lead of repLeads) {
       const score = (lead.canonical_score as number) || 0
-      if (score < 60) continue
+      // Opportunities are the canonical WORTH_PURSUING band and above.
+      if (!['STRONG', 'WORTH_PURSUING'].includes(qualifyCanonicalScore(score).qualification)) continue
 
       const currentProfileName = lead.sender_profile_id ? profileNameMap.get(lead.sender_profile_id as string) : null
       const best = bestProfileByLead.get(lead.id as string)
@@ -708,11 +710,12 @@ export async function loadRepQueueSnapshot(
 
     // High-value untouched — priority 50-60 (matches rankNextActions RESEARCH)
     const score = (lead.canonical_score as number) || 0
-    if (lead.status === 'new' && score >= 70) {
+    const band = qualifyCanonicalScore(score)
+    if (lead.status === 'new' && (band.qualification === 'STRONG' || band.qualification === 'WORTH_PURSUING')) {
       actions.push({
         action: 'Contact',
         company: (lead.company as string) || 'Unknown',
-        reason: `Score ${score}/100 — strong match`,
+        reason: `${band.label} (${displayScoreForCanonical(score)}/10)`,
         urgency: 'medium',
         leadId: lead.id as string,
         _sort: 50 + score / 10,

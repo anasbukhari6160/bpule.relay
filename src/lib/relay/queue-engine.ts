@@ -19,6 +19,7 @@ import type { FollowupDue, QueueData, UpworkSnapshot } from '@/lib/store/types'
 import { analyzeReply } from './conversation-engine'
 import { buildReplyStrategy } from './conversation-engine'
 import { buildRevenueStrategy, sourceFromLead, toUiSnapshot } from './revenue-strategy'
+import { priorityForCanonicalScore, qualifyCanonicalScore } from '@/lib/scoring/qualification'
 
 /**
  * Relay Queue Engine
@@ -56,11 +57,9 @@ const KIND_PRIORITY_BASE: Record<RelayTaskKind, number> = {
   inbound_opportunity: 95,
 }
 
+/** Priority follows the canonical qualification band — one policy, no local cut-offs. */
 function priorityFromScore(score: number): RelayTaskPriority {
-  if (score >= 80) return 'urgent'
-  if (score >= 60) return 'high'
-  if (score >= 40) return 'medium'
-  return 'low'
+  return priorityForCanonicalScore(score)
 }
 
 /**
@@ -136,7 +135,8 @@ export function buildRelayQueue(input: QueueInput): RelayQueue {
   // 4. New qualified opportunities (recently added, scored)
   for (const lead of input.queueData.queue) {
     const leadScore = effectiveScore(lead)
-    if (lead.status === 'new' && leadScore !== null && leadScore >= 60) {
+    const band = leadScore === null ? null : qualifyCanonicalScore(leadScore).qualification
+    if (lead.status === 'new' && (band === 'STRONG' || band === 'WORTH_PURSUING')) {
       const alreadyHighFit = tasks.some(
         (t) => t.entityId === lead.id && t.kind === 'high_fit_lead',
       )

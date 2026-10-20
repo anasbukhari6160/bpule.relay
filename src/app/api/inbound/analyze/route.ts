@@ -4,12 +4,22 @@ import { scanForSecrets } from '@/lib/ai/secrets'
 import { produceCanonicalIntelligence } from '@/lib/intelligence-v2/orchestrator'
 import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
-import { buildProfileIntelligence, matchProofToLead } from '@/lib/relay/profile-intelligence'
 import { hasProvider } from '@/lib/ai/config'
+import { loadSenderProfiles, parsePacket, routeLead } from '@/lib/relay/routing-context'
+import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
 import type { InboundInput } from '@/lib/domain/types'
 
 export const maxDuration = 120
 
+/**
+ * Inbound analyze — an inbound message is a LIVE conversation, not a cold
+ * profile. The canonical opportunity decision still runs on the pasted text,
+ * but the recommended action is the live-reply policy, and the best sender
+ * comes from the same routing engine every other surface uses.
+ *
+ * Response keys are camelCase (what the inbound page reads); the previous
+ * snake_case keys are kept for any external consumer.
+ */
 export async function POST(req: NextRequest) {
   const store = await createScoutStore().catch(() => null)
   if (!store) {
@@ -35,66 +45,86 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const [profiles, proofItems] = await Promise.all([
-      store.getAssignedProfiles(),
-      store.listAllProofItems(),
-    ])
+    const profiles = await store.getAssignedProfiles()
+    const rawText = [body.message, body.profileInfo, body.jobInfo, body.context].filter((s): s is string => typeof s === 'string' && s.trim().length > 0).join('\n\n')
 
     let canonical
     if (V3_CANONICAL) {
-      const v3Result = await produceV3Intelligence(body.message, {})
+      const v3Result = await produceV3Intelligence(rawText, {})
       canonical = v3Result.intelligence
     } else {
-      const canonicalResult = await produceCanonicalIntelligence(body.message, {
-        onStatus: () => {},
-      })
+      const canonicalResult = await produceCanonicalIntelligence(rawText, { onStatus: () => {} })
       canonical = canonicalResult.intelligence
     }
 
-    const tagsForMatching = [
-      ...canonical.intelligence.content.topics,
-      ...canonical.intelligence.content.technicalSignals,
-      ...(canonical.intelligence.company.industry ? [canonical.intelligence.company.industry] : []),
-    ]
+    const packet = parsePacket(canonical)
+    const band = qualifyCanonicalScore(canonical.canonicalScore)
+    const buyerIntent = packet?.buyerIntent
 
-    const profileMatches: Array<{ profile: (typeof profiles)[0]; matchedProof: ReturnType<typeof matchProofToLead>; totalScore: number }> = []
-    for (const profile of profiles) {
-      const intelligence = buildProfileIntelligence(profile, proofItems)
-      const matched = matchProofToLead(intelligence, tagsForMatching, 3)
-      const totalScore = matched.reduce((s, m) => s + m.relevanceScore, 0)
-      profileMatches.push({ profile, matchedProof: matched, totalScore })
+    // One sender ranking, same engine as every other surface.
+    let bestProfileId: string | null = null
+    let profileMatches: Array<{ id: string; label: string; matchScore: number; topProof: string | null; reasons: string[] }> = []
+    try {
+      const senders = await loadSenderProfiles(store.getSupabaseClient(), profiles[0]?.organizationId ?? '', store.getCurrentRepId())
+      const routing = routeLead(
+        { company: canonical.intelligence.company.name, contactName: canonical.intelligence.person.fullName, contactTitle: canonical.intelligence.person.title, rawInput: rawText },
+        packet,
+        senders,
+      )
+      const accessible = routing.rankings.filter((r) => r.accessibleToRep && profiles.some((p) => p.id === r.senderId))
+      bestProfileId = accessible[0]?.senderId ?? profiles[0]?.id ?? null
+      profileMatches = profiles.map((p) => {
+        const r = routing.rankings.find((x) => x.senderId === p.id)
+        return { id: p.id, label: p.label ?? p.headline ?? 'Unknown', matchScore: r?.profileMatch ?? 0, topProof: r?.primaryProof ?? null, reasons: r?.reasons ?? [] }
+      })
+    } catch (err) {
+      console.warn('[inbound/analyze] sender routing skipped:', err instanceof Error ? err.message : err)
+      bestProfileId = profiles[0]?.id ?? null
+      profileMatches = profiles.map((p) => ({ id: p.id, label: p.label ?? p.headline ?? 'Unknown', matchScore: 0, topProof: null, reasons: [] }))
     }
-    profileMatches.sort((a, b) => b.totalScore - a.totalScore)
+    const bestProfile = profiles.find((p) => p.id === bestProfileId) ?? null
+    const bestMatch = profileMatches.find((m) => m.id === bestProfileId) ?? null
 
-    const bestMatch = profileMatches[0] ?? null
-
-    const v3Packet = (canonical as unknown as { v3DecisionPacket?: { decision?: Record<string, unknown>; buyerIntent?: { buyerIntentLevel: string; verifiedExternalNeed: boolean } } }).v3DecisionPacket
-    const v3Decision = v3Packet?.decision as Record<string, unknown> | undefined
-    // Intent label comes from the canonical buyer decision only.
-    const buyerIntent = v3Packet?.buyerIntent
+    // An inbound message is a reply we owe: the live policy decides.
+    const recommendedAction = band.qualification === 'SKIP' && !buyerIntent?.verifiedBuyerRequest ? 'research_more' : 'reply'
+    const opportunityQuality: 'high' | 'medium' | 'low' = band.qualification === 'STRONG' || band.qualification === 'WORTH_PURSUING' ? 'high' : band.qualification === 'MAYBE' ? 'medium' : 'low'
 
     const intelligence = {
       wants: canonical.intelligence.opportunity.description
-        ?? (v3Decision?.commercialReading as Record<string, unknown>)?.probableNeed as string
         ?? canonical.intelligence.opportunityTrigger
+        ?? packet?.sourceFacts?.buyerRequest
         ?? 'Not specified — ask clarifying questions',
       intent: buyerIntent?.buyerIntentLevel === 'HIGH'
-        ? 'Explicit buyer request'
-        : buyerIntent?.verifiedExternalNeed
-          ? 'External need detected'
-          : canonical.intelligence.opportunityTrigger ?? 'Unknown — needs research',
-      fit_score: canonical.canonicalScore,
-      fit_relevance: canonical.qualification,
-      opportunity_quality: canonical.canonicalScore >= 70 ? 'high' as const : canonical.canonicalScore >= 50 ? 'medium' as const : 'low' as const,
-      recommended_profile_index: bestMatch ? profiles.indexOf(bestMatch.profile) : 0,
-      identity_fit_reason: bestMatch
-        ? `Best proof match: ${bestMatch.matchedProof[0]?.safeClaim ?? 'General capability'}`
+        ? 'Explicit buyer request (verified)'
+        : buyerIntent?.buyerIntentLevel === 'MEDIUM'
+          ? 'Buyer request (verified)'
+          : buyerIntent?.verifiedHiringNeed
+            ? 'Hiring employees — not a request for services'
+            : canonical.intelligence.opportunityTrigger ?? 'Unknown — needs research',
+      fitScore: canonical.canonicalScore,
+      displayScore: displayScoreForCanonical(canonical.canonicalScore),
+      fitRelevance: band.label,
+      opportunityQuality,
+      recommendedIdentity: bestProfile,
+      identityFitReason: bestMatch
+        ? bestMatch.reasons[0] ?? (bestMatch.topProof ? `Best proof match: ${bestMatch.topProof}` : 'Best available sender for this channel')
         : 'No profiles available',
+      matchingSkills: [...new Set([...(packet?.sourceFacts?.capabilityNeeds ?? []), ...(canonical.intelligence.content.technicalSignals ?? [])])].slice(0, 6),
+      strongestProof: [],
+      missingInfo: canonical.scoreBreakdown.missingInfo,
+      recommendedAction,
+      canGenerateResume: (canonical.intelligence.content.technicalSignals ?? []).length >= 2 || (packet?.sourceFacts?.capabilityNeeds.length ?? 0) >= 2,
+      // Legacy snake_case keys.
+      fit_score: canonical.canonicalScore,
+      fit_relevance: band.label,
+      opportunity_quality: opportunityQuality,
+      recommended_profile_index: bestProfile ? profiles.indexOf(bestProfile) : 0,
+      identity_fit_reason: bestMatch?.reasons[0] ?? 'No profiles available',
       matching_skills: (canonical.intelligence.content.technicalSignals ?? []).slice(0, 5),
-      strongest_proof_indexes: bestMatch?.matchedProof.map((_, i) => i) ?? [],
+      strongest_proof_indexes: [],
       missing_info: canonical.scoreBreakdown.missingInfo,
-      recommended_action: canonical.canonicalScore >= 70 ? 'reply' : canonical.canonicalScore >= 50 ? 'research_more' : 'skip',
-      can_generate_resume: canonical.intelligence.content.technicalSignals.length >= 2,
+      recommended_action: recommendedAction,
+      can_generate_resume: (canonical.intelligence.content.technicalSignals ?? []).length >= 2,
       extracted_company: canonical.intelligence.company.name,
       extracted_contact: canonical.intelligence.person.fullName,
       extracted_title: canonical.intelligence.person.title,
@@ -104,19 +134,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       intelligence,
       extracted: {
-        company: intelligence.extracted_company,
-        contactName: intelligence.extracted_contact,
-        contactTitle: intelligence.extracted_title,
-        url: intelligence.extracted_url,
+        company: canonical.intelligence.company.name,
+        contactName: canonical.intelligence.person.fullName,
+        contactTitle: canonical.intelligence.person.title,
+        url: canonical.intelligence.person.linkedinUrl ?? canonical.rawSource.sourceUrl,
       },
       canonical,
-      profiles: profiles.map((p) => ({
-        id: p.id,
-        label: p.label ?? p.headline ?? 'Unknown',
-        matchScore: profileMatches.find((pm) => pm.profile.id === p.id)?.totalScore ?? 0,
-        topProof: profileMatches.find((pm) => pm.profile.id === p.id)?.matchedProof[0]?.safeClaim ?? null,
-      })),
-      bestProfileId: bestMatch?.profile.id ?? null,
+      buyerIntent: buyerIntent ?? null,
+      qualification: band.qualification,
+      versions: packet?.versions ?? null,
+      profiles: profileMatches,
+      bestProfileId,
       demoMode: !hasProvider(),
     })
   } catch (err) {

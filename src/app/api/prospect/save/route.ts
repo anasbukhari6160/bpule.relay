@@ -7,6 +7,11 @@ import { classifyRoleFromTitle, mapLocationToRegion } from '@/lib/leads/targetin
 import { normalizeProspectPaste } from '@/lib/prospect/paste-normalize'
 import { evaluateProspectQualification } from '@/lib/prospect/qualification-gate'
 import { buildV3ReuseKey } from '@/lib/intelligence-v3/decision-reuse'
+import { recomputePacketFromStored, v3PacketToCanonical, buildMinimalV2Canonical } from '@/lib/intelligence-v3/bridge'
+import { isPacketCurrent } from '@/lib/intelligence-v3/versions'
+import { qualifyCanonicalScore, toStoredQualification, verdictForQualification } from '@/lib/scoring/qualification'
+import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
+import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 
 /**
  * Save Prospect as Lead
@@ -101,7 +106,7 @@ export async function POST(request: Request) {
       : null
     const canonicalQualificationForGate =
       typeof canonicalForGate?.qualification === 'string'
-        ? (canonicalForGate.qualification as 'strong' | 'worth_pursuing' | 'maybe' | 'skip')
+        ? (canonicalForGate.qualification as 'strong' | 'worth_pursuing' | 'maybe' | 'low' | 'skip')
         : null
 
     // Same normalization as analyze, so eligibility and the reuse key agree
@@ -138,24 +143,43 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Organization rulebook not found.' }, { status: 500 })
     }
 
-    const canonical = canonicalForGate
+    // The client sends the canonical result it was shown. It is NOT trusted:
+    // when the original research is present, the stored model decision is
+    // replayed through the current deterministic layers on the server (no
+    // model call), and THAT packet is what gets persisted. A client cannot
+    // raise its own score, and an analysis from an older scoring version is
+    // brought up to date before it is saved.
+    let canonical: Record<string, unknown> | null = canonicalForGate
+    let serverRecomputed = false
+    const clientPacket = (canonical?.v3DecisionPacket ?? null) as V3LeadDecisionPacket | null
+    if (clientPacket && normalizedRawInput && normalizedRawInput.length >= 40) {
+      try {
+        const replayed = await recomputePacketFromStored(normalizedRawInput, clientPacket)
+        const base = (canonical as unknown as CanonicalProspectIntelligence | null) ?? buildMinimalV2Canonical(normalizedRawInput)
+        canonical = v3PacketToCanonical(replayed, base) as unknown as Record<string, unknown>
+        serverRecomputed = true
+      } catch (err) {
+        console.warn('[prospect/save] server recompute failed, persisting client canonical:', err instanceof Error ? err.message : err)
+      }
+    } else if (clientPacket && !isPacketCurrent(clientPacket.versions)) {
+      console.warn('[prospect/save] client packet is from an older scoring version and no research was sent; persisting as-is')
+    }
+
     const canonicalScore =
       typeof canonical?.canonicalScore === 'number'
         ? canonical.canonicalScore
         : typeof body.canonicalScore === 'number' ? body.canonicalScore : null
-    const canonicalQualification = typeof canonical?.qualification === 'string' ? canonical.qualification : null
-    const verdictFromCanonical =
-      canonicalQualification === 'strong' || canonicalQualification === 'worth_pursuing'
-        ? 'send'
-        : canonicalQualification === 'maybe'
-          ? 'research_more'
-          : canonicalQualification === 'skip'
-            ? 'skip'
-            : null
+    if (canonical && typeof canonicalScore === 'number') {
+      // Stored qualification always follows the stored score.
+      canonical.qualification = toStoredQualification(qualifyCanonicalScore(canonicalScore).qualification)
+    }
 
-    // the authority. Save must PERSIST the canonical result, not recompute.
+    // Legacy rubric score is kept only for pre-canonical surfaces; the
+    // verdict follows the canonical band (one mapping, includes LOW).
     const score = computeScore(extracted, rulebook, { sourceText: normalizedRawInput ?? '', signalOrigin: 'AI_EXTRACTED' })
-    const verdict = verdictFromCanonical ?? score.verdict
+    const verdict = typeof canonicalScore === 'number'
+      ? verdictForQualification(qualifyCanonicalScore(canonicalScore).qualification)
+      : score.verdict
 
     const v3Packet = canonical && typeof canonical === 'object'
       ? (canonical as Record<string, unknown>).v3DecisionPacket as Record<string, unknown> | null
@@ -179,6 +203,7 @@ export async function POST(request: Request) {
       verdict,
       canonicalScore,
       canonicalIntelligence: canonical,
+      scoreBreakdown: (canonical?.scoreBreakdown as Record<string, unknown> | undefined) ?? null,
       scoreVersion: canonicalScore ? (typeof canonical?.scoreVersion === 'string' ? canonical.scoreVersion : 'relay_decision_v3.0.0') : null,
       scoredAt: canonicalScore ? new Date().toISOString() : null,
       titleRaw: extracted.titleRaw ?? extracted.title,
@@ -203,10 +228,9 @@ export async function POST(request: Request) {
       decisionModel,
       decisionRunId,
       selectedEpisodeId,
-      v3ReuseKey: normalizedRawInput ? buildV3ReuseKey({
-        rawText: normalizedRawInput,
-        profileId: senderProfileId,
-      }) : null,
+      // Sender-independent reuse key: the same research under the same
+      // versions is the same opportunity decision, whoever sends.
+      v3ReuseKey: normalizedRawInput ? buildV3ReuseKey({ rawText: normalizedRawInput }) : null,
     })
 
     if (result.blocked) {
@@ -257,6 +281,8 @@ export async function POST(request: Request) {
         },
         score,
         leadId: lead.id,
+        serverRecomputed,
+        canonicalScore,
       },
       { status: 201 },
     )

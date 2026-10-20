@@ -59,11 +59,13 @@ export function buildEpisodes(
   const evidenceOnlyEpisodes = buildEpisodesFromEvidenceOnly(graph, refDate, minEvidence, absorbed)
   episodes.push(...evidenceOnlyEpisodes)
 
-  // Sort: most recent first
+  // Sort: most recent first. Ties break on a content key, never on insertion
+  // timing or generated ids, so the same source always yields the same order.
   episodes.sort((a, b) => {
     const aTime = a.lastActivityAt ? new Date(a.lastActivityAt).getTime() : 0
     const bTime = b.lastActivityAt ? new Date(b.lastActivityAt).getTime() : 0
-    return bTime - aTime
+    if (bTime !== aTime) return bTime - aTime
+    return episodeContentKey(a).localeCompare(episodeContentKey(b))
   })
 
   return episodes
@@ -135,7 +137,7 @@ function buildEpisodeFromEvents(
     evidenceRefs: allEvidenceIds,
     eventRefs: events.map((e) => e.id),
     status,
-    detectedAt: events[0].occurredAt || new Date().toISOString(),
+    detectedAt: events[0].occurredAt || refDate.toISOString(),
     lastActivityAt: lastActivity?.toISOString() ?? null,
     ageDays,
   }
@@ -216,7 +218,7 @@ function buildEpisodesFromEvidenceOnly(
         evidenceRefs: needEvidence.map((e) => e.id),
         eventRefs: [syntheticEvent.id],
         status: determineEpisodeStatus(ageDays, [syntheticEvent]),
-        detectedAt: needEvidence[0].occurredAt || new Date().toISOString(),
+        detectedAt: needEvidence[0].occurredAt || refDate.toISOString(),
         lastActivityAt: lastActivity?.toISOString() ?? null,
         ageDays,
       })
@@ -342,7 +344,8 @@ function determineEpisodeStatus(
   if (hasClosed) return 'CLOSED'
 
   if (ageDays === null) return 'UNKNOWN'
-  if (ageDays >= EPISODE_STALENESS.CLOSED_DAYS) return 'CLOSED'
+  // Age alone never closes an episode: CLOSED means negated or filled. An old
+  // request is STALE — its timing credit falls, its intent stays on record.
   if (ageDays >= EPISODE_STALENESS.STALE_DAYS) return 'STALE'
   if (ageDays >= EPISODE_STALENESS.AGING_DAYS) return 'AGING'
   return 'CURRENT'
@@ -370,4 +373,17 @@ function getLastActivityDate(
 
 function daysBetween(date: Date, ref: Date): number {
   return Math.floor((ref.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+/** Stable, content-derived ordering key for an episode (no ids, no clocks). */
+export function episodeContentKey(ep: V3OpportunityEpisode): string {
+  return [
+    ep.organizationName ?? '',
+    ep.anchorEvent?.eventType ?? '',
+    ep.anchorEvent?.explicitness ?? '',
+    (ep.anchorEvent?.requestedCapability ?? []).join(','),
+    ep.anchorEvent?.channel ?? '',
+    ep.needOwnerType,
+    ep.explicitRequest ? '1' : '0',
+  ].join('|')
 }

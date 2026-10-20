@@ -1,3 +1,7 @@
+import { QUALIFICATION_BANDS, qualifyCanonicalScore } from '@/lib/scoring/qualification'
+import type { ScoringVersions } from './versions'
+import type { SourceFactsSummary } from './source-facts-model'
+
 /**
  * Decision Intelligence V3 — Type Definitions
  *
@@ -316,6 +320,33 @@ export interface V3LeadDecisionPacket {
     currentIndustryLine: string | null
     currentProductActivity: boolean
   }
+  /** Versions of every layer that produced this packet. */
+  versions?: ScoringVersions
+  /** Verified facts the score was computed from (bounded, serializable). */
+  sourceFacts?: SourceFactsSummary
+  /** Resolved dimension levels, for surfaces that show them as words. */
+  resolved?: {
+    access: 'DIRECT' | 'CONNECTION' | 'INDIRECT' | 'NONE'
+    activityRecency: 'FRESH' | 'RECENT' | 'AGING' | 'STALE' | 'UNKNOWN'
+    buyerTiming: 'NONE' | 'WEAK' | 'CURRENT' | 'URGENT'
+    fit: V3FitLevel | 'UNKNOWN'
+    authority: string
+    commercialPotential: CommercialPotentialLevel
+    commercialPotentialRaw: number
+    evidenceQuality: number
+  }
+  /** Confidence, separate from the score. */
+  confidenceDetail?: {
+    label: 'HIGH' | 'MEDIUM' | 'LOW'
+    reasons: string[]
+    researchMore: boolean
+  }
+  /** The canonical recommended action (deriveRecommendedAction); `action` is its legacy projection. */
+  recommendedAction?: import('./action/recommended-action').DeriveActionOutput
+  /** Whether the decision model was unavailable and the deterministic fallback decided. */
+  fallbackUsed?: boolean
+  /** Event extraction provenance: 'model' | 'deterministic' | 'none'. */
+  eventSource?: 'model' | 'deterministic' | 'none'
 }
 
 export interface V3ShadowComparison {
@@ -330,13 +361,12 @@ export interface V3ShadowComparison {
 
 
 export interface V3ScoringWeights {
-  buyerRequestProbability: number
+  buyerIntent: number
   commercialPotential: number
-  externalNeedProbability: number
   fit: number
+  authority: number
   timing: number
   access: number
-  proofRelevance: number
   evidenceQuality: number
 }
 
@@ -363,7 +393,7 @@ export interface V3MultiEpisodeResult {
 export type BuildIntensity = 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH'
 
 
-export type CommercialPotentialLevel = 'LOW' | 'MEDIUM' | 'HIGH'
+export type CommercialPotentialLevel = 'VERY_LOW' | 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH'
 
 export interface CommercialPotentialAssessment {
   decisionAuthority: number        // 0-1: founder/CEO/CTO vs IC
@@ -378,26 +408,12 @@ export interface CommercialPotentialAssessment {
   signals: string[]                // human-readable signals
 }
 
-export const V3_SCORE_LABELS: Array<{
-  min: number
-  max: number
-  label: string
-  qualification: V3Qualification
-}> = [
-  { min: 75, max: 100, label: 'Strong opportunity', qualification: 'STRONG' },
-  { min: 55, max: 74, label: 'Worth pursuing', qualification: 'WORTH_PURSUING' },
-  { min: 35, max: 54, label: 'Maybe — needs more signal', qualification: 'MAYBE' },
-  { min: 15, max: 34, label: 'Weak fit', qualification: 'LOW' },
-  { min: 0, max: 14, label: 'Not a fit', qualification: 'SKIP' },
-]
+/** Qualification bands live in one place: @/lib/scoring/qualification. */
+export const V3_SCORE_LABELS = QUALIFICATION_BANDS
 
 export function v3ScoreLabel(score: number): { label: string; qualification: V3Qualification } {
-  for (const entry of V3_SCORE_LABELS) {
-    if (score >= entry.min && score <= entry.max) {
-      return { label: entry.label, qualification: entry.qualification }
-    }
-  }
-  return { label: 'Not a fit', qualification: 'SKIP' }
+  const band = qualifyCanonicalScore(score)
+  return { label: band.label, qualification: band.qualification }
 }
 
 

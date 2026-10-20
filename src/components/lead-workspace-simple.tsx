@@ -266,17 +266,12 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               <div>
                 <div className="flex items-center gap-2">
                    <span className="text-[13px] font-medium text-ink">{leadScore.text}</span>
-                  {(() => {
-                    const q = (lead.canonicalIntelligence as Record<string, unknown>)?.qualification
-                    if (!q) return null
-                    const qs = String(q)
-                    return (
-                      <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium',
-                        qs === 'strong' || qs === 'worth_pursuing' ? 'bg-status-success/10 text-status-success' :
-                        qs === 'maybe' ? 'bg-orange/10 text-orange' : 'bg-stone-100 text-stone-500'
-                      )}>{qs}</span>
-                    )
-                  })()}
+                  {leadScore.qualification && (
+                    <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium',
+                      leadScore.qualification === 'STRONG' || leadScore.qualification === 'WORTH_PURSUING' ? 'bg-status-success/10 text-status-success' :
+                      leadScore.qualification === 'MAYBE' ? 'bg-orange/10 text-orange' : 'bg-stone-100 text-stone-500'
+                    )}>{leadScore.label}</span>
+                  )}
                 </div>
                 {lead.verdict && <p className="text-[11px] text-stone">Verdict: {lead.verdict}</p>}
               </div>
@@ -285,7 +280,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           <div className="shrink-0 text-right">
             <StatusPill phase={phase} />
             {lead.url && <a href={lead.url} target="_blank" rel="noopener" className="mt-1 inline-block text-[10px] text-cobalt hover:underline">LinkedIn ↗</a>}
-            {(lead.canonicalScore ?? 0) >= 60 && (
+            {(leadScore.qualification === 'STRONG' || leadScore.qualification === 'WORTH_PURSUING') && (
               <button
                 onClick={async () => {
                   try {
@@ -425,7 +420,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
       {/* Decision Explainability — why this lead, why now */}
       {!isTerminal && lead.canonicalScore != null && (
         <DecisionExplainability
-          title={lead.displayQualification ?? getLeadDisplayScore(lead).text}
+          title={leadScore.qualification ? `${leadScore.label} · ${leadScore.text}` : leadScore.text}
           positiveSignals={buildPositiveSignals(lead)}
           negativeSignals={buildNegativeSignals(lead)}
           recommendation={nextAction.reason}
@@ -689,46 +684,45 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(diff / 60_000)}m ago`
 }
 
+/** Stored score rows for a lead, normalized once. Each row's share of its own maximum (0-1). */
+function leadDimensionShares(lead: LeadDetail): Map<string, { share: number; label: string; points: number | null; max: number | null }> {
+  let ci = lead.canonicalIntelligence as Record<string, unknown> | string | null | undefined
+  if (typeof ci === 'string') { try { ci = JSON.parse(ci) as Record<string, unknown> } catch { ci = null } }
+  const breakdown = (ci && typeof ci === 'object' ? (ci as Record<string, unknown>).scoreBreakdown : null) as Record<string, unknown> | null
+  const dims = normalizeScoreDimensions(Array.isArray(breakdown?.dimensions) ? breakdown.dimensions : [])
+  const out = new Map<string, { share: number; label: string; points: number | null; max: number | null }>()
+  for (const d of dims) {
+    const share = d.points != null && d.max != null && d.max > 0 ? d.points / d.max : 0
+    out.set(d.key, { share, label: d.label, points: d.points, max: d.max })
+  }
+  return out
+}
+
 function buildPositiveSignals(lead: LeadDetail): string[] {
   const signals: string[] = []
-  const dims = normalizeScoreDimensions(lead)
-  const byKey = new Map(dims.map(d => [d.key, d]))
+  const byKey = leadDimensionShares(lead)
+  const display = getLeadDisplayScore(lead)
 
-  const fit = byKey.get('fit')
-  if (fit?.points != null && fit.points >= 7) signals.push('Strong ICP fit — matches your target profile')
-
-  const timing = byKey.get('timing')
-  if (timing?.points != null && timing.points >= 6) signals.push('Active need or recent signal detected')
-
-  const commercial = byKey.get('commercial')
-  if (commercial?.points != null && commercial.points >= 7) signals.push('High commercial potential')
-
-  if (lead.verdict === 'send') signals.push('Scored as worth contacting')
-
-  const role = lead.contactTitle?.toLowerCase() ?? ''
-  if (/founder|ceo|cto|chief|vp|head|director/.test(role)) {
-    signals.push(`Decision maker (${lead.contactTitle})`)
-  }
-
-  if (signals.length === 0 && lead.canonicalScore != null && lead.canonicalScore >= 60) {
-    signals.push(`Scored ${lead.canonicalScore}/100`)
-  }
+  if ((byKey.get('fit')?.share ?? 0) >= 0.7) signals.push('Strong capability fit — matches what you deliver')
+  if ((byKey.get('buyerIntent')?.share ?? 0) >= 0.6) signals.push('Verified request for outside help')
+  if ((byKey.get('timing')?.share ?? 0) >= 0.6) signals.push('Current buyer timing or recent activity')
+  if ((byKey.get('commercialPotential')?.share ?? 0) >= 0.5) signals.push('High commercial potential')
+  if ((byKey.get('authority')?.share ?? 0) >= 0.75) signals.push(`Decision maker${lead.contactTitle ? ` (${lead.contactTitle})` : ''}`)
+  if (display.qualification === 'STRONG' || display.qualification === 'WORTH_PURSUING') signals.push(`Scored ${display.label.toLowerCase()}`)
 
   return signals
 }
 
 function buildNegativeSignals(lead: LeadDetail): string[] {
   const signals: string[] = []
-  const dims = normalizeScoreDimensions(lead)
-  const byKey = new Map(dims.map(d => [d.key, d]))
+  const byKey = leadDimensionShares(lead)
+  const display = getLeadDisplayScore(lead)
 
-  const timing = byKey.get('timing')
-  if (timing?.points != null && timing.points < 4) signals.push('No active buyer signal detected')
-
-  const access = byKey.get('access')
-  if (access?.points != null && access.points < 4) signals.push('May be hard to reach or engage')
-
-  if (lead.verdict === 'skip') signals.push('Scored as skip — low fit')
+  if ((byKey.get('buyerIntent')?.share ?? 1) < 0.3) signals.push('No verified buyer request')
+  if ((byKey.get('timing')?.share ?? 1) < 0.4) signals.push('No current buyer timing')
+  if ((byKey.get('access')?.share ?? 1) < 0.4) signals.push('May be hard to reach or engage')
+  if ((byKey.get('evidenceQuality')?.share ?? 1) < 0.4) signals.push('Limited evidence — research before acting')
+  if (display.qualification === 'SKIP' || display.qualification === 'LOW') signals.push(`Scored ${display.label.toLowerCase()}`)
   if (lead.status === 'new' && lead.createdAt) {
     const days = (Date.now() - new Date(lead.createdAt).getTime()) / 86_400_000
     if (days > 14) signals.push(`Aging lead (${Math.round(days)} days) — signal may be stale`)
@@ -738,11 +732,12 @@ function buildNegativeSignals(lead: LeadDetail): string[] {
 }
 
 function buildScoreDetails(lead: LeadDetail): { label: string; value: string }[] {
-  const dims = normalizeScoreDimensions(lead)
-  const details = dims.map(d => ({
+  const byKey = leadDimensionShares(lead)
+  const details = [...byKey.values()].map((d) => ({
     label: d.label,
-    value: d.points != null && d.max != null ? `${d.points}/${d.max}` : '—',
+    value: d.points != null && d.max != null ? `${Math.round(d.points * 10) / 10}/${d.max}` : '—',
   }))
-  details.push({ label: 'Total', value: `${lead.canonicalScore ?? lead.score ?? '?'}/100` })
+  const display = getLeadDisplayScore(lead)
+  details.push({ label: 'Total', value: display.canonical != null ? `${display.canonical}/100 · ${display.text}` : display.text })
   return details
 }

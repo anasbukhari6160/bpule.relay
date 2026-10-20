@@ -5,6 +5,7 @@ import { createScoutStore } from '@/lib/store'
 import { classifyRoleFromTitle, mapLocationToRegion } from '@/lib/leads/targeting'
 import { evaluateProspectQualification } from '@/lib/prospect/qualification-gate'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
+import { qualifyCanonicalScore, verdictForQualification } from '@/lib/scoring/qualification'
 
 /**
  * Lead Creation API
@@ -180,14 +181,11 @@ export async function POST(request: Request) {
     : null
 
   const canonicalScoreValue = canonical?.canonicalScore ?? null
-  const finalVerdict: Verdict | null =
-    canonical?.qualification === 'strong' || canonical?.qualification === 'worth_pursuing'
-      ? 'send'
-      : canonical?.qualification === 'maybe'
-        ? 'research_more'
-        : canonical?.qualification === 'skip'
-          ? 'skip'
-          : legacyScore?.verdict ?? null
+  // Verdict follows the canonical band of the stored score — one mapping,
+  // including LOW — and only falls back to the legacy rubric without one.
+  const finalVerdict: Verdict | null = canonicalScoreValue != null
+    ? verdictForQualification(qualifyCanonicalScore(canonicalScoreValue).qualification)
+    : legacyScore?.verdict ?? null
 
   const result = await store.createLead({
     company,

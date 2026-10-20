@@ -35,7 +35,7 @@ export async function POST(
 
   const { data: lead } = await store
     .from('leads')
-    .select('id, org_id, company, contact_name, contact_title, canonical_score, canonical_intelligence, created_at, updated_at, verdict')
+    .select('id, org_id, company, contact_name, contact_title, raw_input, canonical_score, canonical_intelligence, created_at, updated_at, verdict')
     .eq('id', leadId)
     .eq('organization_id', rep.organization_id)
     .single()
@@ -48,7 +48,8 @@ export async function POST(
     : new Date(lead.created_at).getTime()
   const daysSinceUpdate = (now - lastUpdated) / (1000 * 60 * 60 * 24)
 
-  const isHighValue = (lead.canonical_score ?? 0) >= 70
+  const { qualifyCanonicalScore: bandOf } = await import('@/lib/scoring/qualification')
+  const isHighValue = lead.canonical_score != null && ['STRONG', 'WORTH_PURSUING'].includes(bandOf(lead.canonical_score).qualification)
   const isStale = daysSinceUpdate >= 7 || lead.canonical_intelligence == null
   const forceRefresh = req.headers.get('x-force-refresh') === 'true'
 
@@ -72,27 +73,27 @@ export async function POST(
   // Refresh intelligence using existing V3 pipeline
   try {
     const { produceV3Intelligence } = await import('@/lib/intelligence-v3/bridge')
+    const { normalizeProspectPaste } = await import('@/lib/prospect/paste-normalize')
+    const { qualifyCanonicalScore, verdictForQualification } = await import('@/lib/scoring/qualification')
 
-    // Build raw text from lead data for re-analysis
+    // Re-analysis runs on the ORIGINAL research, never on a stub built from
+    // the company name and title — a stub has no evidence and would only
+    // ever lower or invent a score.
     const existingIntel = lead.canonical_intelligence as Record<string, unknown> | null
-    const rawText = [
-      lead.company,
-      lead.contact_name,
-      lead.contact_title,
-      // Include stored verbatim quote or signal evidence for context
-      existingIntel?.verbatimQuote ?? '',
-      existingIntel?.signalEvidence ?? '',
-    ].filter(Boolean).join('. ')
+    const storedRaw = typeof lead.raw_input === 'string' && lead.raw_input.trim()
+      ? lead.raw_input
+      : (((existingIntel?.rawSource as Record<string, unknown> | undefined)?.rawInput as string | undefined) ?? '')
+    const rawText = normalizeProspectPaste(storedRaw)
 
-    if (rawText.length < 10) {
+    if (rawText.length < 80) {
       return NextResponse.json({
         refreshed: false,
-        reason: 'Insufficient data for refresh',
+        reason: 'No stored research to re-analyze — paste the profile again to refresh',
         scoreChanged: false,
       })
     }
 
-    const result = await produceV3Intelligence(rawText)
+    const result = await produceV3Intelligence(rawText, { forceReanalyze: true })
 
     if (result?.intelligence) {
       const newScore = result.intelligence.canonicalScore ?? lead.canonical_score
@@ -118,7 +119,10 @@ export async function POST(
         .update({
           canonical_score: newScore,
           canonical_intelligence: result.intelligence,
-          verdict: newScore >= 70 ? 'send' : lead.verdict,
+          score_breakdown: result.intelligence.scoreBreakdown ?? null,
+          score_version: result.intelligence.scoreVersion ?? null,
+          scored_at: new Date().toISOString(),
+          verdict: verdictForQualification(qualifyCanonicalScore(newScore).qualification),
         })
         .eq('id', leadId)
 

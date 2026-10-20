@@ -1,17 +1,25 @@
 /**
  * Display mapping for the canonical score.
  *
- * V3 qualification is the authoritative 0-10 display:
- *   strong → 9, worth_pursuing → 7, maybe → 5, skip → 2.
- * The rows under a breakdown are the dimensions inside that total.
- * They are not a second score, and overlapping groups are not added again.
+ * Thin adapter over @/lib/scoring/qualification — the ONE band + /10 policy.
+ * The rows under a breakdown are the dimensions inside that total. They are
+ * not a second score, and overlapping groups are not added again.
  */
 
+import {
+  displayScoreForCanonical,
+  qualifyCanonicalScore,
+  fromStoredQualification,
+  DISPLAY_VERSION,
+} from './qualification'
+
 const CANONICAL_DIMENSION_KEYS = new Set([
+  'buyerIntent',
   'buyerRequest',
   'commercialPotential',
   'externalNeed',
   'fit',
+  'authority',
   'timing',
   'access',
   'proofRelevance',
@@ -24,33 +32,18 @@ export interface DisplayScoreInput {
   canonicalScore?: number | null
 }
 
+/**
+ * /10 value for a canonical score. The score alone determines the number;
+ * the stored qualification is only used to detect a stale packet whose band
+ * no longer matches the current policy (then the score still wins).
+ */
 export function displayScoreFromCanonical(input: DisplayScoreInput | null): number | null {
   if (!input || input.canonicalScore == null || Number.isNaN(input.canonicalScore)) return null
-  if (input.intelligenceVersion?.startsWith('relay_decision_v3')) {
-    const score = input.canonicalScore
-    switch (input.qualification) {
-      case 'strong':
-        // 75-100 → 8-10
-        return score >= 90 ? 10 : score >= 80 ? 9 : 8
-      case 'worth_pursuing':
-        // 55-74 → 6-7
-        return score >= 65 ? 7 : 6
-      case 'maybe':
-        // 35-54 → 4-6 (within-band resolution)
-        return score >= 48 ? 6 : score >= 42 ? 5 : 4
-      case 'low':
-        // 15-34 → 3
-        return 3
-      case 'skip':
-        // 0-14 → 1-2
-        return score >= 8 ? 2 : 1
-    }
-  }
-  return Math.round(input.canonicalScore / 10)
+  return displayScoreForCanonical(input.canonicalScore)
 }
 
-/** Version of the display policy below — bump when the mapping changes. */
-export const DISPLAY_SCORE_VERSION = 'display_v1'
+/** Version of the display policy — bump when the mapping changes. */
+export const DISPLAY_SCORE_VERSION = DISPLAY_VERSION
 
 export interface LeadScoreSource {
   canonicalScore?: number | null
@@ -68,32 +61,47 @@ export interface LeadDisplayScore {
   /** "5/10", "8/12" or "—". */
   text: string
   canonical: number | null
+  /** Canonical qualification derived from the score (never from a stale stored string). */
+  qualification: ReturnType<typeof qualifyCanonicalScore>['qualification'] | null
+  /** Human label for the qualification. */
+  label: string
+  /** True when the stored qualification string disagrees with the current band policy. */
+  staleQualification: boolean
 }
 
 /**
  * THE user-facing lead score. Pipeline, Lead Detail, dashboard and every
  * other surface call this; none of them divide or round on their own.
- * Canonical (0-100) leads use the qualification-band policy above; leads
- * that predate canonical scoring show their legacy 0-12 rubric score.
+ * Canonical (0-100) leads use the band policy; leads that predate canonical
+ * scoring show their legacy 0-12 rubric score.
  */
 export function getLeadDisplayScore(lead: LeadScoreSource | null | undefined): LeadDisplayScore {
-  if (!lead) return { value: null, max: 10, text: '—', canonical: null }
+  if (!lead) return { value: null, max: 10, text: '—', canonical: null, qualification: null, label: 'Unscored', staleQualification: false }
   let ci = lead.canonicalIntelligence as Record<string, unknown> | string | null | undefined
   if (typeof ci === 'string') {
     try { ci = JSON.parse(ci) as Record<string, unknown> } catch { ci = null }
   }
   const obj = (ci && typeof ci === 'object' ? ci : null) as Record<string, unknown> | null
-  const qualification = lead.displayQualification ?? (typeof obj?.qualification === 'string' ? obj.qualification : null)
-  const intelligenceVersion = lead.displayIntelligenceVersion ?? (typeof obj?.intelligenceVersion === 'string' ? obj.intelligenceVersion : null)
+  const storedQualification = lead.displayQualification ?? (typeof obj?.qualification === 'string' ? obj.qualification : null)
   const canonical = typeof lead.canonicalScore === 'number' && Number.isFinite(lead.canonicalScore) ? lead.canonicalScore : null
   if (canonical != null) {
-    const value = displayScoreFromCanonical({ canonicalScore: canonical, qualification, intelligenceVersion })
-    return { value, max: 10, text: value == null ? '—' : `${value}/10`, canonical }
+    const band = qualifyCanonicalScore(canonical)
+    const value = displayScoreForCanonical(canonical)
+    const stored = fromStoredQualification(storedQualification)
+    return {
+      value,
+      max: 10,
+      text: `${value}/10`,
+      canonical,
+      qualification: band.qualification,
+      label: band.label,
+      staleQualification: stored !== null && stored !== band.qualification,
+    }
   }
   if (typeof lead.score === 'number' && Number.isFinite(lead.score)) {
-    return { value: lead.score, max: 12, text: `${lead.score}/12`, canonical: null }
+    return { value: lead.score, max: 12, text: `${lead.score}/12`, canonical: null, qualification: null, label: 'Legacy score', staleQualification: false }
   }
-  return { value: null, max: 10, text: '—', canonical: null }
+  return { value: null, max: 10, text: '—', canonical: null, qualification: null, label: 'Unscored', staleQualification: false }
 }
 
 export type DisplayEvidenceKind = 'quote' | 'signal' | 'inference'

@@ -14,8 +14,12 @@ import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { diffSignalSnapshots, buildSignalSnapshot, qualifiesForWatching } from '@/lib/relay/signal-watch'
 import { emitAction } from '@/lib/action-ledger'
 import { persistSignalEvent } from '@/lib/relay/signal-events-store'
+import { normalizeProspectPaste } from '@/lib/prospect/paste-normalize'
+import { QUALIFICATION_BANDS, qualifyCanonicalScore, verdictForQualification } from '@/lib/scoring/qualification'
 
 export const maxDuration = 60
+/** Leads worth watching: the canonical WORTH_PURSUING band and above. */
+const WATCH_MIN_SCORE = QUALIFICATION_BANDS.find((b) => b.qualification === 'WORTH_PURSUING')!.min
 
 export async function POST(req: NextRequest) {
   const store = createServiceSupabase()
@@ -36,13 +40,13 @@ export async function POST(req: NextRequest) {
   // Find high-value leads that qualify for watching
   const { data: leads } = await store
     .from('leads')
-    .select('id, company, contact_name, contact_title, canonical_score, canonical_intelligence, direction')
+    .select('id, company, contact_name, contact_title, raw_input, canonical_score, canonical_intelligence, direction')
     .eq('organization_id', rep.organization_id)
     .eq('archived', false)
     .neq('status', 'won')
     .neq('status', 'lost')
     .neq('status', 'dead')
-    .gte('canonical_score', 60)
+    .gte('canonical_score', WATCH_MIN_SCORE)
     .order('canonical_score', { ascending: false })
     .limit(limit)
 
@@ -55,20 +59,17 @@ export async function POST(req: NextRequest) {
 
   for (const lead of leads) {
     try {
-      // Build raw text from lead data
+      // Re-run on the ORIGINAL research only. A stub of name + title has no
+      // evidence; re-scoring it would invent or erase signals.
       const existingIntel = lead.canonical_intelligence as Record<string, unknown> | null
-      const rawText = [
-        lead.company,
-        lead.contact_name,
-        lead.contact_title,
-        existingIntel?.verbatimQuote ?? '',
-        existingIntel?.signalEvidence ?? '',
-      ].filter(Boolean).join('. ')
-
-      if (rawText.length < 10) continue
+      const storedRaw = typeof lead.raw_input === 'string' && lead.raw_input.trim()
+        ? lead.raw_input
+        : (((existingIntel?.rawSource as Record<string, unknown> | undefined)?.rawInput as string | undefined) ?? '')
+      const rawText = normalizeProspectPaste(storedRaw)
+      if (rawText.length < 80) continue
 
       // Re-run V3 pipeline
-      const result = await produceV3Intelligence(rawText)
+      const result = await produceV3Intelligence(rawText, { forceReanalyze: true })
       refreshed++
 
       const currentSnapshot = buildSignalSnapshot(result?.v3Packet ?? null)
@@ -88,13 +89,18 @@ export async function POST(req: NextRequest) {
         .update({ canonical_intelligence: updatedIntel })
         .eq('id', lead.id)
 
-      // Update score if improved
-      if (currentSnapshot.score != null && lead.canonical_score != null && currentSnapshot.score > lead.canonical_score) {
+      // A re-analysis of the same research under the current versions is the
+      // truth in both directions; a score and its intelligence always move together.
+      if (result?.intelligence && currentSnapshot.score != null && currentSnapshot.score !== lead.canonical_score) {
         await store
           .from('leads')
           .update({
             canonical_score: currentSnapshot.score,
-            canonical_intelligence: result?.intelligence ?? lead.canonical_intelligence,
+            canonical_intelligence: { ...(result.intelligence as unknown as Record<string, unknown>), _watchSnapshot: currentSnapshot },
+            score_breakdown: result.intelligence.scoreBreakdown ?? null,
+            score_version: result.intelligence.scoreVersion ?? null,
+            scored_at: new Date().toISOString(),
+            verdict: verdictForQualification(qualifyCanonicalScore(currentSnapshot.score).qualification),
           })
           .eq('id', lead.id)
       }

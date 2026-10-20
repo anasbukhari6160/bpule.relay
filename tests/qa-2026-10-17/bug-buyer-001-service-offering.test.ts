@@ -4,12 +4,17 @@
  *
  * Invariant: SERVICE_OFFERING must never become BUYER_REQUEST.
  * Asserted against the canonical buyer decision (resolveVerifiedBuyerIntent),
- * the only buyer-intent authority.
+ * the only buyer-intent authority, and against the canonical score's
+ * buyer-intent dimension (the only scorer).
  */
 import { describe, expect, it } from 'vitest'
 import { resolveBuyerIntentFromSource } from '@/lib/intelligence-v3/buyer-intent'
-import { computeCompositeScore } from '@/lib/scoring/composite-scorer'
-import { extractSignals } from '@/lib/scoring/signal-extractor'
+import { scoreSourceForTest } from '../helpers/score-source'
+
+function buyerDim(text: string) {
+  const out = scoreSourceForTest(text)
+  return out.dimensions.find((d) => d.key === 'buyerIntent')!
+}
 
 describe('BUG-BUYER-001 service offering is not buyer', () => {
   const CONSULTANT = `Sam Patel
@@ -32,12 +37,10 @@ Hire us for your next project — we love solving hard problems.`
     expect(r.verifiedExternalNeed).toBe(false)
   })
 
-  it('composite: seller profile does not get high buyer intent from own marketing', () => {
-    const signals = extractSignals(CONSULTANT)
-    const composite = computeCompositeScore({ signals, rawText: CONSULTANT })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeLessThan(50)
-    expect(composite.qualification).not.toBe('STRONG')
+  it('score: seller profile does not get buyer-intent credit from own marketing', () => {
+    const dim = buyerDim(CONSULTANT)
+    expect(dim.raw).toBeLessThan(0.3)
+    expect(scoreSourceForTest(CONSULTANT).qualification).not.toBe('STRONG')
   })
 })
 
@@ -56,11 +59,8 @@ I mentor 12 founders and run a workshop on product launches.`
     expect(r.verifiedBudget).toBe(false)
   })
 
-  it('composite: advisor profile does not score as strong buyer', () => {
-    const signals = extractSignals(ADVISOR)
-    const composite = computeCompositeScore({ signals, rawText: ADVISOR })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeLessThan(50)
+  it('score: advisor profile does not score as a buyer', () => {
+    expect(buyerDim(ADVISOR).raw).toBeLessThan(0.3)
   })
 })
 
@@ -77,11 +77,8 @@ So we started looking for an agency to help with the migration.`
     expect(r.verifiedBuyerRequest).toBe(false)
   })
 
-  it('composite: narrative with prose timing scores below strong', () => {
-    const signals = extractSignals(NARRATIVE)
-    const composite = computeCompositeScore({ signals, rawText: NARRATIVE })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeLessThan(70)
+  it('score: narrative with prose timing is not a verified buyer', () => {
+    expect(buyerDim(NARRATIVE).raw).toBeLessThan(0.5)
   })
 })
 
@@ -99,11 +96,8 @@ Previously at a small agency, I learned to move fast.`
     expect(r.verifiedBuyerRequest).toBe(false)
   })
 
-  it('composite: historical content does not resurrect old opportunity', () => {
-    const signals = extractSignals(HISTORICAL)
-    const composite = computeCompositeScore({ signals, rawText: HISTORICAL })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeLessThan(50)
+  it('score: historical content does not resurrect an old opportunity', () => {
+    expect(buyerDim(HISTORICAL).raw).toBeLessThan(0.3)
   })
 })
 
@@ -115,15 +109,11 @@ Join us for a hands-on session — limited seats available.
 The launch has been a great success so far.`
 
   it('canonical: workshop launch is not a buyer request', () => {
-    const r = resolveBuyerIntentFromSource(WORKSHOP)
-    expect(r.verifiedBuyerRequest).toBe(false)
+    expect(resolveBuyerIntentFromSource(WORKSHOP).verifiedBuyerRequest).toBe(false)
   })
 
-  it('composite: workshop content does not score as buyer', () => {
-    const signals = extractSignals(WORKSHOP)
-    const composite = computeCompositeScore({ signals, rawText: WORKSHOP })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeLessThan(50)
+  it('score: workshop content does not score as buyer', () => {
+    expect(buyerDim(WORKSHOP).raw).toBeLessThan(0.3)
   })
 })
 
@@ -136,15 +126,11 @@ The launch was a great success — they realized immediately that our platform w
 Pricing starts at $500/month for the enterprise tier.`
 
   it('canonical: customer launch is not the prospect buying', () => {
-    const r = resolveBuyerIntentFromSource(CUSTOMER_LAUNCH)
-    expect(r.verifiedBuyerRequest).toBe(false)
+    expect(resolveBuyerIntentFromSource(CUSTOMER_LAUNCH).verifiedBuyerRequest).toBe(false)
   })
 
-  it('composite: customer story does not score as buyer', () => {
-    const signals = extractSignals(CUSTOMER_LAUNCH)
-    const composite = computeCompositeScore({ signals, rawText: CUSTOMER_LAUNCH })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeLessThan(50)
+  it('score: customer story does not score as buyer', () => {
+    expect(buyerDim(CUSTOMER_LAUNCH).raw).toBeLessThan(0.3)
   })
 })
 
@@ -158,15 +144,11 @@ Looking for a dev shop to help scale the platform.
 Contact us if you know a good agency.`
 
   it('canonical: third-party repost is not the prospect buying', () => {
-    const r = resolveBuyerIntentFromSource(THIRD_PARTY_FUNDING)
-    expect(r.verifiedBuyerRequest).toBe(false)
+    expect(resolveBuyerIntentFromSource(THIRD_PARTY_FUNDING).verifiedBuyerRequest).toBe(false)
   })
 
-  it('composite: third-party content does not score as buyer', () => {
-    const signals = extractSignals(THIRD_PARTY_FUNDING)
-    const composite = computeCompositeScore({ signals, rawText: THIRD_PARTY_FUNDING })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeLessThan(60)
+  it('score: third-party content does not score as buyer', () => {
+    expect(buyerDim(THIRD_PARTY_FUNDING).raw).toBeLessThan(0.5)
   })
 })
 
@@ -184,11 +166,8 @@ Budget approved for Q1. Start within 2 weeks.`
     expect(r.relationshipRole).toBe('BUYER')
   })
 
-  it('composite: explicit buyer with funding scores high', () => {
-    const signals = extractSignals(PROSPECT_FUNDING)
-    const composite = computeCompositeScore({ signals, rawText: PROSPECT_FUNDING })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeGreaterThanOrEqual(60)
+  it('score: explicit buyer with funding scores high on buyer intent', () => {
+    expect(buyerDim(PROSPECT_FUNDING).raw).toBeGreaterThanOrEqual(0.6)
   })
 })
 
@@ -200,15 +179,11 @@ Our release cycle is killing us, we need outside help to ship faster.
 Budget approved for Q1. Launch planned within 3 months.`
 
   it('canonical: explicit agency request is verified', () => {
-    const r = resolveBuyerIntentFromSource(EXPLICIT)
-    expect(r.verifiedBuyerRequest).toBe(true)
+    expect(resolveBuyerIntentFromSource(EXPLICIT).verifiedBuyerRequest).toBe(true)
   })
 
-  it('composite: explicit buyer request scores high', () => {
-    const signals = extractSignals(EXPLICIT)
-    const composite = computeCompositeScore({ signals, rawText: EXPLICIT })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeGreaterThanOrEqual(60)
+  it('score: explicit buyer request scores high on buyer intent', () => {
+    expect(buyerDim(EXPLICIT).raw).toBeGreaterThanOrEqual(0.6)
   })
 })
 
@@ -230,12 +205,9 @@ Budget: $5k/month. Start within 3 weeks.`
     expect(r.sellerSideContent).toBe(true)
   })
 
-  it('composite: mixed profile still scores buyer on genuine episode', () => {
-    const signals = extractSignals(MIXED)
-    const composite = computeCompositeScore({ signals, rawText: MIXED })
-    const buyerDim = composite.dimensions.find((d) => d.key === 'buyerIntent')!
-    expect(buyerDim.score).toBeGreaterThan(0)
-    expect(buyerDim.score).toBeLessThan(60)
-    expect(buyerDim.evidence.join(' ')).toMatch(/verified/)
+  it('score: mixed profile still earns buyer credit on the genuine episode', () => {
+    const dim = buyerDim(MIXED)
+    expect(dim.raw).toBeGreaterThan(0.3)
+    expect(dim.evidence?.some((e) => e.kind === 'quote')).toBe(true)
   })
 })

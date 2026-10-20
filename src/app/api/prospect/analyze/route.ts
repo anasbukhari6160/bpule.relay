@@ -4,7 +4,12 @@ import { deduplicated } from '@/lib/ai/dedup'
 import { createScoutStore } from '@/lib/store'
 import { sseStream } from '@/lib/sse/sse'
 import { buildProfileIntelligence, matchProofToLead } from '@/lib/relay/profile-intelligence'
-import { loadSenderCandidates, pickSuggestion, type SenderSuggestion } from '@/lib/relay/sender-suggestion'
+import type { SenderSuggestion } from '@/lib/relay/sender-suggestion'
+import { loadSenderProfiles, routeLead } from '@/lib/relay/routing-context'
+import type { RoutingResult } from '@/lib/relay/sender-routing-engine'
+import { deriveRecommendedAction, ROUTING_MISMATCH_DELTA, type DeriveActionOutput, type RecommendedAction } from '@/lib/intelligence-v3/action/recommended-action'
+import { opportunityVersionTag } from '@/lib/intelligence-v3/versions'
+import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
 import { getAuthContext } from '@/lib/auth/organization'
 import { createServiceSupabase } from '@/lib/supabase/service'
 import { createOutreachStrategy } from '@/lib/relay/outreach-strategy'
@@ -26,14 +31,14 @@ import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
-import { resolveBuyerIntentFromSource, BUYER_INTENT_VERSION, type VerifiedBuyerIntent } from '@/lib/intelligence-v3/buyer-intent'
+import { resolveBuyerIntentFromSource, type VerifiedBuyerIntent } from '@/lib/intelligence-v3/buyer-intent'
 import { resolveCurrentOrgContext } from '@/lib/intelligence-v3/current-org'
 import { resolveTimezoneFromLocation } from '@/lib/timezone/resolve'
 import {
   applyRevenueStrategyToOutreach,
   buildRevenueStrategy,
+  describeMessagingPolicy,
   mapSignalsToLegacyType,
-  shouldWriteMessage,
   sourceFromCanonical,
   toUiSnapshot,
   type MessagingPolicy,
@@ -55,19 +60,65 @@ function isPitchingPolicy(policy: MessagingPolicy): boolean {
 }
 
 /**
- * Map V3 action to revenue-strategy MessagingPolicy.
- * V3 actions are richer than V2 verdicts — collapse to policy for gating.
+ * Project the ONE recommended action onto the connection-channel messaging
+ * policy and the legacy ContactAction the prospect page renders. The action
+ * is decided by deriveRecommendedAction; this only relabels it.
  */
-function mapV3ActionToMessagingPolicy(v3Action: string): MessagingPolicy {
-  switch (v3Action) {
-    case 'CONTACT_NOW': return 'CONNECT_WITH_NOTE'
-    case 'CONNECT_WITH_NOTE': return 'CONNECT_WITH_NOTE'
+function messagingPolicyFor(action: RecommendedAction): MessagingPolicy {
+  switch (action) {
+    case 'CONTACT_NOW':
+    case 'CONNECT_WITH_NOTE':
+    case 'REPLY_NOW':
+    case 'FOLLOW_UP':
+      return 'CONNECT_WITH_NOTE'
     case 'CONNECT_WITHOUT_NOTE': return 'CONNECT_WITHOUT_NOTE'
     case 'OBSERVE': return 'OBSERVE'
-    case 'WAIT': return 'RESEARCH_MORE'
-    case 'HUMAN_REVIEW': return 'SKIP'
-    case 'SKIP': return 'SKIP'
-    default: return 'SKIP'
+    case 'RESEARCH_MORE':
+    case 'WAIT':
+    case 'DEFER':
+    case 'REFER':
+    case 'ASK_FOR_HELP':
+      return 'RESEARCH_MORE'
+    case 'CLOSE':
+    default:
+      return 'SKIP'
+  }
+}
+
+function contactActionFor(action: RecommendedAction): 'CONTACT_NOW' | 'CONNECT_OR_OBSERVE' | 'RESEARCH_MORE' | 'SKIP' {
+  switch (action) {
+    case 'CONTACT_NOW':
+    case 'REPLY_NOW':
+    case 'FOLLOW_UP':
+      return 'CONTACT_NOW'
+    case 'CONNECT_WITH_NOTE':
+    case 'CONNECT_WITHOUT_NOTE':
+    case 'OBSERVE':
+      return 'CONNECT_OR_OBSERVE'
+    case 'RESEARCH_MORE':
+    case 'WAIT':
+    case 'DEFER':
+    case 'REFER':
+    case 'ASK_FOR_HELP':
+      return 'RESEARCH_MORE'
+    case 'CLOSE':
+    default:
+      return 'SKIP'
+  }
+}
+
+function fitLabelFor(level: string | null | undefined): 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN' {
+  switch (level) {
+    case 'EXCELLENT':
+    case 'STRONG':
+    case 'HIGH':
+      return 'HIGH'
+    case 'MEDIUM': return 'MEDIUM'
+    case 'WEAK':
+    case 'POOR':
+    case 'LOW':
+      return 'LOW'
+    default: return 'UNKNOWN'
   }
 }
 
@@ -103,7 +154,9 @@ const analyzeCache = new Map<string, { data: Record<string, unknown>; ts: number
 const CACHE_TTL_MS = 5 * 60 * 1000
 
 function cacheKey(rawText: string, profileId: string | null, generateNote: boolean = false): string {
-  return `${BUYER_INTENT_VERSION}:${rawText.slice(0, 200).toLowerCase().replace(/\s+/g, ' ').trim()}:${rawText.length}:${profileId ?? ''}:${generateNote ? 'note' : 'analyze'}`
+  // Every opportunity version is in the key so a deploy never serves a
+  // decision computed under older scoring rules.
+  return `${opportunityVersionTag()}:${rawText.slice(0, 200).toLowerCase().replace(/\s+/g, ' ').trim()}:${rawText.length}:${profileId ?? ''}:${generateNote ? 'note' : 'analyze'}`
 }
 
 // Periodic cache cleanup to prevent memory leaks
@@ -346,65 +399,47 @@ export async function POST(request: Request) {
       ?? resolveBuyerIntentFromSource(rawText)
     ;(loop as { intent: string }).intent = buyerIntent.buyerIntentLevel
 
-    const v3Action = v3Packet ? (v3Packet as { action: string }).action : null
-    const v3MessageEligible = v3Packet ? (v3Packet as { messageEligible: boolean }).messageEligible : null
+    // The ONE recommended action. The packet already carries the cold
+    // decision from deriveRecommendedAction (opportunity + confidence); the
+    // revenue strategy only supplies the message job and channel copy.
+    const packet = v3Packet as V3LeadDecisionPacket | null
+    const recommended: DeriveActionOutput | null = packet?.recommendedAction ?? null
+    const v3Action = recommended?.action ?? (packet ? packet.action : null)
+    const v3MessageEligible = recommended?.messageEligible ?? (packet ? packet.messageEligible : null)
 
-    if (V3_CANONICAL && v3Packet) {
-      // V3 is the single source of truth for MOST display fields, but the
-      // revenue strategy's messageRecommended can override for connection
-      // notes to founders/builders (high commercial potential, no explicit
-      // buyer request). The revenue strategy has channel context that V3 lacks.
-      const v3Fit = (v3Packet as { decision?: { fit?: string } })?.decision?.fit || 'MEDIUM'
-      const v3Confidence = (v3Packet as { confidence?: number })?.confidence || 0.5
-      const isConnectionNote = revenue.messagingPolicy === 'CONNECT_WITH_NOTE'
-        || (revenue.contact.action === 'CONNECT_OR_OBSERVE' && revenue.contact.messageRecommended)
+    if (V3_CANONICAL && packet && recommended) {
+      ;(loop as { fit: string }).fit = fitLabelFor(packet.resolved?.fit ?? packet.decision.fit)
+      ;(loop as { confidence: string }).confidence = packet.confidenceDetail?.label ?? 'LOW'
+      ;(loop as { act: string }).act = contactActionFor(recommended.action)
+      ;(loop as { messageRecommended: boolean }).messageRecommended = recommended.messageEligible
+      const policy = messagingPolicyFor(recommended.action)
+      ;(loop as { messagingPolicy: string }).messagingPolicy = policy
+      ;(loop as { messagingPolicyLabel: string }).messagingPolicyLabel = describeMessagingPolicy(policy)
 
-      ;(loop as { fit: string }).fit = v3Fit
-      ;(loop as { confidence: string }).confidence = v3Confidence > 0.6 ? 'HIGH' : v3Confidence > 0.3 ? 'MEDIUM' : 'LOW'
-
-      // V3 lacks channel context, so its OBSERVE action shouldn't block
-      // relationship-building connection notes.
-      if (isConnectionNote && revenue.contact.messageRecommended && v3MessageEligible === false) {
-        ;(loop as { act: string }).act = 'CONNECT_OR_OBSERVE'
-        ;(loop as { messageRecommended: boolean }).messageRecommended = true
-        ;(loop as { messagingPolicy: string }).messagingPolicy = 'CONNECT_WITH_NOTE'
-      } else {
-        ;(loop as { act: string }).act = v3Action!
-        ;(loop as { messageRecommended: boolean }).messageRecommended = v3MessageEligible!
-        ;(loop as { messagingPolicy: string }).messagingPolicy = mapV3ActionToMessagingPolicy(v3Action!)
-      }
-
-      // V3 overrides messageRecommended but NOT messageJob — sync them so the
-      // draft route does not throw STRATEGY_REQUIRED when V3 says "eligible".
-      if (v3MessageEligible === true) {
-        const v3Channel = 'connection'
-        if (buyerIntent.verifiedHiringNeed) {
-          ;(loop as { messageJob: string }).messageJob = 'TEST_DELIVERY_MODEL'
-        } else {
-          ;(loop as { messageJob: string }).messageJob = 'EARN_CONNECTION'
-        }
+      // Message job: a verified request is a scope conversation; a
+      // relationship touch earns the connection first.
+      if (recommended.messageEligible) {
+        ;(loop as { messageJob: string }).messageJob = buyerIntent.verifiedBuyerRequest
+          ? 'UNDERSTAND_SCOPE'
+          : buyerIntent.verifiedHiringNeed ? 'TEST_DELIVERY_MODEL' : 'EARN_CONNECTION'
         revenue.messageJob = loop.messageJob as typeof revenue.messageJob
-      }
-
-      // Override V2 text with V3 reasoning
-      const v3Reasons = (v3Packet as { reasons?: string[] })?.reasons || []
-      const v3WatchOut = (v3Packet as { watchOut?: string[] })?.watchOut || []
-      const v3Latent = (v3Packet as { latentPotential?: string | null })?.latentPotential
-      const v3LatentSignals = (v3Packet as { latentSignals?: string[] })?.latentSignals || []
-
-      if (v3Latent) {
-        ;(loop as { why: string }).why = `Current intent: UNKNOWN. Latent commercial potential: ${v3Latent}. ${v3LatentSignals.join(', ')}`
-        ;(loop as { nextAction: string }).nextAction = `${v3Latent} latent potential detected. ${v3Action === 'CONNECT_WITHOUT_NOTE' ? 'Send a connection request — no pitch.' : v3Action === 'OBSERVE' ? 'Add to observation list.' : 'No outreach recommended.'}`
-      } else if (v3Reasons.length > 0) {
-        ;(loop as { why: string }).why = v3Reasons.join('. ')
-      }
-
-      if (v3WatchOut.length > 0) {
-        ;(loop as { reason: string }).reason = v3WatchOut.join('. ')
-      }
-
-      if (v3MessageEligible === true) {
         revenue.contact.messageRecommended = true
+      } else {
+        ;(loop as { messageJob: string | null }).messageJob = null
+        revenue.contact.messageRecommended = false
+      }
+
+      const cp = packet.resolved?.commercialPotential ?? packet.latentPotential ?? null
+      const why = [
+        `Intent: ${buyerIntent.buyerIntentLevel}${buyerIntent.verifiedBuyerRequest ? ' (verified request)' : ''}.`,
+        cp ? `Commercial potential: ${cp.toLowerCase().replace('_', ' ')}.` : null,
+        packet.reasons.length > 0 ? packet.reasons.slice(0, 3).join('. ') + '.' : null,
+      ].filter(Boolean).join(' ')
+      ;(loop as { why: string }).why = why
+      ;(loop as { nextAction: string }).nextAction = recommended.reason
+      ;(loop as { noMessageReason: string | null }).noMessageReason = recommended.messageEligible ? null : recommended.reason
+      if (packet.watchOut.length > 0) {
+        ;(loop as { reason: string }).reason = packet.watchOut.join('. ')
       }
     }
 
@@ -513,14 +548,23 @@ export async function POST(request: Request) {
         repairAttempted: canonicalResult.repairAttempted,
         repairImproved: canonicalResult.repairImproved,
         reused: canonicalResult.reused,
+        // Canonical decision context
+        recommendedAction: recommended,
+        versions: packet?.versions ?? null,
+        resolved: packet?.resolved ?? null,
+        confidenceDetail: packet?.confidenceDetail ?? null,
+        rejectedSignals: packet?.sourceFacts?.rejectedSignals ?? [],
+        decisionRunId: packet?.decisionRunId ?? null,
+        senderRouting: null,
+        routingRecommendation: null,
         // V3 telemetry
         decisionVersion: V3_CANONICAL ? 'decision_v3' : 'relay_qualification_v2',
-        scoreVersion: V3_CANONICAL ? 'score_v3' : (canonical as CanonicalProspectIntelligence).scoreVersion,
-        decisionProvider: V3_CANONICAL ? (v3Packet as { decisionProvider?: string })?.decisionProvider ?? 'openai' : undefined,
-        decisionModel: V3_CANONICAL ? (v3Packet as { decisionModel?: string })?.decisionModel : undefined,
-        selectedEpisodeId: V3_CANONICAL ? (v3Packet as { selectedEpisodeId?: string | null })?.selectedEpisodeId : undefined,
-        v3Action: V3_CANONICAL ? (v3Packet as { action: string }).action : undefined,
-        messageEligible: V3_CANONICAL ? (v3Packet as { messageEligible: boolean }).messageEligible : undefined,
+        scoreVersion: V3_CANONICAL ? (packet?.scoreVersion ?? 'score_v3') : (canonical as CanonicalProspectIntelligence).scoreVersion,
+        decisionProvider: V3_CANONICAL ? packet?.decisionProvider ?? 'openai' : undefined,
+        decisionModel: V3_CANONICAL ? packet?.decisionModel : undefined,
+        selectedEpisodeId: V3_CANONICAL ? packet?.selectedEpisodeId : undefined,
+        v3Action: V3_CANONICAL ? v3Action ?? undefined : undefined,
+        messageEligible: V3_CANONICAL ? v3MessageEligible ?? undefined : undefined,
       })
       return
     }
@@ -541,108 +585,100 @@ export async function POST(request: Request) {
       // Profiles/ephemeral — continue without them
     }
 
-    // Score each assigned profile and pick the best match
+    // Tags still feed proof-card matching for the note writer.
     const tagsForMatching = [
       ...canonical.intelligence.content.topics,
       ...canonical.intelligence.content.technicalSignals,
       ...(canonical.intelligence.company.industry ? [canonical.intelligence.company.industry] : []),
     ]
 
-    // Channel authorization (Bug 5a): the recommended channel here is a
-    // LinkedIn connection note. A Revenue Identity whose platform is
-    // 'upwork' is not authorized to send a LinkedIn connection request no
-    // matter how strong its technical-skill/proof match score is — sender
-    // selection must never pick a channel-incompatible identity just
-    // because it scores well on content relevance. Filter to
-    // channel-authorized profiles BEFORE ranking by proof-match score.
+    // ONE sender ranking (rankSendersForLead through routing-context) — the
+    // same engine and inputs the lead page and the admin routing panel use.
+    // Channel authorization: the recommended channel is a LinkedIn
+    // connection note, so only LinkedIn profiles are eligible senders.
     const RECOMMENDED_CHANNEL_PLATFORM: Profile['platform'] = 'linkedin'
     const channelAuthorizedProfiles = profiles.filter((p) => p.platform === RECOMMENDED_CHANNEL_PLATFORM)
+    const profileById = new Map(profiles.map((p) => [p.id, p]))
 
-    const profileMatches: Array<{ profile: Profile; matchedProof: MatchedProof[]; totalScore: number }> = []
-    for (const profile of channelAuthorizedProfiles) {
-      const intelligence = buildProfileIntelligence(profile, [])
-      const matched = matchProofToLead(intelligence, tagsForMatching, 3)
-      const totalScore = matched.reduce((s, m) => s + m.relevanceScore, 0)
-      profileMatches.push({ profile, matchedProof: matched, totalScore })
-    }
-    profileMatches.sort((a, b) => b.totalScore - a.totalScore)
-
-    const explicitMatch = explicitProfileId
-      ? profileMatches.find((pm) => pm.profile.id === explicitProfileId) ?? null
-      : null
-    const bestMatch = explicitMatch ?? profileMatches[0] ?? null
-    const bestSender = bestMatch?.profile ?? null
-    const bestSenderProof = bestMatch?.matchedProof ?? []
-
-    // V3 Profile Match: evaluate opportunity quality independent of assigned profile
-    let v3ProfileMatch: {
-      currentProfileId: string | null
-      currentScore: number
-      bestProfileId: string | null
-      bestScore: number
-      bestProfileName: string | null
-      improvement: number
-      matches: Array<{ profileId: string; identityName: string; score: number; reason: string }>
-    } | null = null
-
-    if (V3_CANONICAL && v3Packet && profiles.length > 0) {
-      const v3Episodes = (v3Packet as { episodes?: Array<Record<string, unknown>> }).episodes || []
-      const allCaps = new Set<string>()
-      for (const ep of v3Episodes) {
-        const caps = ep.requestedCapabilities as string[] || []
-        caps.forEach(c => allCaps.add(c))
-      }
-
-      if (allCaps.size > 0) {
-        const { rankProfilesForOpportunity } = await import('@/lib/profile-match')
-        const ranked = rankProfilesForOpportunity(
-          { opportunityCapabilities: [...allCaps], opportunityIndustries: [], opportunityType: 'lead' },
-          profiles.map(p => ({
-            profileId: p.id,
-            identityName: p.displayName || p.fullName || p.label || 'Unknown',
-            skills: [...(p.primarySkills || []), ...(p.secondarySkills || [])],
-            technologies: p.technologies || [],
-            expertise: p.serviceCapabilities || [],
-            industries: p.industries || [],
-            allowedClaims: p.differentiators || [],
-          })),
+    let senderRouting: RoutingResult | null = null
+    try {
+      const auth = await getAuthContext()
+      if (auth) {
+        const senders = await loadSenderProfiles(createServiceSupabase(), auth.orgId, auth.repId)
+        senderRouting = routeLead(
+          { company: extracted.company, contactName: extracted.name, contactTitle: extracted.title, rawInput: rawText, senderProfileId: explicitProfileId },
+          packet,
+          senders,
+          RECOMMENDED_CHANNEL_PLATFORM,
         )
+      }
+    } catch (err) {
+      console.warn('[prospect/analyze] sender routing skipped:', err instanceof Error ? err.message : err)
+    }
 
-        const currentProfile = ranked.find(r => r.profileId === bestSender?.id) || null
-        const bestProfile = ranked[0] || null
+    // Best sender = the top-ranked sender this rep can actually use (or the
+    // explicitly requested one). Falls back to the first LinkedIn profile
+    // only when routing was unavailable.
+    const accessibleRanked = (senderRouting?.rankings ?? []).filter((r) => r.accessibleToRep && profileById.has(r.senderId))
+    const explicitProfile = explicitProfileId ? channelAuthorizedProfiles.find((p) => p.id === explicitProfileId) ?? null : null
+    const bestSender: Profile | null = explicitProfile
+      ?? (accessibleRanked[0] ? profileById.get(accessibleRanked[0].senderId) ?? null : null)
+      ?? channelAuthorizedProfiles[0]
+      ?? null
+    const bestSenderProof: MatchedProof[] = bestSender
+      ? matchProofToLead(buildProfileIntelligence(bestSender, []), tagsForMatching, 3)
+      : []
 
-        v3ProfileMatch = {
-          currentProfileId: bestSender?.id || null,
-          currentScore: currentProfile?.matchScore || 0,
-          bestProfileId: bestProfile?.profileId || null,
-          bestScore: bestProfile?.matchScore || 0,
-          bestProfileName: bestProfile?.identityName || null,
-          improvement: bestProfile && currentProfile ? bestProfile.matchScore - currentProfile.matchScore : 0,
-          matches: ranked.slice(0, 5).map(r => ({
-            profileId: r.profileId,
-            identityName: r.identityName,
-            score: r.matchScore,
-            reason: r.reason,
-          })),
+    // Routing mismatch: a sender the rep does not hold ranks clearly above
+    // the rep's best → surface as a suggestion with who holds it. Same
+    // threshold as the lead page and the admin panel.
+    let senderSuggestion: SenderSuggestion | null = null
+    if (senderRouting) {
+      const current = bestSender ? senderRouting.rankings.find((r) => r.senderId === bestSender.id) ?? null : null
+      const top = senderRouting.rankings.find((r) => !r.accessibleToRep) ?? null
+      const currentMatch = current?.profileMatch ?? 0
+      if (top && top.profileMatch - currentMatch >= ROUTING_MISMATCH_DELTA) {
+        senderSuggestion = {
+          profileId: top.senderId,
+          name: top.name,
+          role: top.role,
+          platform: top.platform,
+          score: top.profileMatch,
+          currentBestScore: currentMatch,
+          matchedTerms: top.reasons,
+          topProof: top.primaryProof,
+          holders: top.holders,
+          reason: `${top.name ?? 'Another profile'} matches this lead at ${top.profileMatch}% vs your best ${currentMatch}% (${top.reasons[0] ?? 'stronger proof'}). Ask ${top.holders.length > 0 ? top.holders.join(', ') : 'an admin'} to send it, or ask for access.`,
         }
       }
     }
 
-    // Org-wide: is there a profile this rep doesn't hold with clearly stronger
-    // proof for this lead? Read-only suggestion; never blocks analysis.
-    let senderSuggestion: SenderSuggestion | null = null
-    try {
-      const auth = await getAuthContext()
-      if (auth) {
-        const candidates = await loadSenderCandidates(createServiceSupabase(), auth.orgId, auth.repId)
-        senderSuggestion = pickSuggestion(candidates, [
-          ...tagsForMatching,
-          ...(extracted.title ? [extracted.title] : []),
-        ], { platform: RECOMMENDED_CHANNEL_PLATFORM, currentProfileId: bestSender?.id ?? null })
-      }
-    } catch (err) {
-      console.warn('[prospect/analyze] sender suggestion skipped:', err instanceof Error ? err.message : err)
-    }
+    // Sender overlay on the recommended action (REFER / ASSIGN / ASK_FOR_HELP).
+    const routingOverlay = recommended && senderRouting
+      ? deriveRecommendedAction({
+          opportunity: {
+            score: packet!.score,
+            qualification: packet!.qualification,
+            buyerIntentLevel: buyerIntent.buyerIntentLevel,
+            verifiedBuyerRequest: buyerIntent.verifiedBuyerRequest,
+            relationshipRole: buyerIntent.relationshipRole,
+            access: packet!.resolved?.access ?? 'CONNECTION',
+            buyerTiming: packet!.resolved?.buyerTiming ?? 'NONE',
+            activityRecency: packet!.resolved?.activityRecency ?? 'UNKNOWN',
+            commercialPotential: packet!.resolved?.commercialPotential ?? 'LOW',
+            episodeClosed: false,
+          },
+          confidence: { label: packet!.confidenceDetail?.label ?? 'LOW', researchMore: packet!.confidenceDetail?.researchMore ?? false },
+          sender: {
+            currentSenderMatch: bestSender ? senderRouting.rankings.find((r) => r.senderId === bestSender.id)?.profileMatch ?? null : null,
+            bestSenderMatch: senderRouting.bestSenderMatch,
+            bestSenderId: senderRouting.bestSenderId,
+            currentSenderId: bestSender?.id ?? null,
+            bestSenderAccessible: senderRouting.rankings[0]?.accessibleToRep ?? false,
+          },
+          channel: 'linkedin',
+        }).routing
+      : null
 
     if (store) {
       try {
@@ -685,7 +721,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (explicitProfileId && !explicitMatch && profiles.length > 0) {
+    if (explicitProfileId && !explicitProfile && profiles.length > 0) {
       emit({ type: 'status', message: 'Requested profile unavailable, using best match.' })
     }
 
@@ -997,15 +1033,22 @@ export async function POST(request: Request) {
       draftFailed,
       demoMode: !hasProvider(),
       senderSuggestion,
-      alternativeSenders: profileMatches
-        .filter((pm) => pm.profile.id !== bestSender?.id)
+      alternativeSenders: accessibleRanked
+        .filter((r) => r.senderId !== bestSender?.id)
         .slice(0, 3)
-        .map((pm) => ({
-          profile: pm.profile,
-          matchScore: pm.totalScore,
-          topProof: pm.matchedProof[0]?.safeClaim ?? null,
+        .map((r) => ({
+          profile: profileById.get(r.senderId)!,
+          matchScore: r.profileMatch,
+          topProof: r.primaryProof,
         })),
-      v3ProfileMatch: V3_CANONICAL ? v3ProfileMatch : undefined,
+      senderRouting,
+      routingRecommendation: routingOverlay,
+      recommendedAction: recommended,
+      versions: packet?.versions ?? null,
+      resolved: packet?.resolved ?? null,
+      confidenceDetail: packet?.confidenceDetail ?? null,
+      rejectedSignals: packet?.sourceFacts?.rejectedSignals ?? [],
+      decisionRunId: packet?.decisionRunId ?? null,
       qualification: evaluateProspectQualification({ rawText, extracted, canonicalQualification: canonical.qualification }),
       gateNotes: canonicalResult.gateNotes,
       repairAttempted: canonicalResult.repairAttempted,
