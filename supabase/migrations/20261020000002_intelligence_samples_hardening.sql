@@ -70,10 +70,35 @@ create unique index if not exists int_samples_upwork_version_uniq
   on intelligence_samples (upwork_job_id, version) where upwork_job_id is not null;
 
 -- ============================================================================
--- RLS
+-- RLS POLICIES
 -- ============================================================================
 
-alter table intelligence_sample_events enable row level security;
+-- Users can access samples in their own organization
+create policy "int_samples_org_read" on intelligence_samples
+  for select using (
+    organization_id = (select organization_id from reps where id = auth.uid() limit 1)
+  );
+
+create policy "int_samples_org_insert" on intelligence_samples
+  for insert with check (
+    organization_id = (select organization_id from reps where id = auth.uid() limit 1)
+  );
+
+create policy "int_samples_org_update" on intelligence_samples
+  for update using (
+    organization_id = (select organization_id from reps where id = auth.uid() limit 1)
+  );
+
+-- Events follow the same org access
+create policy "int_events_org_read" on intelligence_sample_events
+  for select using (
+    sample_id in (select id from intelligence_samples)
+  );
+
+create policy "int_events_org_insert" on intelligence_sample_events
+  for insert with check (
+    sample_id in (select id from intelligence_samples)
+  );
 
 -- ============================================================================
 -- RPC: append event idempotently (no-op if idempotency_key already exists)
