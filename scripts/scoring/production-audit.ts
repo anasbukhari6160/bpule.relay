@@ -72,7 +72,7 @@ interface AuditRow {
   currentSenderMatch: number | null
   bestSenderMatch: number | null
   matchDelta: number | null
-  messages: { sent: number; drafts: number; inbound: number; gateFailures: Array<{ type: string; reasons: string[] }> }
+  messages: { sent: number; drafts: number; inbound: number; edited: number; meanEditDistance: number | null; gateFailures: Array<{ type: string; reasons: string[] }>; classes: Array<'PASS' | 'WEAK' | 'FAIL' | 'FABRICATED'> }
   outcome: { replied: boolean; positive: boolean; meeting: boolean; won: boolean; lost: boolean }
   flags: Flag[]
 }
@@ -104,7 +104,7 @@ async function main() {
   const { data: prospects } = await pq
 
   const leadIds = (leads ?? []).map((l) => l.id as string)
-  const { data: messages } = leadIds.length ? await client.from('messages').select('lead_id, type, direction, draft_text, sent_text, sent_at').in('lead_id', leadIds) : { data: [] }
+  const { data: messages } = leadIds.length ? await client.from('messages').select('lead_id, type, direction, draft_text, sent_text, sent_at, original_draft').in('lead_id', leadIds) : { data: [] }
   const { data: outcomes } = leadIds.length ? await client.from('outcomes').select('lead_id, stage').in('lead_id', leadIds) : { data: [] }
   const msgByLead = new Map<string, Array<Record<string, unknown>>>()
   for (const m of (messages ?? []) as Array<Record<string, unknown>>) { const k = m.lead_id as string; msgByLead.set(k, [...(msgByLead.get(k) ?? []), m]) }
@@ -136,7 +136,7 @@ async function main() {
       storedAction: packet?.recommendedAction?.action ?? packet?.action ?? null, storedVersion: packet?.versions?.scoringVersion ?? packet?.scoreVersion ?? null,
       newScore: null, newQualification: null, newIntent: null, newRole: null, newIndustry: null, newTiming: null, newAccess: null, newAction: null,
       currentSenderId: (r.sender_profile_id as string) ?? null, bestSenderId: null, currentSenderMatch: null, bestSenderMatch: null, matchDelta: null,
-      messages: { sent: 0, drafts: 0, inbound: 0, gateFailures: [] },
+      messages: { sent: 0, drafts: 0, inbound: 0, edited: 0, meanEditDistance: null, gateFailures: [], classes: [] },
       outcome: { replied: false, positive: false, meeting: false, won: r.status === 'won', lost: r.status === 'lost' || r.status === 'dead' || r.status === 'no' },
       flags: [],
     }
@@ -203,7 +203,16 @@ async function main() {
       try {
         const gate = evaluateMessage(text, null, 'linkedin', stage as never)
         if (!gate.passed) { row.messages.gateFailures.push({ type, reasons: gate.reasons.slice(0, 4) }); flags.add('BAD_MESSAGE') }
+        // Phase 13 classes: FABRICATED (placeholders / unsupported values), FAIL (gate), WEAK (low gate score), PASS.
+        const fabricated = gate.reasons.some((r) => /placeholder|empty value|unsupported|invented|fabricat/i.test(r))
+        row.messages.classes.push(fabricated ? 'FABRICATED' : !gate.passed ? 'FAIL' : gate.score < 80 ? 'WEAK' : 'PASS')
       } catch { /* gate unavailable for this stage */ }
+      // Phase 14 edit delta: what the rep changed before sending.
+      if (m.sent_text && typeof m.original_draft === 'string' && m.original_draft.trim() && m.original_draft.trim() !== String(m.sent_text).trim()) {
+        row.messages.edited++
+        const d = editDistance(String(m.original_draft).slice(0, 600), String(m.sent_text).slice(0, 600))
+        row.messages.meanEditDistance = row.messages.meanEditDistance === null ? d : (row.messages.meanEditDistance * (row.messages.edited - 1) + d) / row.messages.edited
+      }
     }
     const stages = outByLead.get(id) ?? new Set<string>()
     if (stages.has('replied') || r.status === 'replied') row.outcome.replied = true
@@ -217,6 +226,15 @@ async function main() {
   report(rows)
   writeFileSync(out, JSON.stringify({ generatedAt: new Date().toISOString(), scoringVersion: SCORING_VERSION, rows }, null, 1))
   console.log(`\nRow-level report written to ${out} (ids, scores, flags; no text).`)
+}
+
+function editDistance(a: string, b: string): number {
+  const dp: number[] = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0]; dp[0] = i
+    for (let j = 1; j <= b.length; j++) { const tmp = dp[j]; dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = tmp }
+  }
+  return dp[b.length]
 }
 
 function report(rows: AuditRow[]) {
@@ -260,6 +278,18 @@ function report(rows: AuditRow[]) {
   const good = withMsgs.filter((r) => !r.flags.includes('BAD_MESSAGE'))
   console.log(`  replied  | message failed gate ${rate(bad, (r) => r.outcome.replied)} | message passed gate ${rate(good, (r) => r.outcome.replied)}`)
 
+  // Phase 13 / 14: message classes, repeated gate reasons, edit deltas (aggregates only).
+  const classes: Record<string, number> = {}
+  const reasons: Record<string, number> = {}
+  let edited = 0, editSum = 0
+  for (const r of rows) {
+    for (const c of r.messages.classes) classes[c] = (classes[c] ?? 0) + 1
+    for (const g of r.messages.gateFailures) for (const re of g.reasons) { const k = re.replace(/\[.*?\]\s*/, '').slice(0, 60); reasons[k] = (reasons[k] ?? 0) + 1 }
+    if (r.messages.edited > 0 && r.messages.meanEditDistance !== null) { edited += r.messages.edited; editSum += r.messages.meanEditDistance * r.messages.edited }
+  }
+  console.log(`\nMESSAGE QUALITY (sent + drafted, gate classes): ${Object.entries(classes).map(([k, v]) => `${k} ${v}`).join(' · ') || 'none'}`)
+  console.log(`repeated gate reasons: ${Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${v}× ${k}`).join(' | ') || 'none'}`)
+  console.log(`HUMAN EDITS: ${edited} sent messages changed from the draft · mean edit distance ${edited ? (editSum / edited).toFixed(0) : '—'} chars (first 600)`)
   const top = [...rows].filter((r) => r.flags.length).sort((a, b) => b.flags.length - a.flags.length).slice(0, 20)
   console.log(`\nTOP ${top.length} FLAGGED ROWS (ids only)`)
   for (const r of top) console.log(`  ${r.kind} ${r.id.slice(0, 8)}  stored ${r.storedScore ?? '—'}→${r.newScore ?? '—'}  ${r.flags.join(',')}`)

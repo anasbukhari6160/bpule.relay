@@ -1,0 +1,1713 @@
+{
+  "generatedAt": "2026-10-20T22:21:09.256Z",
+  "productionVersion": "relay_decision_v3.3.0",
+  "rows": {
+    "total": 268,
+    "distinct": 156,
+    "train": 79,
+    "validation": 41,
+    "locked": 36,
+    "attackClones": 112
+  },
+  "engines": {
+    "v3": {
+      "metrics": {
+        "train": {
+          "n": 79,
+          "spearman": 0.866,
+          "pairwise": {
+            "accuracy": 0.988,
+            "pairs": 905
+          },
+          "ndcg10": 0.948,
+          "topDecile": {
+            "precision": 0.625,
+            "k": 8
+          },
+          "rangeMae": {
+            "mae": 0.9,
+            "inRange": 0.911
+          },
+          "ordinal": {
+            "exact": 0.5443037974683544,
+            "withinOne": 0.9873417721518988,
+            "n": 79
+          },
+          "reliability": [
+            {
+              "bucket": "10-19",
+              "n": 1,
+              "meanLabel": 25,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 8,
+              "meanLabel": 19,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 13,
+              "meanLabel": 30,
+              "inRange": 1
+            },
+            {
+              "bucket": "40-49",
+              "n": 9,
+              "meanLabel": 22,
+              "inRange": 0.56
+            },
+            {
+              "bucket": "50-59",
+              "n": 20,
+              "meanLabel": 47,
+              "inRange": 0.85
+            },
+            {
+              "bucket": "60-69",
+              "n": 8,
+              "meanLabel": 54,
+              "inRange": 1
+            },
+            {
+              "bucket": "70-79",
+              "n": 7,
+              "meanLabel": 77,
+              "inRange": 1
+            },
+            {
+              "bucket": "80-89",
+              "n": 13,
+              "meanLabel": 80,
+              "inRange": 1
+            }
+          ]
+        },
+        "validation": {
+          "n": 41,
+          "spearman": 0.916,
+          "pairwise": {
+            "accuracy": 0.996,
+            "pairs": 232
+          },
+          "ndcg10": 0.938,
+          "topDecile": {
+            "precision": 0.25,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 0.2,
+            "inRange": 0.951
+          },
+          "ordinal": {
+            "exact": 0.7317073170731707,
+            "withinOne": 1,
+            "n": 41
+          },
+          "reliability": [
+            {
+              "bucket": "20-29",
+              "n": 5,
+              "meanLabel": 17,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 6,
+              "meanLabel": 26,
+              "inRange": 1
+            },
+            {
+              "bucket": "40-49",
+              "n": 3,
+              "meanLabel": 55,
+              "inRange": 0.67
+            },
+            {
+              "bucket": "50-59",
+              "n": 6,
+              "meanLabel": 45,
+              "inRange": 1
+            },
+            {
+              "bucket": "60-69",
+              "n": 6,
+              "meanLabel": 61,
+              "inRange": 0.83
+            },
+            {
+              "bucket": "70-79",
+              "n": 8,
+              "meanLabel": 72,
+              "inRange": 1
+            },
+            {
+              "bucket": "80-89",
+              "n": 7,
+              "meanLabel": 80,
+              "inRange": 1
+            }
+          ]
+        },
+        "locked": {
+          "n": 36,
+          "spearman": 0.892,
+          "pairwise": {
+            "accuracy": 0.995,
+            "pairs": 192
+          },
+          "ndcg10": 0.956,
+          "topDecile": {
+            "precision": 0.75,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 0.4,
+            "inRange": 0.972
+          },
+          "ordinal": {
+            "exact": 0.5833333333333334,
+            "withinOne": 1,
+            "n": 36
+          },
+          "reliability": [
+            {
+              "bucket": "20-29",
+              "n": 7,
+              "meanLabel": 21,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 5,
+              "meanLabel": 23,
+              "inRange": 1
+            },
+            {
+              "bucket": "40-49",
+              "n": 4,
+              "meanLabel": 32,
+              "inRange": 1
+            },
+            {
+              "bucket": "50-59",
+              "n": 6,
+              "meanLabel": 50,
+              "inRange": 1
+            },
+            {
+              "bucket": "60-69",
+              "n": 6,
+              "meanLabel": 51,
+              "inRange": 0.83
+            },
+            {
+              "bucket": "70-79",
+              "n": 4,
+              "meanLabel": 69,
+              "inRange": 1
+            },
+            {
+              "bucket": "80-89",
+              "n": 4,
+              "meanLabel": 78,
+              "inRange": 1
+            }
+          ]
+        }
+      },
+      "ordering": [
+        {
+          "rule": "explicit buyer > active founder (unknown intent)",
+          "pass": true,
+          "detail": "77.7 vs 52.6"
+        },
+        {
+          "rule": "strong-fit founder > generic founder",
+          "pass": true,
+          "detail": "65.7 vs 39.0"
+        },
+        {
+          "rule": "external development need > employee hiring",
+          "pass": true,
+          "detail": "78.4 vs 53.3"
+        },
+        {
+          "rule": "founder > software-services seller",
+          "pass": true,
+          "detail": "55.4 vs 45.1"
+        },
+        {
+          "rule": "seller > recruiter/candidate",
+          "pass": true,
+          "detail": "42.1 vs 30.0"
+        }
+      ],
+      "invariance": {
+        "clones": 112,
+        "maxDelta": 32,
+        "violations": 22,
+        "median": 60
+      },
+      "qualificationHistogram": {
+        "STRONG": 34,
+        "WORTH_PURSUING": 39,
+        "LOW": 36,
+        "MAYBE": 47
+      },
+      "classification": {
+        "buyer": {
+          "precision": 0.98,
+          "recall": 0.923,
+          "f1": 0.95,
+          "tp": 48,
+          "fp": 1,
+          "fn": 4
+        },
+        "role": {
+          "macroF1": 0.982,
+          "perClass": {
+            "BUYER": 0.947,
+            "BUYER_AND_SELLER": 1,
+            "RECRUITER": 1,
+            "CANDIDATE": 1,
+            "SELLER": 0.963
+          },
+          "accuracy": 0.928
+        },
+        "action": {
+          "accuracy": 1,
+          "n": 71
+        },
+        "confidence": {
+          "ece": 0.457,
+          "reliability": [
+            {
+              "bin": "0.0-0.1",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.1-0.2",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.2-0.3",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.3-0.4",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.4-0.5",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.5-0.6",
+              "n": 141,
+              "meanP": 0.5,
+              "rate": 0.96
+            },
+            {
+              "bin": "0.6-0.7",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.7-0.8",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.8-0.9",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.9-1.0",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            }
+          ]
+        }
+      }
+    },
+    "calibrated_v4": {
+      "metrics": {
+        "train": {
+          "n": 79,
+          "spearman": 0.857,
+          "pairwise": {
+            "accuracy": 0.987,
+            "pairs": 905
+          },
+          "ndcg10": 0.925,
+          "topDecile": {
+            "precision": 0.5,
+            "k": 8
+          },
+          "rangeMae": {
+            "mae": 1,
+            "inRange": 0.886
+          },
+          "ordinal": {
+            "exact": 0.6582278481012658,
+            "withinOne": 0.9873417721518988,
+            "n": 79
+          },
+          "reliability": [
+            {
+              "bucket": "0-9",
+              "n": 1,
+              "meanLabel": 15,
+              "inRange": 1
+            },
+            {
+              "bucket": "10-19",
+              "n": 7,
+              "meanLabel": 20,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 10,
+              "meanLabel": 27,
+              "inRange": 0.9
+            },
+            {
+              "bucket": "30-39",
+              "n": 14,
+              "meanLabel": 32,
+              "inRange": 0.71
+            },
+            {
+              "bucket": "40-49",
+              "n": 18,
+              "meanLabel": 44,
+              "inRange": 0.89
+            },
+            {
+              "bucket": "50-59",
+              "n": 5,
+              "meanLabel": 46,
+              "inRange": 1
+            },
+            {
+              "bucket": "60-69",
+              "n": 6,
+              "meanLabel": 66,
+              "inRange": 0.83
+            },
+            {
+              "bucket": "70-79",
+              "n": 13,
+              "meanLabel": 78,
+              "inRange": 0.92
+            },
+            {
+              "bucket": "80-89",
+              "n": 5,
+              "meanLabel": 82,
+              "inRange": 1
+            }
+          ]
+        },
+        "validation": {
+          "n": 41,
+          "spearman": 0.892,
+          "pairwise": {
+            "accuracy": 0.974,
+            "pairs": 232
+          },
+          "ndcg10": 0.944,
+          "topDecile": {
+            "precision": 0.5,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 1.4,
+            "inRange": 0.829
+          },
+          "ordinal": {
+            "exact": 0.6829268292682927,
+            "withinOne": 0.926829268292683,
+            "n": 41
+          },
+          "reliability": [
+            {
+              "bucket": "10-19",
+              "n": 5,
+              "meanLabel": 17,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 4,
+              "meanLabel": 34,
+              "inRange": 0.75
+            },
+            {
+              "bucket": "30-39",
+              "n": 5,
+              "meanLabel": 37,
+              "inRange": 0.4
+            },
+            {
+              "bucket": "40-49",
+              "n": 8,
+              "meanLabel": 49,
+              "inRange": 0.88
+            },
+            {
+              "bucket": "50-59",
+              "n": 4,
+              "meanLabel": 58,
+              "inRange": 0.75
+            },
+            {
+              "bucket": "60-69",
+              "n": 4,
+              "meanLabel": 69,
+              "inRange": 1
+            },
+            {
+              "bucket": "70-79",
+              "n": 11,
+              "meanLabel": 78,
+              "inRange": 0.91
+            }
+          ]
+        },
+        "locked": {
+          "n": 36,
+          "spearman": 0.889,
+          "pairwise": {
+            "accuracy": 0.979,
+            "pairs": 192
+          },
+          "ndcg10": 0.941,
+          "topDecile": {
+            "precision": 0.75,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 0.7,
+            "inRange": 0.889
+          },
+          "ordinal": {
+            "exact": 0.6388888888888888,
+            "withinOne": 0.9722222222222222,
+            "n": 36
+          },
+          "reliability": [
+            {
+              "bucket": "10-19",
+              "n": 10,
+              "meanLabel": 21,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 2,
+              "meanLabel": 25,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 4,
+              "meanLabel": 34,
+              "inRange": 0.75
+            },
+            {
+              "bucket": "40-49",
+              "n": 8,
+              "meanLabel": 52,
+              "inRange": 0.75
+            },
+            {
+              "bucket": "50-59",
+              "n": 2,
+              "meanLabel": 48,
+              "inRange": 0.5
+            },
+            {
+              "bucket": "60-69",
+              "n": 3,
+              "meanLabel": 50,
+              "inRange": 1
+            },
+            {
+              "bucket": "70-79",
+              "n": 7,
+              "meanLabel": 75,
+              "inRange": 1
+            }
+          ]
+        }
+      },
+      "ordering": [
+        {
+          "rule": "explicit buyer > active founder (unknown intent)",
+          "pass": true,
+          "detail": "72.7 vs 43.5"
+        },
+        {
+          "rule": "strong-fit founder > generic founder",
+          "pass": true,
+          "detail": "52.7 vs 30.0"
+        },
+        {
+          "rule": "external development need > employee hiring",
+          "pass": true,
+          "detail": "72.6 vs 39.2"
+        },
+        {
+          "rule": "founder > software-services seller",
+          "pass": true,
+          "detail": "46.7 vs 39.1"
+        },
+        {
+          "rule": "seller > recruiter/candidate",
+          "pass": true,
+          "detail": "34.8 vs 17.5"
+        }
+      ],
+      "invariance": {
+        "clones": 112,
+        "maxDelta": 31,
+        "violations": 12,
+        "median": 47
+      },
+      "qualificationHistogram": {
+        "STRONG": 24,
+        "WORTH_PURSUING": 28,
+        "MAYBE": 55,
+        "LOW": 42,
+        "SKIP": 7
+      },
+      "classification": {
+        "buyer": {
+          "precision": 0.98,
+          "recall": 0.923,
+          "f1": 0.95,
+          "tp": 48,
+          "fp": 1,
+          "fn": 4
+        },
+        "role": {
+          "macroF1": 0.982,
+          "perClass": {
+            "BUYER": 0.947,
+            "BUYER_AND_SELLER": 1,
+            "RECRUITER": 1,
+            "CANDIDATE": 1,
+            "SELLER": 0.963
+          },
+          "accuracy": 0.928
+        },
+        "action": {
+          "accuracy": 0.944,
+          "n": 71
+        },
+        "confidence": {
+          "ece": 0.32,
+          "reliability": [
+            {
+              "bin": "0.0-0.1",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.1-0.2",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.2-0.3",
+              "n": 2,
+              "meanP": 0.29,
+              "rate": 1
+            },
+            {
+              "bin": "0.3-0.4",
+              "n": 8,
+              "meanP": 0.35,
+              "rate": 0.88
+            },
+            {
+              "bin": "0.4-0.5",
+              "n": 28,
+              "meanP": 0.46,
+              "rate": 0.93
+            },
+            {
+              "bin": "0.5-0.6",
+              "n": 38,
+              "meanP": 0.54,
+              "rate": 0.82
+            },
+            {
+              "bin": "0.6-0.7",
+              "n": 28,
+              "meanP": 0.63,
+              "rate": 0.89
+            },
+            {
+              "bin": "0.7-0.8",
+              "n": 26,
+              "meanP": 0.74,
+              "rate": 1
+            },
+            {
+              "bin": "0.8-0.9",
+              "n": 8,
+              "meanP": 0.84,
+              "rate": 1
+            },
+            {
+              "bin": "0.9-1.0",
+              "n": 3,
+              "meanP": 0.9,
+              "rate": 1
+            }
+          ]
+        }
+      }
+    },
+    "ordinal_logit": {
+      "metrics": {
+        "train": {
+          "n": 79,
+          "spearman": 0.921,
+          "pairwise": {
+            "accuracy": 0.997,
+            "pairs": 905
+          },
+          "ndcg10": 0.938,
+          "topDecile": {
+            "precision": 0.5,
+            "k": 8
+          },
+          "rangeMae": {
+            "mae": 0.4,
+            "inRange": 0.937
+          },
+          "ordinal": {
+            "exact": 0.8734177215189873,
+            "withinOne": 0.9873417721518988,
+            "n": 79
+          },
+          "reliability": [
+            {
+              "bucket": "0-9",
+              "n": 1,
+              "meanLabel": 12,
+              "inRange": 1
+            },
+            {
+              "bucket": "10-19",
+              "n": 3,
+              "meanLabel": 18,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 19,
+              "meanLabel": 24,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 13,
+              "meanLabel": 36,
+              "inRange": 0.77
+            },
+            {
+              "bucket": "40-49",
+              "n": 15,
+              "meanLabel": 46,
+              "inRange": 1
+            },
+            {
+              "bucket": "50-59",
+              "n": 5,
+              "meanLabel": 55,
+              "inRange": 0.8
+            },
+            {
+              "bucket": "60-69",
+              "n": 4,
+              "meanLabel": 66,
+              "inRange": 1
+            },
+            {
+              "bucket": "70-79",
+              "n": 4,
+              "meanLabel": 75,
+              "inRange": 1
+            },
+            {
+              "bucket": "80-89",
+              "n": 7,
+              "meanLabel": 80,
+              "inRange": 1
+            },
+            {
+              "bucket": "90-99",
+              "n": 8,
+              "meanLabel": 81,
+              "inRange": 0.88
+            }
+          ]
+        },
+        "validation": {
+          "n": 41,
+          "spearman": 0.904,
+          "pairwise": {
+            "accuracy": 1,
+            "pairs": 232
+          },
+          "ndcg10": 0.957,
+          "topDecile": {
+            "precision": 0.5,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 0.8,
+            "inRange": 0.854
+          },
+          "ordinal": {
+            "exact": 0.7804878048780488,
+            "withinOne": 0.9512195121951219,
+            "n": 41
+          },
+          "reliability": [
+            {
+              "bucket": "0-9",
+              "n": 1,
+              "meanLabel": 23,
+              "inRange": 1
+            },
+            {
+              "bucket": "10-19",
+              "n": 3,
+              "meanLabel": 16,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 5,
+              "meanLabel": 26,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 7,
+              "meanLabel": 42,
+              "inRange": 0.57
+            },
+            {
+              "bucket": "40-49",
+              "n": 5,
+              "meanLabel": 46,
+              "inRange": 1
+            },
+            {
+              "bucket": "50-59",
+              "n": 2,
+              "meanLabel": 62,
+              "inRange": 0.5
+            },
+            {
+              "bucket": "60-69",
+              "n": 4,
+              "meanLabel": 66,
+              "inRange": 0.75
+            },
+            {
+              "bucket": "70-79",
+              "n": 4,
+              "meanLabel": 66,
+              "inRange": 0.75
+            },
+            {
+              "bucket": "80-89",
+              "n": 3,
+              "meanLabel": 77,
+              "inRange": 1
+            },
+            {
+              "bucket": "90-99",
+              "n": 7,
+              "meanLabel": 81,
+              "inRange": 1
+            }
+          ]
+        },
+        "locked": {
+          "n": 36,
+          "spearman": 0.886,
+          "pairwise": {
+            "accuracy": 0.995,
+            "pairs": 192
+          },
+          "ndcg10": 0.946,
+          "topDecile": {
+            "precision": 0.75,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 0.8,
+            "inRange": 0.778
+          },
+          "ordinal": {
+            "exact": 0.5833333333333334,
+            "withinOne": 0.9722222222222222,
+            "n": 36
+          },
+          "reliability": [
+            {
+              "bucket": "10-19",
+              "n": 5,
+              "meanLabel": 18,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 7,
+              "meanLabel": 24,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 4,
+              "meanLabel": 31,
+              "inRange": 0.75
+            },
+            {
+              "bucket": "40-49",
+              "n": 6,
+              "meanLabel": 54,
+              "inRange": 0.5
+            },
+            {
+              "bucket": "50-59",
+              "n": 5,
+              "meanLabel": 48,
+              "inRange": 0.6
+            },
+            {
+              "bucket": "70-79",
+              "n": 5,
+              "meanLabel": 64,
+              "inRange": 0.6
+            },
+            {
+              "bucket": "80-89",
+              "n": 1,
+              "meanLabel": 71,
+              "inRange": 1
+            },
+            {
+              "bucket": "90-99",
+              "n": 3,
+              "meanLabel": 80,
+              "inRange": 1
+            }
+          ]
+        }
+      },
+      "ordering": [
+        {
+          "rule": "explicit buyer > active founder (unknown intent)",
+          "pass": true,
+          "detail": "82.3 vs 44.1"
+        },
+        {
+          "rule": "strong-fit founder > generic founder",
+          "pass": true,
+          "detail": "56.7 vs 28.8"
+        },
+        {
+          "rule": "external development need > employee hiring",
+          "pass": true,
+          "detail": "75.9 vs 35.7"
+        },
+        {
+          "rule": "founder > software-services seller",
+          "pass": true,
+          "detail": "46.8 vs 31.9"
+        },
+        {
+          "rule": "seller > recruiter/candidate",
+          "pass": true,
+          "detail": "28.8 vs 19.3"
+        }
+      ],
+      "invariance": {
+        "clones": 112,
+        "maxDelta": 49,
+        "violations": 25,
+        "median": 72
+      },
+      "qualificationHistogram": {
+        "STRONG": 41,
+        "WORTH_PURSUING": 14,
+        "MAYBE": 48,
+        "LOW": 50,
+        "SKIP": 3
+      },
+      "classification": {
+        "buyer": {
+          "precision": 0.98,
+          "recall": 0.923,
+          "f1": 0.95,
+          "tp": 48,
+          "fp": 1,
+          "fn": 4
+        },
+        "role": {
+          "macroF1": 0.982,
+          "perClass": {
+            "BUYER": 0.947,
+            "BUYER_AND_SELLER": 1,
+            "RECRUITER": 1,
+            "CANDIDATE": 1,
+            "SELLER": 0.963
+          },
+          "accuracy": 0.928
+        },
+        "action": {
+          "accuracy": 1,
+          "n": 71
+        },
+        "confidence": {
+          "ece": 0.23,
+          "reliability": [
+            {
+              "bin": "0.0-0.1",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.1-0.2",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.2-0.3",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.3-0.4",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.4-0.5",
+              "n": 13,
+              "meanP": 0.44,
+              "rate": 0.92
+            },
+            {
+              "bin": "0.5-0.6",
+              "n": 19,
+              "meanP": 0.55,
+              "rate": 0.74
+            },
+            {
+              "bin": "0.6-0.7",
+              "n": 49,
+              "meanP": 0.66,
+              "rate": 0.94
+            },
+            {
+              "bin": "0.7-0.8",
+              "n": 14,
+              "meanP": 0.77,
+              "rate": 1
+            },
+            {
+              "bin": "0.8-0.9",
+              "n": 24,
+              "meanP": 0.81,
+              "rate": 1
+            },
+            {
+              "bin": "0.9-1.0",
+              "n": 22,
+              "meanP": 0.94,
+              "rate": 1
+            }
+          ]
+        }
+      }
+    },
+    "gbdt_pairwise": {
+      "metrics": {
+        "train": {
+          "n": 79,
+          "spearman": 0.923,
+          "pairwise": {
+            "accuracy": 0.998,
+            "pairs": 905
+          },
+          "ndcg10": 0.9,
+          "topDecile": {
+            "precision": 0.5,
+            "k": 8
+          },
+          "rangeMae": {
+            "mae": 0.3,
+            "inRange": 0.962
+          },
+          "ordinal": {
+            "exact": 0.7848101265822784,
+            "withinOne": 0.9873417721518988,
+            "n": 79
+          },
+          "reliability": [
+            {
+              "bucket": "20-29",
+              "n": 25,
+              "meanLabel": 22,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 8,
+              "meanLabel": 36,
+              "inRange": 0.88
+            },
+            {
+              "bucket": "40-49",
+              "n": 20,
+              "meanLabel": 46,
+              "inRange": 0.95
+            },
+            {
+              "bucket": "50-59",
+              "n": 5,
+              "meanLabel": 56,
+              "inRange": 0.8
+            },
+            {
+              "bucket": "70-79",
+              "n": 15,
+              "meanLabel": 78,
+              "inRange": 1
+            },
+            {
+              "bucket": "80-89",
+              "n": 6,
+              "meanLabel": 81,
+              "inRange": 1
+            }
+          ]
+        },
+        "validation": {
+          "n": 41,
+          "spearman": 0.903,
+          "pairwise": {
+            "accuracy": 0.996,
+            "pairs": 232
+          },
+          "ndcg10": 0.978,
+          "topDecile": {
+            "precision": 0.75,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 1.2,
+            "inRange": 0.878
+          },
+          "ordinal": {
+            "exact": 0.7560975609756098,
+            "withinOne": 0.9512195121951219,
+            "n": 41
+          },
+          "reliability": [
+            {
+              "bucket": "20-29",
+              "n": 8,
+              "meanLabel": 24,
+              "inRange": 0.88
+            },
+            {
+              "bucket": "30-39",
+              "n": 4,
+              "meanLabel": 27,
+              "inRange": 1
+            },
+            {
+              "bucket": "40-49",
+              "n": 12,
+              "meanLabel": 51,
+              "inRange": 0.75
+            },
+            {
+              "bucket": "50-59",
+              "n": 3,
+              "meanLabel": 56,
+              "inRange": 0.67
+            },
+            {
+              "bucket": "70-79",
+              "n": 11,
+              "meanLabel": 77,
+              "inRange": 1
+            },
+            {
+              "bucket": "80-89",
+              "n": 3,
+              "meanLabel": 82,
+              "inRange": 1
+            }
+          ]
+        },
+        "locked": {
+          "n": 36,
+          "spearman": 0.843,
+          "pairwise": {
+            "accuracy": 0.953,
+            "pairs": 192
+          },
+          "ndcg10": 0.861,
+          "topDecile": {
+            "precision": 0.75,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 2.2,
+            "inRange": 0.806
+          },
+          "ordinal": {
+            "exact": 0.6111111111111112,
+            "withinOne": 0.9444444444444444,
+            "n": 36
+          },
+          "reliability": [
+            {
+              "bucket": "20-29",
+              "n": 14,
+              "meanLabel": 24,
+              "inRange": 0.93
+            },
+            {
+              "bucket": "30-39",
+              "n": 2,
+              "meanLabel": 50,
+              "inRange": 0.5
+            },
+            {
+              "bucket": "40-49",
+              "n": 10,
+              "meanLabel": 48,
+              "inRange": 0.7
+            },
+            {
+              "bucket": "50-59",
+              "n": 1,
+              "meanLabel": 45,
+              "inRange": 1
+            },
+            {
+              "bucket": "70-79",
+              "n": 9,
+              "meanLabel": 69,
+              "inRange": 0.78
+            }
+          ]
+        }
+      },
+      "ordering": [
+        {
+          "rule": "explicit buyer > active founder (unknown intent)",
+          "pass": true,
+          "detail": "74.6 vs 41.5"
+        },
+        {
+          "rule": "strong-fit founder > generic founder",
+          "pass": true,
+          "detail": "44.0 vs 32.0"
+        },
+        {
+          "rule": "external development need > employee hiring",
+          "pass": true,
+          "detail": "79.6 vs 36.7"
+        },
+        {
+          "rule": "founder > software-services seller",
+          "pass": true,
+          "detail": "42.3 vs 34.8"
+        },
+        {
+          "rule": "seller > recruiter/candidate",
+          "pass": true,
+          "detail": "28.8 vs 22.3"
+        }
+      ],
+      "invariance": {
+        "clones": 112,
+        "maxDelta": 28,
+        "violations": 21,
+        "median": 56
+      },
+      "qualificationHistogram": {
+        "STRONG": 43,
+        "WORTH_PURSUING": 3,
+        "MAYBE": 51,
+        "LOW": 59
+      },
+      "classification": {
+        "buyer": {
+          "precision": 0.98,
+          "recall": 0.923,
+          "f1": 0.95,
+          "tp": 48,
+          "fp": 1,
+          "fn": 4
+        },
+        "role": {
+          "macroF1": 0.982,
+          "perClass": {
+            "BUYER": 0.947,
+            "BUYER_AND_SELLER": 1,
+            "RECRUITER": 1,
+            "CANDIDATE": 1,
+            "SELLER": 0.963
+          },
+          "accuracy": 0.928
+        },
+        "action": {
+          "accuracy": 0.789,
+          "n": 71
+        },
+        "confidence": {
+          "ece": 0.224,
+          "reliability": [
+            {
+              "bin": "0.0-0.1",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.1-0.2",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.2-0.3",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.3-0.4",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.4-0.5",
+              "n": 2,
+              "meanP": 0.43,
+              "rate": 1
+            },
+            {
+              "bin": "0.5-0.6",
+              "n": 18,
+              "meanP": 0.53,
+              "rate": 0.83
+            },
+            {
+              "bin": "0.6-0.7",
+              "n": 33,
+              "meanP": 0.6,
+              "rate": 0.91
+            },
+            {
+              "bin": "0.7-0.8",
+              "n": 38,
+              "meanP": 0.73,
+              "rate": 0.95
+            },
+            {
+              "bin": "0.8-0.9",
+              "n": 48,
+              "meanP": 0.84,
+              "rate": 0.98
+            },
+            {
+              "bin": "0.9-1.0",
+              "n": 2,
+              "meanP": 0.95,
+              "rate": 1
+            }
+          ]
+        }
+      }
+    },
+    "knn_features": {
+      "metrics": {
+        "train": {
+          "n": 79,
+          "spearman": 0.805,
+          "pairwise": {
+            "accuracy": 0.952,
+            "pairs": 905
+          },
+          "ndcg10": 0.845,
+          "topDecile": {
+            "precision": 0.5,
+            "k": 8
+          },
+          "rangeMae": {
+            "mae": 1.5,
+            "inRange": 0.848
+          },
+          "ordinal": {
+            "exact": 0.7215189873417721,
+            "withinOne": 0.9873417721518988,
+            "n": 79
+          },
+          "reliability": [
+            {
+              "bucket": "20-29",
+              "n": 19,
+              "meanLabel": 28,
+              "inRange": 0.79
+            },
+            {
+              "bucket": "30-39",
+              "n": 13,
+              "meanLabel": 26,
+              "inRange": 0.77
+            },
+            {
+              "bucket": "40-49",
+              "n": 21,
+              "meanLabel": 46,
+              "inRange": 0.95
+            },
+            {
+              "bucket": "50-59",
+              "n": 1,
+              "meanLabel": 18,
+              "inRange": 0
+            },
+            {
+              "bucket": "60-69",
+              "n": 2,
+              "meanLabel": 51,
+              "inRange": 1
+            },
+            {
+              "bucket": "70-79",
+              "n": 10,
+              "meanLabel": 73,
+              "inRange": 0.7
+            },
+            {
+              "bucket": "80-89",
+              "n": 13,
+              "meanLabel": 79,
+              "inRange": 1
+            }
+          ]
+        },
+        "validation": {
+          "n": 41,
+          "spearman": 0.889,
+          "pairwise": {
+            "accuracy": 0.981,
+            "pairs": 232
+          },
+          "ndcg10": 0.944,
+          "topDecile": {
+            "precision": 0.5,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 1.4,
+            "inRange": 0.829
+          },
+          "ordinal": {
+            "exact": 0.7073170731707317,
+            "withinOne": 0.9512195121951219,
+            "n": 41
+          },
+          "reliability": [
+            {
+              "bucket": "10-19",
+              "n": 1,
+              "meanLabel": 17,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 7,
+              "meanLabel": 22,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 6,
+              "meanLabel": 42,
+              "inRange": 0.5
+            },
+            {
+              "bucket": "40-49",
+              "n": 12,
+              "meanLabel": 51,
+              "inRange": 0.67
+            },
+            {
+              "bucket": "50-59",
+              "n": 1,
+              "meanLabel": 45,
+              "inRange": 1
+            },
+            {
+              "bucket": "70-79",
+              "n": 9,
+              "meanLabel": 77,
+              "inRange": 1
+            },
+            {
+              "bucket": "80-89",
+              "n": 5,
+              "meanLabel": 80,
+              "inRange": 1
+            }
+          ]
+        },
+        "locked": {
+          "n": 36,
+          "spearman": 0.873,
+          "pairwise": {
+            "accuracy": 0.982,
+            "pairs": 192
+          },
+          "ndcg10": 0.934,
+          "topDecile": {
+            "precision": 0.75,
+            "k": 4
+          },
+          "rangeMae": {
+            "mae": 1.3,
+            "inRange": 0.833
+          },
+          "ordinal": {
+            "exact": 0.6666666666666666,
+            "withinOne": 1,
+            "n": 36
+          },
+          "reliability": [
+            {
+              "bucket": "10-19",
+              "n": 1,
+              "meanLabel": 15,
+              "inRange": 1
+            },
+            {
+              "bucket": "20-29",
+              "n": 10,
+              "meanLabel": 22,
+              "inRange": 1
+            },
+            {
+              "bucket": "30-39",
+              "n": 5,
+              "meanLabel": 35,
+              "inRange": 0.8
+            },
+            {
+              "bucket": "40-49",
+              "n": 9,
+              "meanLabel": 51,
+              "inRange": 0.56
+            },
+            {
+              "bucket": "60-69",
+              "n": 1,
+              "meanLabel": 45,
+              "inRange": 1
+            },
+            {
+              "bucket": "70-79",
+              "n": 7,
+              "meanLabel": 62,
+              "inRange": 0.86
+            },
+            {
+              "bucket": "80-89",
+              "n": 3,
+              "meanLabel": 77,
+              "inRange": 1
+            }
+          ]
+        }
+      },
+      "ordering": [
+        {
+          "rule": "explicit buyer > active founder (unknown intent)",
+          "pass": true,
+          "detail": "75.2 vs 44.2"
+        },
+        {
+          "rule": "strong-fit founder > generic founder",
+          "pass": true,
+          "detail": "46.7 vs 34.3"
+        },
+        {
+          "rule": "external development need > employee hiring",
+          "pass": true,
+          "detail": "75.3 vs 42.0"
+        },
+        {
+          "rule": "founder > software-services seller",
+          "pass": true,
+          "detail": "46.4 vs 33.3"
+        },
+        {
+          "rule": "seller > recruiter/candidate",
+          "pass": false,
+          "detail": "26.0 vs 27.7"
+        }
+      ],
+      "invariance": {
+        "clones": 112,
+        "maxDelta": 25,
+        "violations": 17,
+        "median": 47
+      },
+      "qualificationHistogram": {
+        "STRONG": 36,
+        "WORTH_PURSUING": 14,
+        "MAYBE": 50,
+        "LOW": 56
+      },
+      "classification": {
+        "buyer": {
+          "precision": 0.98,
+          "recall": 0.923,
+          "f1": 0.95,
+          "tp": 48,
+          "fp": 1,
+          "fn": 4
+        },
+        "role": {
+          "macroF1": 0.982,
+          "perClass": {
+            "BUYER": 0.947,
+            "BUYER_AND_SELLER": 1,
+            "RECRUITER": 1,
+            "CANDIDATE": 1,
+            "SELLER": 0.963
+          },
+          "accuracy": 0.928
+        },
+        "action": {
+          "accuracy": 0.986,
+          "n": 71
+        },
+        "confidence": {
+          "ece": 0.357,
+          "reliability": [
+            {
+              "bin": "0.0-0.1",
+              "n": 0,
+              "meanP": 0,
+              "rate": 0
+            },
+            {
+              "bin": "0.1-0.2",
+              "n": 10,
+              "meanP": 0.1,
+              "rate": 0.8
+            },
+            {
+              "bin": "0.2-0.3",
+              "n": 8,
+              "meanP": 0.24,
+              "rate": 0.5
+            },
+            {
+              "bin": "0.3-0.4",
+              "n": 16,
+              "meanP": 0.34,
+              "rate": 0.94
+            },
+            {
+              "bin": "0.4-0.5",
+              "n": 30,
+              "meanP": 0.42,
+              "rate": 0.97
+            },
+            {
+              "bin": "0.5-0.6",
+              "n": 9,
+              "meanP": 0.56,
+              "rate": 0.89
+            },
+            {
+              "bin": "0.6-0.7",
+              "n": 10,
+              "meanP": 0.64,
+              "rate": 0.8
+            },
+            {
+              "bin": "0.7-0.8",
+              "n": 41,
+              "meanP": 0.78,
+              "rate": 0.98
+            },
+            {
+              "bin": "0.8-0.9",
+              "n": 15,
+              "meanP": 0.83,
+              "rate": 1
+            },
+            {
+              "bin": "0.9-1.0",
+              "n": 2,
+              "meanP": 0.9,
+              "rate": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  "models": {
+    "calibrated": "calibrated_v4.1.mvh8z8y7",
+    "ordinal": "ordinal_logit_v1.mvh8z8zj",
+    "gbdt": "gbdt_pairwise_v1.mvh8z94t",
+    "knn": "knn_features_v1.mvh8z94u"
+  }
+}

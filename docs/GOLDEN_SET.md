@@ -19,8 +19,15 @@ answer (or the deterministic fallback when none is given).
 | `fixtures-founders.ts` | 14 | Technical / non-technical founders, funded, bootstrapped, enterprise, multi-company, stale founders, strong fit with no intent |
 | `fixtures-nonbuyers.ts` | 18 | Service providers, competitors, product sellers, recruiters, candidates, job seekers, cold executives, enterprise employees, consultants |
 | `fixtures-multilingual.ts` | 16 | EN / DE / FR / ES / TR and mixed-language buyers, sellers, recruiters and candidates |
-| `fixtures-adversarial.ts` | 114 | 112 provenance attacks cloned from one founder profile (third-party budget, reposts, hypothetical posts, customer size, past roles, closed requests, negated requests, seller language, hiring-as-buying, injected urgency, planted industries) plus 2 base controls |
-| `fixtures-variants.ts` | 8 | Same opportunity with many posts / no posts / incomplete profile / different date formats |
+| `fixtures-adversarial.ts` | 112 | Provenance attacks cloned from one founder profile (third-party budget, reposts, hypothetical posts, customer size, past roles, closed requests, negated requests, seller language, hiring-as-buying, injected urgency, planted industries) |
+| `fixtures-variants.ts` | 50 | Generated grid: buyers × industry × connection degree, founders × post volume, sellers, recruiters, candidates, employee hiring, stale buyers, cold executives |
+
+Separate from the contract above, `fixtures-ranking.ts` holds 45 **program-truth**
+fixtures whose ranges were written from the scoring program's definition of
+commercial value, independently of what V3 produces. They are not part of
+`GOLDEN_SET`; they feed the candidate-engine experiment and
+`tests/scoring-v4/ranking-benchmark.test.ts`, where V3 misses are the
+measured gap rather than a broken build (see `docs/SCORING_V4_PROGRAM.md`).
 
 Categories are listed per fixture (`category:`); the calibrate script prints
 pass counts and mean score per category.

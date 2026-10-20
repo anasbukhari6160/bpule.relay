@@ -102,6 +102,30 @@ recomputed on open. The reuse key is
 `sha256(opportunityVersionTag + pipeline + orgCapabilities + normalized text)`
 and is sender-independent by construction.
 
+## Candidate engines and shadow mode (scoring program v4)
+
+The production score above is engine `v3`. The 360° scoring program adds a
+candidate layer behind one interface (`src/lib/scoring-v4/`):
+
+```
+packet (SourceFacts + buyer decision + resolved dimensions)
+  └─ buildOpportunityFeatures        one canonical OpportunityFeatures object
+        semantic capability families (capability-taxonomy.ts), intent kept
+        separate from account value, six-level fit, supply-side flags
+  └─ engines/registry                v3 · calibrated_v4 · ordinal_logit · gbdt_pairwise · knn_features
+        every engine → applyGuards (closed, candidate, recruiter, supply-side,
+        unserved need, verified-buyer floor) → canonical 0-100
+  └─ shadow.ts                       SCORING_SHADOW_ENGINES → scoring_shadow_decisions
+  └─ sender-ranker.ts                SenderCapabilityProfile × OpportunityFeatures (v2 routing, not yet wired)
+```
+
+Flags: `SCORING_ENGINE` (default `v3`) selects what reps see;
+`SCORING_SHADOW_ENGINES` lists engines whose results are stored beside each
+production decision and shown only in the admin QA center and
+`/admin/training-data`. Human labels live in `scoring_labels`. See
+`docs/SCORING_V4_PROGRAM.md` for the diagnosis, experiments and the
+promotion gates.
+
 ## Failure behaviour
 
 - Event model fails → deterministic extractor, `eventSource: 'deterministic'`.
