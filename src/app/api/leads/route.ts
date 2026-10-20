@@ -6,6 +6,8 @@ import { classifyRoleFromTitle, mapLocationToRegion } from '@/lib/leads/targetin
 import { evaluateProspectQualification } from '@/lib/prospect/qualification-gate'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import { qualifyCanonicalScore, verdictForQualification } from '@/lib/scoring/qualification'
+import { resolveActiveWorkspace } from '@/lib/workspace/resolve-active-identity'
+import type { WorkspaceIdentity } from '@/lib/workspace/active-identity'
 
 /**
  * Lead Creation API
@@ -187,6 +189,12 @@ export async function POST(request: Request) {
     ? verdictForQualification(qualifyCanonicalScore(canonicalScoreValue).qualification)
     : legacyScore?.verdict ?? null
 
+  let workspace: WorkspaceIdentity | null = null
+  try {
+    workspace = await resolveActiveWorkspace()
+  } catch {
+    workspace = null
+  }
   const result = await store.createLead({
     company,
     contactName: extracted.name,
@@ -214,8 +222,12 @@ export async function POST(request: Request) {
       confidenceNotes: extracted.confidenceNotes ?? [],
     },
     allowPotentialDuplicate,
-    senderProfileId: typeof body.senderProfileId === 'string' ? body.senderProfileId : null,
-    revenueIdentityId: await validateRevenueIdentityId(body.revenueIdentityId),
+    senderProfileId: typeof body.senderProfileId === 'string'
+      ? body.senderProfileId
+      : workspace?.profileId ?? null,
+    revenueIdentityId: (await validateRevenueIdentityId(body.revenueIdentityId))
+      ?? workspace?.id
+      ?? null,
     // Intelligence V2 fields
     canonicalScore: canonical?.canonicalScore ?? null,
     scoreVersion: canonical?.scoreVersion ?? null,

@@ -10,6 +10,7 @@ import { buildV3ReuseKey } from '@/lib/intelligence-v3/decision-reuse'
 import { recomputePacketFromStored, v3PacketToCanonical, buildMinimalV2Canonical } from '@/lib/intelligence-v3/bridge'
 import { isPacketCurrent } from '@/lib/intelligence-v3/versions'
 import { qualifyCanonicalScore, toStoredQualification, verdictForQualification } from '@/lib/scoring/qualification'
+import { resolveAccessibleIdentity } from '@/lib/workspace/resolve-active-identity'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 
@@ -51,6 +52,15 @@ export async function POST(request: Request) {
 
     const linkedinUrl = typeof body.url === 'string' && body.url.trim() ? body.url.trim() : null
     const senderProfileId = typeof body.senderProfileId === 'string' ? body.senderProfileId : null
+    let revenueIdentityId: string | null = null
+    if (typeof body.revenueIdentityId === 'string') {
+      try {
+        const workspace = await resolveAccessibleIdentity(body.revenueIdentityId)
+        revenueIdentityId = workspace?.id ?? null
+      } catch {
+        revenueIdentityId = null
+      }
+    }
     const connectionNote = typeof body.connectionNote === 'string' ? body.connectionNote.trim() : null
     const prospectScore = typeof body.prospectScore === 'number' ? body.prospectScore : null
     const prospectDimensions = body.prospectDimensions && Array.isArray(body.prospectDimensions)
@@ -212,6 +222,8 @@ export async function POST(request: Request) {
       marketRegion: extracted.marketRegion ?? mapLocationToRegion(extracted.locationRaw ?? null),
       extractionConfidence: extracted.extractionConfidence ?? 50,
       assignedProfileId: senderProfileId,
+      senderProfileId,
+      revenueIdentityId,
       allowPotentialDuplicate,
       extractionProfile: {
         aboutSummary: extracted.aboutSummary ?? null,

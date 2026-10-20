@@ -35,6 +35,8 @@ import { pasteGuard } from '@/lib/prospect/paste-guard'
 import { trackEvent } from '@/lib/analytics/tracker'
 import { RejectedSignalInspector, type RejectedSignalView } from '@/components/scoring/rejected-signal-inspector'
 import { ScoringFeedback } from '@/components/scoring/scoring-feedback'
+import { useActiveIdentity } from '@/components/workspace/active-identity-provider'
+import { workspaceIdentityForSender } from '@/lib/workspace/active-identity'
 
 /** Canonical decision detail returned by /api/prospect/analyze (Phase 25-31). */
 interface DecisionDetail {
@@ -179,8 +181,11 @@ export default function ProspectCheckPage() {
   const rawRef = useRef<HTMLTextAreaElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const saveInFlightRef = useRef(false)
+  const workspace = useActiveIdentity()
+  const seenWorkspaceId = useRef<string | null | undefined>(undefined)
 
-  // Preserve sender preference across re-analyses
+  // Preserve sender preference across re-analyses. The sidebar workspace
+  // is the default sender; changing sender here is only for this check.
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -215,6 +220,20 @@ export default function ProspectCheckPage() {
     setDuplicateConflict(null)
   }, [])
 
+  useEffect(() => {
+    const nextId = workspace.active?.id ?? null
+    const nextProfileId = workspace.active?.profileId ?? null
+    if (seenWorkspaceId.current === undefined) {
+      seenWorkspaceId.current = nextId
+      setSelectedProfileId(nextProfileId)
+      return
+    }
+    if (seenWorkspaceId.current === nextId) return
+    seenWorkspaceId.current = nextId
+    setSelectedProfileId(nextProfileId)
+    resetResult()
+  }, [workspace.active?.id, workspace.active?.profileId, resetResult])
+
   async function analyze(mode: 'analyze' | 'try-another-angle' | 'generate' = 'analyze', profileIdOverride?: string) {
     const guard = pasteGuard(rawInput)
     if (guard) {
@@ -231,7 +250,8 @@ export default function ProspectCheckPage() {
     // entirely. See BUG_LEDGER — TEAM-005.
     const existingCanonical = mode === 'try-another-angle' ? result?.canonical ?? null : null
 
-    const effectiveProfileId = profileIdOverride ?? selectedProfileId
+    const effectiveProfileId = profileIdOverride ?? selectedProfileId ?? workspace.active?.profileId ?? null
+    const revenueIdentityId = workspaceIdentityForSender(workspace.active, effectiveProfileId)
 
     resetResult()
     setAnalyzing(true)
@@ -246,6 +266,7 @@ export default function ProspectCheckPage() {
         body: JSON.stringify({
           rawText: rawInput,
           profileId: effectiveProfileId,
+          revenueIdentityId,
           generateNote: mode === 'generate',
           ...(existingCanonical ? { existingCanonical } : {}),
         }),
@@ -372,7 +393,11 @@ export default function ProspectCheckPage() {
           signalEvidence: result.extracted.signalEvidence,
           verbatimQuote: result.extracted.verbatimQuote,
           tags: result.extracted.tags,
-          senderProfileId: result.bestSender?.id ?? null,
+          senderProfileId: result.bestSender?.id ?? workspace.active?.profileId ?? null,
+          revenueIdentityId: workspaceIdentityForSender(
+            workspace.active,
+            result.bestSender?.id ?? workspace.active?.profileId ?? null,
+          ),
           connectionNote: result.connectionNote,
           prospectScore: result.score?.total ?? null,
           prospectDimensions: result.score?.dimensions ?? null,
@@ -458,6 +483,12 @@ export default function ProspectCheckPage() {
           <p className="max-w-2xl text-[13px] text-graphite">
             Check whether a prospect is worth your next outreach.
           </p>
+          {workspace.active && (
+            <p className="text-[13px] text-ink">
+              Prospecting as <span className="font-medium">{workspace.active.identityName}</span>
+              {workspace.active.title ? <span className="text-graphite"> · {workspace.active.title}</span> : null}
+            </p>
+          )}
       </header>
 
       {error ? (
@@ -746,7 +777,11 @@ export default function ProspectCheckPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <User className="size-3.5 text-orange" aria-hidden="true" />
-                  <h3 className="text-[12px] font-medium text-ink">Best sender: {result.bestSender.label ?? 'Unnamed'}</h3>
+                  <h3 className="text-[12px] font-medium text-ink">
+                    {workspace.active && result.bestSender?.id === workspace.active.profileId
+                      ? `Sending as ${workspace.active.identityName}`
+                      : `Best sender: ${result.bestSender.label ?? 'Unnamed'}`}
+                  </h3>
                 </div>
                 {Array.isArray(result.alternativeSenders) && result.alternativeSenders.length > 0 && (
                   <button

@@ -11,6 +11,7 @@ import { deriveRecommendedAction, ROUTING_MISMATCH_DELTA, type DeriveActionOutpu
 import { opportunityVersionTag } from '@/lib/intelligence-v3/versions'
 import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
 import { getAuthContext } from '@/lib/auth/organization'
+import { resolveAccessibleIdentity } from '@/lib/workspace/resolve-active-identity'
 import { createServiceSupabase } from '@/lib/supabase/service'
 import { createOutreachStrategy } from '@/lib/relay/outreach-strategy'
 import { streamDraft } from '@/lib/ai/draft-stream'
@@ -188,6 +189,7 @@ export async function POST(request: Request) {
      * is used before that point).
      */
     existingCanonical?: CanonicalProspectIntelligence
+    revenueIdentityId?: string | null
   }
   try {
     body = await request.json()
@@ -217,6 +219,15 @@ export async function POST(request: Request) {
   }
 
   const explicitProfileId = body.profileId ?? null
+  let requestedWorkspaceId: string | null = null
+  if (typeof body.revenueIdentityId === 'string') {
+    try {
+      const workspace = await resolveAccessibleIdentity(body.revenueIdentityId)
+      requestedWorkspaceId = workspace?.id ?? null
+    } catch {
+      requestedWorkspaceId = null
+    }
+  }
 
   const minimumExtracted: ExtractedLead = {
     name: null,
@@ -693,7 +704,8 @@ export async function POST(request: Request) {
           canonicalScore: canonical.canonicalScore,
           canonicalIntelligence: canonical as unknown as Record<string, unknown>,
           scoreBreakdown: canonical.scoreBreakdown as unknown as Record<string, unknown>,
-          revenueIdentityId: bestSender ? (bestSender as Profile & { revenueIdentityId?: string | null }).revenueIdentityId ?? null : null,
+          revenueIdentityId: requestedWorkspaceId
+            ?? (bestSender ? (bestSender as Profile & { revenueIdentityId?: string | null }).revenueIdentityId ?? null : null),
           senderProfileId: bestSender?.id ?? null,
         })
         await store.emitRelayEvent({

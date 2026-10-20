@@ -10,11 +10,11 @@ import { loadBoardData } from '@/lib/leads/board-rows'
 
 export const dynamic = 'force-dynamic'
 
-type LeadsPayload = { leads: LeadRow[]; orgView: boolean }
+type LeadsPayload = { leads: LeadRow[]; workspaceName: string | null }
 
 async function loadLeads(): Promise<LeadsPayload> {
-  const { leads, orgView } = await loadBoardData()
-  return { leads, orgView }
+  const { leads, workspace } = await loadBoardData()
+  return { leads, workspaceName: workspace?.identityName ?? null }
 }
 
 export default function LeadsPage() {
@@ -22,19 +22,9 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="Leads Pipeline"
-        description="Every prospect. Organized by where they are in your outreach lifecycle."
-        action={
-          <Link
-            href="/leads/new"
-            className="inline-flex items-center gap-2 rounded-md bg-orange px-3 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-orange-dark"
-          >
-            <Plus className="size-4" aria-hidden="true" />
-            New lead
-          </Link>
-        }
-      />
+      <Suspense fallback={<LeadsPageFallback />}>
+        <LeadsHeader leadsPromise={leadsPromise} />
+      </Suspense>
 
       <Suspense fallback={<LeadsBodySkeleton />}>
         <LeadsBody leadsPromise={leadsPromise} />
@@ -43,15 +33,38 @@ export default function LeadsPage() {
   )
 }
 
+async function LeadsHeader({ leadsPromise }: { leadsPromise: Promise<LeadsPayload> }) {
+  const { workspaceName } = await leadsPromise
+  return (
+    <PageHeader
+      title="Leads Pipeline"
+      description={workspaceName
+        ? `Leads for ${workspaceName}. Switch the workspace profile in the sidebar to see another identity.`
+        : 'Every prospect. Organized by where they are in your outreach lifecycle.'}
+      action={
+        <Link
+          href="/leads/new"
+          className="inline-flex items-center gap-2 rounded-md bg-orange px-3 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-orange-dark"
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          New lead
+        </Link>
+      }
+    />
+  )
+}
+
 async function LeadsBody({ leadsPromise }: { leadsPromise: Promise<LeadsPayload> }) {
-  const { leads, orgView } = await leadsPromise
+  const { leads, workspaceName } = await leadsPromise
 
   if (leads.length === 0) {
     return (
       <EmptyState
         icon={Target}
-        title="No leads yet"
-        description="Paste a LinkedIn profile, add a company, or import from Upwork. Relay scores them and tells you who is worth contacting."
+        title={workspaceName ? `No leads for ${workspaceName}` : 'No leads yet'}
+        description={workspaceName
+          ? `Prospects you check while ${workspaceName} is selected show up here. Other profiles keep their own leads.`
+          : 'Paste a LinkedIn profile, add a company, or import from Upwork. Relay scores them and tells you who is worth contacting.'}
         action={
           <Link
             href="/prospect"
@@ -66,6 +79,15 @@ async function LeadsBody({ leadsPromise }: { leadsPromise: Promise<LeadsPayload>
   }
 
   return <LeadsBoardV2 leads={leads} />
+}
+
+function LeadsPageFallback() {
+  return (
+    <div className="space-y-2">
+      <SkeletonText className="h-7 w-48" />
+      <SkeletonText className="h-3 w-80" />
+    </div>
+  )
 }
 
 function LeadsBodySkeleton() {

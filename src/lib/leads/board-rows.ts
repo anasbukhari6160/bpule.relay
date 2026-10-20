@@ -12,6 +12,8 @@ import { computeLifecycleState } from '@/lib/leads/lifecycle-policy'
 import type { LeadRow } from '@/components/leads/pipeline-utils'
 import type { MessageType } from '@/lib/domain/types'
 import type { ActivityEvent } from '@/lib/analytics/pipeline-analytics'
+import { leadBelongsToWorkspace, type WorkspaceIdentity } from '@/lib/workspace/active-identity'
+import { resolveActiveWorkspace } from '@/lib/workspace/resolve-active-identity'
 
 export type { ActivityEvent }
 
@@ -20,6 +22,7 @@ export interface BoardData {
   orgView: boolean
   events: ActivityEvent[]
   reps: Array<{ id: string; name: string }>
+  workspace: WorkspaceIdentity | null
 }
 
 export async function loadBoardData(): Promise<BoardData> {
@@ -168,5 +171,23 @@ export async function loadBoardData(): Promise<BoardData> {
     }
   })
 
-  return { leads, orgView, events, reps }
+  let workspace: WorkspaceIdentity | null = null
+  try {
+    workspace = await resolveActiveWorkspace()
+  } catch {
+    workspace = null
+  }
+
+  if (!workspace) return { leads, orgView, events, reps, workspace: null }
+
+  const selected = workspace
+  const scoped = leads.filter((lead) => leadBelongsToWorkspace(lead, selected))
+  const scopedIds = new Set(scoped.map((lead) => lead.id))
+  return {
+    leads: scoped,
+    orgView,
+    events: events.filter((event) => scopedIds.has(event.leadId)),
+    reps,
+    workspace,
+  }
 }

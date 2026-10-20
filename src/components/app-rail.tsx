@@ -29,6 +29,7 @@ import { RelayBrand } from '@/components/brand'
 import { IdentityChip } from '@/components/identity-chip'
 import { NotificationCenter } from '@/components/notification-center'
 import { ThemeToggle } from '@/components/theme-toggle'
+import { useActiveIdentity } from '@/components/workspace/active-identity-provider'
 import { APP_VERSION } from '@/lib/version'
 import type { RepRole } from '@/lib/domain/types'
 
@@ -191,12 +192,6 @@ export interface AppRailProps {
   demo: boolean
   todaySends: number
   dailyLimit: number
-  revenueIdentities: Array<{
-    id: string
-    identityName: string
-    title: string | null
-    channel: string
-  }>
 }
 
 export function AppRail({
@@ -206,34 +201,18 @@ export function AppRail({
   demo,
   todaySends,
   dailyLimit,
-  revenueIdentities,
 }: AppRailProps) {
   const pathname = usePathname()
   const router = useRouter()
+  const { identities, active: activeIdentity, selectIdentity } = useActiveIdentity()
   const [sends, setSends] = useState(todaySends)
   const [identityOpen, setIdentityOpen] = useState(false)
-  const [activeIdentityId, setActiveIdentityId] = useState<string | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
 
-  useEffect(() => {
-    const key = 'relay-active-identity'
-    try {
-      const saved = localStorage.getItem(key)
-      if (saved && revenueIdentities.some((identity) => identity.id === saved)) {
-        setActiveIdentityId(saved)
-        return
-      }
-    } catch {
-      // Ignore local storage failures.
-    }
-
-    if (revenueIdentities[0]) {
-      setActiveIdentityId(revenueIdentities[0].id)
-    }
-  }, [revenueIdentities])
-
-  const activeIdentity = revenueIdentities.find((identity) => identity.id === activeIdentityId) ?? revenueIdentities[0] ?? null
+  const orderedIdentities = activeIdentity
+    ? [activeIdentity, ...identities.filter((identity) => identity.id !== activeIdentity.id)]
+    : identities
 
   useEffect(() => {
     let cancelled = false
@@ -277,14 +256,9 @@ export function AppRail({
   const sendPct = Math.min(sends / dailyLimit, 1)
   const circumference = 2 * Math.PI * 11
 
-  function selectIdentity(identityId: string) {
-    setActiveIdentityId(identityId)
+  function chooseIdentity(identityId: string) {
+    selectIdentity(identityId)
     setIdentityOpen(false)
-    try {
-      localStorage.setItem('relay-active-identity', identityId)
-    } catch {
-      // Ignore local storage failures.
-    }
   }
 
   const sendCounter = (
@@ -330,13 +304,14 @@ export function AppRail({
 
   const moreActive = moreItems.some((item) => isActive(item.href, item.exact))
 
-  const identityPicker = (
-    <div className="relative">
+  function renderIdentityPicker() {
+    return (
+    <div className="relative z-30">
       <button
         type="button"
         onClick={() => setIdentityOpen((open) => !open)}
         aria-expanded={identityOpen}
-        aria-label={`Working as ${activeIdentity ? `${activeIdentity.identityName}${activeIdentity.title ? `, ${activeIdentity.title}` : ''}` : 'no identity'}. Click to change.`}
+        aria-label={`Workspace ${activeIdentity ? `${activeIdentity.identityName}${activeIdentity.title ? `, ${activeIdentity.title}` : ''}` : 'no profile'}. Click to change profile.`}
         title={activeIdentity
           ? `${activeIdentity.identityName}${activeIdentity.title ? ` · ${activeIdentity.title}` : ''}${activeIdentity.channel ? ` · ${activeIdentity.channel.toUpperCase()}` : ''}`
           : 'No identity assigned'
@@ -345,7 +320,7 @@ export function AppRail({
       >
         <span className="mt-0.5 size-2 shrink-0 rounded-full bg-orange" role="presentation" />
         <div className="min-w-0 flex-1">
-          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em]" style={{ color: 'color-mix(in srgb, var(--orange) 60%, var(--stone))' }}>Working as</p>
+          <p className="text-mono-medium text-[10px] uppercase tracking-[0.14em]" style={{ color: 'color-mix(in srgb, var(--orange) 60%, var(--stone))' }}>Workspace</p>
           {activeIdentity ? (
             <>
               <p className="truncate text-[13px] font-medium text-ink">{activeIdentity.identityName}</p>
@@ -354,7 +329,7 @@ export function AppRail({
               </p>
             </>
           ) : (
-            <p className="truncate text-[11px] text-graphite">No identity assigned</p>
+            <p className="truncate text-[11px] text-graphite">No profile assigned</p>
           )}
         </div>
         <ChevronDown className={cn('size-3.5 shrink-0 text-stone transition-transform', identityOpen && 'rotate-180')} />
@@ -365,25 +340,25 @@ export function AppRail({
           role="status"
           aria-live="polite"
         >
-          Working as {activeIdentity.identityName}{activeIdentity.title ? `, ${activeIdentity.title}` : ''}{activeIdentity.channel ? `, ${activeIdentity.channel}` : ''}
+          Workspace {activeIdentity.identityName}{activeIdentity.title ? `, ${activeIdentity.title}` : ''}{activeIdentity.channel ? `, ${activeIdentity.channel}` : ''}
         </div>
       )}
 
       {identityOpen && (
-        <div className="absolute right-0 bottom-[calc(100%+0.4rem)] z-20 w-full rounded-md border border-line bg-bone-raised p-1.5 shadow-lg">
-          {revenueIdentities.length === 0 ? (
+        <div className="absolute right-0 top-[calc(100%+0.4rem)] z-20 max-h-72 w-full overflow-y-auto rounded-md border border-line bg-bone-raised p-1.5 shadow-lg">
+          {orderedIdentities.length === 0 ? (
             <p className="px-2 py-1 text-[11px] text-graphite">
-              {role === 'admin' ? 'No active identities yet.' : 'No assigned identities yet.'}
+              {role === 'admin' ? 'No active profiles yet.' : 'No assigned profiles yet.'}
             </p>
           ) : (
             <div className="space-y-1">
-              {revenueIdentities.map((identity) => {
+              {orderedIdentities.map((identity) => {
                 const selected = identity.id === activeIdentity?.id
                 return (
                   <button
                     key={identity.id}
                     type="button"
-                    onClick={() => selectIdentity(identity.id)}
+                    onClick={() => chooseIdentity(identity.id)}
                     className={cn(
                       'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors',
                       selected ? 'bg-solid text-on-solid' : 'hover:bg-bone',
@@ -415,6 +390,7 @@ export function AppRail({
       )}
     </div>
   )
+  }
 
   return (
     <>
@@ -446,17 +422,9 @@ export function AppRail({
             </button>
           </div>
         </div>
-        {activeIdentity && (
-          <div className="flex items-center gap-2 border-t border-line/60 px-4 py-1.5">
-            <span className="size-1.5 shrink-0 rounded-full bg-orange" />
-            <p className="min-w-0 truncate text-[11px] font-medium text-ink">
-              {activeIdentity.identityName}
-              <span className="text-graphite">
-                {' · '}{[activeIdentity.title, activeIdentity.channel?.toUpperCase()].filter(Boolean).join(' / ')}
-              </span>
-            </p>
-          </div>
-        )}
+        <div className="border-t border-line/60 px-3 py-2">
+          {renderIdentityPicker()}
+        </div>
       </header>
 
       {/* Mobile navigation drawer */}
@@ -504,8 +472,7 @@ export function AppRail({
                 ))}
               </div>
             </nav>
-            <div className="border-t border-line px-3 py-3 space-y-2">
-              {identityPicker}
+            <div className="border-t border-line px-3 py-3">
               <div className="flex items-center justify-between gap-2 px-1">
                 <IdentityChip name={repName} subtitle={`${ROLE_LABEL[role]} · ${organizationName}`} />
               </div>
@@ -524,6 +491,10 @@ export function AppRail({
             </kbd>
           </div>
           <p className="text-mono-medium text-[9px] uppercase tracking-[0.14em] text-stone">Relay / Capture</p>
+        </div>
+
+        <div className="px-3 pb-3">
+          {renderIdentityPicker()}
         </div>
 
         <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-3">
@@ -565,8 +536,6 @@ export function AppRail({
         </nav>
 
         <div className="border-t border-line px-3 py-3 space-y-2">
-          {identityPicker}
-
           <div className="flex items-center justify-between gap-2 px-1">
             <IdentityChip name={repName} subtitle={`${ROLE_LABEL[role]} · ${organizationName}`} />
             <button
