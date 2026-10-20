@@ -477,13 +477,17 @@ export async function querySamples(
   orgId: string,
   filter: DatasetFilter = {},
 ): Promise<IntelligenceSample[]> {
-  const limit = Math.min(filter.limit ?? 50, 200)
+  const limit = Math.min(filter.limit ?? 50, 1000)
   const from = Math.max(0, filter.offset ?? 0)
   let query = tbl(client)
     .select('*')
-    .eq('organization_id', orgId)
     .order('created_at', { ascending: false })
     .range(from, from + limit - 1)
+
+  // orgId 'all-orgs' skips org filter (for service-role exports)
+  if (orgId !== 'all-orgs') {
+    query = query.eq('organization_id', orgId)
+  }
 
   if (filter.platform) query = query.eq('platform', filter.platform)
   if (filter.qualification) query = query.eq('qualification', filter.qualification)

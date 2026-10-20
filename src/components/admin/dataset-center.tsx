@@ -105,14 +105,20 @@ export function DatasetCenter() {
       return
     }
     const count = res.headers.get('X-Sample-Count') ?? '?'
+    const size = res.headers.get('content-length') ?? '?'
     const blob = await res.blob()
+    if (blob.size < 10) {
+      setExportInfo(`Export returned empty (${count} samples, ${size} bytes). Check server logs.`)
+      setTimeout(() => setExportInfo(null), 5000)
+      return
+    }
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = `relay_dataset_${mode.toLowerCase()}_${Date.now()}.${format === 'jsonl' ? 'jsonl' : format}`
     a.click()
     URL.revokeObjectURL(url)
-    setExportInfo(`Downloaded ${count} samples as ${format}`)
+    setExportInfo(`Downloaded ${count} samples (${blob.size} bytes) as ${format}`)
     setTimeout(() => setExportInfo(null), 4000)
   }, [platform])
 

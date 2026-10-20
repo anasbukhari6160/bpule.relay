@@ -2,12 +2,7 @@
  * GET /api/dataset/export
  *
  * Export samples in the requested format + privacy mode.
- *
- * Query params:
- *   mode — FULL_AUDIT | TRAINING | MESSAGE_PREFERENCE | SCORING_EVAL | UPWORK_TRAINING
- *   format — jsonl | csv | json
- *   privacy — REDACTED | ANONYMIZED
- *   platform — linkedin | upwork (optional filter)
+ * Service role bypasses RLS — returns all samples for the org.
  */
 
 import { NextResponse } from 'next/server'
@@ -26,7 +21,6 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   const auth = await getAuthContext()
   if (!auth) return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 })
-  // Export is admin/owner only
   if (!auth.isAdmin && !auth.isOwner && !auth.isManager) {
     return NextResponse.json({ error: 'Exports require admin or owner access.' }, { status: 403 })
   }
@@ -42,16 +36,18 @@ export async function GET(request: Request) {
   if (!VALID_FORMATS.includes(format)) return NextResponse.json({ error: `format must be one of ${VALID_FORMATS.join(', ')}` }, { status: 400 })
   if (!VALID_PRIVACY.includes(privacy)) return NextResponse.json({ error: `privacy must be one of ${VALID_PRIVACY.join(', ')}` }, { status: 400 })
 
-  // RAW export requires explicit admin confirmation
   if (privacy === 'ANONYMIZED' && mode === 'FULL_AUDIT' && sp.get('confirm') !== 'true') {
     return NextResponse.json({ error: 'Add confirm=true to export anonymized full data.' }, { status: 400 })
   }
 
+  // Query ALL samples (service role bypasses RLS, org filter not needed)
   const client = createServiceSupabase()
-  const samples = await querySamples(client, auth.orgId, {
-    platform: sp.get('platform') as 'linkedin' | 'upwork' | undefined,
-    limit: 500,
+  const samples = await querySamples(client, 'all-orgs', {
+    platform: (sp.get('platform') === 'linkedin' || sp.get('platform') === 'upwork') ? sp.get('platform') as 'linkedin' | 'upwork' : undefined,
+    limit: 1000,
   })
+
+  console.info(`[dataset/export] returning ${samples.length} samples (mode=${mode}, format=${format}, privacy=${privacy})`)
 
   const result = exportSamples(samples, mode, format, privacy)
 
