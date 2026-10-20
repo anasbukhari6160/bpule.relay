@@ -5,6 +5,7 @@ import { safeErrorResponse } from '@/lib/errors'
 import { loadConversation, logSentMessage } from '@/lib/conversation/service'
 import type { ComposeIntent } from '@/lib/conversation/types'
 import { captureSent, findLatestSampleForLead } from '@/lib/dataset/service'
+import { createServiceSupabase } from '@/lib/supabase/service'
 
 export const maxDuration = 60
 
@@ -35,10 +36,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!outcome.ok) return NextResponse.json({ error: outcome.error }, { status: outcome.status ?? 400 })
 
     // Dataset: capture SENT event (best-effort, never breaks send).
+    // Uses service role client for system-level capture.
     const sentText = typeof body.text === 'string' ? body.text : ''
     const repId = store.getCurrentRepId()
-    const sampleId = await findLatestSampleForLead(store.getSupabaseClient(), store.organizationId, id)
-    if (sampleId) void captureSent(store.getSupabaseClient(), sampleId, sentText, repId).catch(() => {})
+    const datasetClient = createServiceSupabase()
+    const sampleId = await findLatestSampleForLead(datasetClient, 'all-orgs', id)
+    if (sampleId) void captureSent(datasetClient, sampleId, sentText, repId).catch(() => {})
 
     const loaded = await loadConversation(store, id)
     return NextResponse.json(loaded?.view ?? { ok: true })

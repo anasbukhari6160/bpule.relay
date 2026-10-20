@@ -3,6 +3,7 @@ import { createScoutStore } from '@/lib/store'
 import { extractUpworkJob, type ExtractedUpworkJob } from '@/lib/upwork-v2'
 import { createSample, captureScore } from '@/lib/dataset/service'
 import { computeUpworkScore } from '@/lib/score/upwork-rubric'
+import { createServiceSupabase } from '@/lib/supabase/service'
 import { readUpworkJobFacts } from '@/lib/upwork/facts'
 
 export const maxDuration = 120
@@ -116,18 +117,20 @@ export async function POST(request: Request) {
         }
 
         // Dataset: permanent, versioned sample for this Upwork analysis.
+        // Uses service role client (bypasses RLS) for system-level capture.
         void (async () => {
           try {
+            const client = createServiceSupabase()
             const orgId = store.organizationId
             if (!orgId) return
-            const sampleId = await createSample(store.getSupabaseClient(), {
+            const sampleId = await createSample(client, {
               platform: 'upwork',
               upworkJobId: savedJob.id,
               rawInput: body.rawText,
               organizationId: orgId,
             })
             if (sampleId && score) {
-              await captureScore(store.getSupabaseClient(), sampleId, {
+              await captureScore(client, sampleId, {
                 canonicalScore: score.canonical.score,
                 displayScore: score.canonical.score / 10,
                 qualification: score.verdict === 'apply' ? 'STRONG' : score.verdict === 'apply_if_connects' ? 'MAYBE' : 'LOW',

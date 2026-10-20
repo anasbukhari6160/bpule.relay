@@ -525,19 +525,15 @@ export async function countSamples(
   return count ?? 0
 }
 
-/** Find the most recent sample for a lead. */
+/** Find the most recent sample for a lead. orgId='all-orgs' skips org filter. */
 export async function findLatestSampleForLead(
   client: SupabaseClient,
   orgId: string,
   leadId: string,
 ): Promise<string | null> {
-  const { data } = await tbl(client)
-    .select('id')
-    .eq('organization_id', orgId)
-    .eq('lead_id', leadId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  let query = tbl(client).select('id').eq('lead_id', leadId)
+  if (orgId !== 'all-orgs') query = query.eq('organization_id', orgId)
+  const { data } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle()
   return (data?.id as string | null) ?? null
 }
 

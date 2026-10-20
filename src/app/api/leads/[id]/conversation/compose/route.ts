@@ -4,6 +4,7 @@ import { safeErrorResponse } from '@/lib/errors'
 import { composeForLead } from '@/lib/conversation/service'
 import type { ComposeIntent } from '@/lib/conversation/types'
 import { captureMessageGeneration, findLatestSampleForLead } from '@/lib/dataset/service'
+import { createServiceSupabase } from '@/lib/supabase/service'
 
 export const maxDuration = 120
 
@@ -35,10 +36,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     })
     if (!composed) return NextResponse.json({ error: 'Lead not found.' }, { status: 404 })
 
-    // Dataset: capture MESSAGE_GENERATION (connection/DM/followup/reply).
-    const sampleId = await findLatestSampleForLead(store.getSupabaseClient(), store.organizationId, id)
+    // Dataset: capture MESSAGE_GENERATION (uses service role for system capture).
+    const datasetClient = createServiceSupabase()
+    const sampleId = await findLatestSampleForLead(datasetClient, 'all-orgs', id)
     if (sampleId && composed.draft) {
-      void captureMessageGeneration(store.getSupabaseClient(), sampleId, {
+      void captureMessageGeneration(datasetClient, sampleId, {
         generatedText: composed.draft.text,
         messageStage: intent,
         senderProfileId: typeof body.profileId === 'string' ? body.profileId : undefined,

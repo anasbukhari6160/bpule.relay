@@ -10,6 +10,7 @@ import { buildV3ReuseKey } from '@/lib/intelligence-v3/decision-reuse'
 import { recomputePacketFromStored, v3PacketToCanonical, buildMinimalV2Canonical } from '@/lib/intelligence-v3/bridge'
 import { isPacketCurrent } from '@/lib/intelligence-v3/versions'
 import { qualifyCanonicalScore, toStoredQualification, verdictForQualification } from '@/lib/scoring/qualification'
+import { createServiceSupabase } from '@/lib/supabase/service'
 import { createSample, captureScore, captureRouting } from '@/lib/dataset/service'
 import { getLeadDisplayScore } from '@/lib/scoring/display-score'
 import { resolveAccessibleIdentity } from '@/lib/workspace/resolve-active-identity'
@@ -318,6 +319,7 @@ export async function POST(request: Request) {
 /**
  * Create an intelligence sample + capture score/routing stages.
  * Best-never: never blocks or fails the save.
+ * Uses service role client (bypasses RLS) — this is a system capture action.
  */
 async function createDatasetSampleForLead(
   lead: { id: string; organizationId: string; rawInput?: string | null },
@@ -326,10 +328,10 @@ async function createDatasetSampleForLead(
   connectionNote: string | null,
   body: Record<string, unknown>,
 ) {
-  const store = await createScoutStore().catch(() => null)
-  if (!store) return
+  // Use service role client for system-level capture (bypasses RLS)
+  const client = createServiceSupabase()
 
-  const sampleId = await createSample(store.getSupabaseClient(), {
+  const sampleId = await createSample(client, {
     platform: 'linkedin',
     leadId: lead.id,
     rawInput: lead.rawInput ?? body.rawInput as string | undefined,
@@ -349,7 +351,7 @@ async function createDatasetSampleForLead(
     const rejectedSignals = sourceFacts?.rejectedSignals as unknown[] | null
     const evidenceLedger = (canonical as Record<string, unknown>)?.evidenceLedger as unknown[] | null
 
-    await captureScore(store.getSupabaseClient(), sampleId, {
+    await captureScore(client, sampleId, {
       canonicalScore: Number(canonicalScore),
       displayScore: getLeadDisplayScore({ canonicalScore }).value ?? 0,
       qualification: String((canonical as Record<string, unknown>)?.qualification ?? ''),
@@ -375,7 +377,7 @@ async function createDatasetSampleForLead(
   // Capture routing stage
   const bestProfileId = typeof body.senderProfileId === 'string' ? body.senderProfileId : null
   if (bestProfileId) {
-    await captureRouting(store.getSupabaseClient(), sampleId, {
+    await captureRouting(client, sampleId, {
       senderRankings: [{ senderId: bestProfileId, name: null, profileMatch: 0, reasons: ['assigned at save'] }],
       bestSenderId: bestProfileId,
       currentSenderId: bestProfileId,
