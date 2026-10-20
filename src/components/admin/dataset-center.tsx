@@ -91,6 +91,25 @@ export function DatasetCenter() {
   useEffect(() => { void load() }, [load])
 
   const [exportInfo, setExportInfo] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<string | null>(null)
+
+  const syncAll = useCallback(async () => {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/dataset/sync', { method: 'POST', body: JSON.stringify({ action: 'sync_all' }) })
+      if (!res.ok) throw new Error('Sync failed')
+      const data = await res.json()
+      setSyncResult(`Synced ${data.synced} samples (${data.errors} errors)`)
+      await load()
+    } catch (e) {
+      setSyncResult(e instanceof Error ? e.message : 'Sync failed')
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setSyncResult(null), 5000)
+    }
+  }, [load])
 
   const exportData = useCallback(async (mode: ExportMode, format: ExportFormat, privacy: PrivacyMode) => {
     const params = new URLSearchParams({ mode, format, privacy })
@@ -129,7 +148,7 @@ export function DatasetCenter() {
       <DashHeader
         eyebrow="Training Funnel"
         title="Intelligence Dataset"
-        subtitle={`${total} versioned samples. Events are append-only. Training requires explicit approval. ${exportInfo ?? ''}`}
+        subtitle={`${total} versioned samples. Events are append-only. Training requires explicit approval. ${exportInfo ?? ''} ${syncResult ?? ''}`}
         actions={
           <div className="flex flex-wrap gap-2">
             <button onClick={() => exportData('FULL_AUDIT', 'jsonl', 'REDACTED')} className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12px] hover:bg-bone">
@@ -140,6 +159,9 @@ export function DatasetCenter() {
             </button>
             <button onClick={() => exportData('MESSAGE_PREFERENCE', 'jsonl', 'REDACTED')} className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12px] hover:bg-bone">
               <Download className="h-3.5 w-3.5" /> Messages
+            </button>
+            <button onClick={syncAll} disabled={syncing} className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12px] hover:bg-bone disabled:opacity-50">
+              {syncing ? 'Syncing...' : 'Sync All'}
             </button>
           </div>
         }
