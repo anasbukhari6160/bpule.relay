@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
 import { safeErrorResponse } from '@/lib/errors'
 import { emitAction } from '@/lib/action-ledger'
+import { captureOutcome, findLatestSampleForLead } from '@/lib/dataset/service'
 
 const STATUS_TYPES = [
   'meeting_booked',
@@ -102,6 +103,15 @@ export async function POST(
           idempotencyKey: `${actionType.toLowerCase()}:${id}:${statusType}`,
         })
       } catch { }
+    }
+
+    // Dataset: capture OUTCOME (won/lost/deferred).
+    if (newStatus) {
+      const sampleId = await findLatestSampleForLead(store.getSupabaseClient(), lead.organizationId, id)
+      if (sampleId) {
+        const datasetOutcome = statusType === 'meeting_booked' ? 'won' : statusType === 'interested' ? 'meeting' : 'lost'
+        void captureOutcome(store.getSupabaseClient(), sampleId, datasetOutcome).catch(() => {})
+      }
     }
 
     return NextResponse.json({ ok: true, status_type: statusType, lead_status: newStatus ?? lead.status })

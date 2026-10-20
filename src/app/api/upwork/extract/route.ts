@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
 import { extractUpworkJob, type ExtractedUpworkJob } from '@/lib/upwork-v2'
-import { readUpworkJobFacts } from '@/lib/upwork/facts'
+import { createSample, captureScore } from '@/lib/dataset/service'
 import { computeUpworkScore } from '@/lib/score/upwork-rubric'
+import { readUpworkJobFacts } from '@/lib/upwork/facts'
 
 export const maxDuration = 120
 
@@ -113,6 +114,31 @@ export async function POST(request: Request) {
         } catch (scoreErr) {
           console.warn('[upwork-extract] score persist failed:', scoreErr instanceof Error ? scoreErr.message : scoreErr)
         }
+
+        // Dataset: permanent, versioned sample for this Upwork analysis.
+        void (async () => {
+          try {
+            const orgId = store.organizationId
+            if (!orgId) return
+            const sampleId = await createSample(store.getSupabaseClient(), {
+              platform: 'upwork',
+              upworkJobId: savedJob.id,
+              rawInput: body.rawText,
+              organizationId: orgId,
+            })
+            if (sampleId && score) {
+              await captureScore(store.getSupabaseClient(), sampleId, {
+                canonicalScore: score.canonical.score,
+                displayScore: score.canonical.score / 10,
+                qualification: score.verdict === 'apply' ? 'STRONG' : score.verdict === 'apply_if_connects' ? 'MAYBE' : 'LOW',
+                scoreDimensions: score.canonical.dimensions ?? [],
+                confidence: 0.8,
+                recommendedAction: score.verdict,
+                scoringVersion: score.canonical.version,
+              })
+            }
+          } catch { /* never break extraction */ }
+        })()
 
         send({
           type: 'done',

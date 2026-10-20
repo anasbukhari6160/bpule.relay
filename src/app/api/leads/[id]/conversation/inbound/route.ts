@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
 import { safeErrorResponse } from '@/lib/errors'
 import { loadConversation } from '@/lib/conversation/service'
+import { captureClientReply, findLatestSampleForLead } from '@/lib/dataset/service'
 
 export const maxDuration = 60
 
@@ -33,6 +34,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   try {
     await store.recordProspectReply(id, text, { receivedAt })
+
+    // Dataset: capture CLIENT_REPLY event.
+    const sampleId = await findLatestSampleForLead(store.getSupabaseClient(), store.organizationId, id)
+    if (sampleId) void captureClientReply(store.getSupabaseClient(), sampleId, text).catch(() => {})
+
     const loaded = await loadConversation(store, id)
     if (!loaded) return NextResponse.json({ error: 'Lead not found.' }, { status: 404 })
     return NextResponse.json(loaded.view)

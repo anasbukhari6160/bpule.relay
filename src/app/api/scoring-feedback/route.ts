@@ -13,6 +13,7 @@ import { getAuthContext } from '@/lib/auth/organization'
 import { createServiceSupabase } from '@/lib/supabase/service'
 import { currentVersions } from '@/lib/intelligence-v3/versions'
 import { ROUTING_VERSION } from '@/lib/relay/sender-routing-engine'
+import { captureFeedback } from '@/lib/dataset/service'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,7 +63,39 @@ export async function POST(request: Request) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Dataset: attach feedback to the latest sample for this lead/job/run.
+  try {
+    const sampleId = await findLatestSample(client, auth.orgId, leadId, capturedProspectId, decisionRunId)
+    if (sampleId) {
+      await captureFeedback(client, sampleId, {
+        feedbackType,
+        note: typeof body.note === 'string' ? body.note : undefined,
+        observed: (body.observed && typeof body.observed === 'object' ? body.observed : undefined) as Record<string, unknown> | undefined,
+        expected: (body.expected && typeof body.expected === 'object' ? body.expected : undefined) as Record<string, unknown> | undefined,
+        timestamp: data.created_at,
+      }, auth.repId)
+    }
+  } catch { /* best-effort, never breaks feedback */ }
+
   return NextResponse.json({ ok: true, id: data.id, createdAt: data.created_at }, { status: 201 })
+}
+
+/** Find the most recent sample linked to this lead/prospect/run. */
+async function findLatestSample(
+  client: ReturnType<typeof createServiceSupabase>,
+  orgId: string,
+  leadId: string | null,
+  capturedProspectId: string | null,
+  decisionRunId: string | null,
+): Promise<string | null> {
+  const query = client.from('intelligence_samples').select('id').eq('organization_id', orgId)
+  if (leadId) query.eq('lead_id', leadId)
+  else if (capturedProspectId) query.eq('lead_id', capturedProspectId)
+  else if (decisionRunId) query.eq('decision_run_id', decisionRunId)
+  else return null
+  const { data } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle()
+  return data?.id ?? null
 }
 
 export async function GET(request: Request) {

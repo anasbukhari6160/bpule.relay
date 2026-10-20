@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
 import type { LeadSource } from '@/lib/domain/types'
+import { captureClientReply, findLatestSampleForLead } from '@/lib/dataset/service'
 
 export async function POST(req: NextRequest) {
   const store = await createScoutStore().catch(() => null)
@@ -60,6 +61,12 @@ export async function POST(req: NextRequest) {
       stage: 'new',
       senderProfileId: body.assignedProfileId || null,
     })
+
+    // Dataset: inbound lead's opening message is a client reply event.
+    const sampleId = await findLatestSampleForLead(store.getSupabaseClient(), result.lead.organizationId, result.lead.id)
+    if (sampleId && body.message) {
+      void captureClientReply(store.getSupabaseClient(), sampleId, body.message.trim()).catch(() => {})
+    }
 
     return NextResponse.json({ lead: result.lead }, { status: 201 })
   } catch (err) {

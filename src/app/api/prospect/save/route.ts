@@ -10,6 +10,8 @@ import { buildV3ReuseKey } from '@/lib/intelligence-v3/decision-reuse'
 import { recomputePacketFromStored, v3PacketToCanonical, buildMinimalV2Canonical } from '@/lib/intelligence-v3/bridge'
 import { isPacketCurrent } from '@/lib/intelligence-v3/versions'
 import { qualifyCanonicalScore, toStoredQualification, verdictForQualification } from '@/lib/scoring/qualification'
+import { createSample, captureScore, captureRouting } from '@/lib/dataset/service'
+import { getLeadDisplayScore } from '@/lib/scoring/display-score'
 import { resolveAccessibleIdentity } from '@/lib/workspace/resolve-active-identity'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
@@ -278,6 +280,9 @@ export async function POST(request: Request) {
 
     const lead = result.lead!
 
+    // Dataset: create a permanent, versioned intelligence sample for this analysis.
+    void createDatasetSampleForLead(lead, canonical, canonicalScore, connectionNote, body).catch(() => { /* never break save */ })
+
     // BUG-22: Do NOT save the generated note as a draft message. The note is
     // already persisted in extractionProfile.connectionNote. Saving it as a
     // draft would make it appear in the timeline, and "Send Without Note"
@@ -305,5 +310,73 @@ export async function POST(request: Request) {
       'Lead was not created. Please try again.',
       '/api/prospect/save',
     )
+  }
+}
+
+/**
+ * Create an intelligence sample + capture score/routing stages.
+ * Best-never: never blocks or fails the save.
+ */
+async function createDatasetSampleForLead(
+  lead: { id: string; organizationId: string; rawInput?: string | null },
+  canonical: Record<string, unknown> | null,
+  canonicalScore: number | null,
+  connectionNote: string | null,
+  body: Record<string, unknown>,
+) {
+  const store = await createScoutStore().catch(() => null)
+  if (!store) return
+
+  const sampleId = await createSample(store.getSupabaseClient(), {
+    platform: 'linkedin',
+    leadId: lead.id,
+    rawInput: lead.rawInput ?? body.rawInput as string | undefined,
+    organizationId: lead.organizationId,
+  })
+  if (!sampleId) return
+
+  // Capture score stage
+  if (canonicalScore !== null && canonical) {
+    const packet = ((canonical as Record<string, unknown>)?.v3DecisionPacket ?? null) as Record<string, unknown> | null
+    const intel = ((canonical as Record<string, unknown>)?.intelligence ?? null) as
+      | { person?: { fullName?: string | null; title?: string | null } | null; company?: { name?: string | null } | null }
+      | null
+    const buyerIntent = packet?.buyerIntent as Record<string, unknown> | null
+    const orgContext = packet?.orgContext as Record<string, unknown> | null
+    const sourceFacts = packet?.sourceFacts as Record<string, unknown> | null
+    const rejectedSignals = sourceFacts?.rejectedSignals as unknown[] | null
+    const evidenceLedger = (canonical as Record<string, unknown>)?.evidenceLedger as unknown[] | null
+
+    await captureScore(store.getSupabaseClient(), sampleId, {
+      canonicalScore: Number(canonicalScore),
+      displayScore: getLeadDisplayScore({ canonicalScore }).value ?? 0,
+      qualification: String((canonical as Record<string, unknown>)?.qualification ?? ''),
+      scoreDimensions: ((canonical as Record<string, unknown>)?.scoreBreakdown as Record<string, unknown>)?.dimensions as unknown[] ?? [],
+      confidence: Number(packet?.confidence ?? 0.5),
+      recommendedAction: String(packet?.action ?? ''),
+      resolvedDecision: packet?.decision as Record<string, unknown> ?? undefined,
+      sourceFacts: sourceFacts ?? undefined,
+      rejectedSignals: rejectedSignals ?? undefined,
+      evidenceLedger: evidenceLedger ?? undefined,
+      extractedIdentity: {
+        name: intel?.person?.fullName ?? null,
+        title: intel?.person?.title ?? null,
+        company: intel?.company?.name ?? null,
+        industry: orgContext?.currentIndustry ?? null,
+      },
+      scoringVersion: typeof (canonical as Record<string, unknown>)?.scoreVersion === 'string' ? (canonical as Record<string, unknown>).scoreVersion as string : undefined,
+      buyerIntentVersion: typeof buyerIntent?.version === 'string' ? buyerIntent.version : undefined,
+      modelVersion: typeof packet?.decisionModel === 'string' ? packet.decisionModel : undefined,
+    })
+  }
+
+  // Capture routing stage
+  const bestProfileId = typeof body.senderProfileId === 'string' ? body.senderProfileId : null
+  if (bestProfileId) {
+    await captureRouting(store.getSupabaseClient(), sampleId, {
+      senderRankings: [{ senderId: bestProfileId, name: null, profileMatch: 0, reasons: ['assigned at save'] }],
+      bestSenderId: bestProfileId,
+      currentSenderId: bestProfileId,
+    })
   }
 }

@@ -3,6 +3,7 @@ import { createScoutStore } from '@/lib/store'
 import { safeErrorResponse } from '@/lib/errors'
 import { composeForLead } from '@/lib/conversation/service'
 import type { ComposeIntent } from '@/lib/conversation/types'
+import { captureMessageGeneration, findLatestSampleForLead } from '@/lib/dataset/service'
 
 export const maxDuration = 120
 
@@ -33,6 +34,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       profileId: typeof body.profileId === 'string' ? body.profileId : null,
     })
     if (!composed) return NextResponse.json({ error: 'Lead not found.' }, { status: 404 })
+
+    // Dataset: capture MESSAGE_GENERATION (connection/DM/followup/reply).
+    const sampleId = await findLatestSampleForLead(store.getSupabaseClient(), store.organizationId, id)
+    if (sampleId && composed.draft) {
+      void captureMessageGeneration(store.getSupabaseClient(), sampleId, {
+        generatedText: composed.draft.text,
+        messageStage: intent,
+        senderProfileId: typeof body.profileId === 'string' ? body.profileId : undefined,
+      }).catch(() => {})
+    }
+
     return NextResponse.json({
       draft: composed.draft,
       issues: composed.result.issues,
