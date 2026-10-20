@@ -42,7 +42,7 @@ import { ROUTING_MISMATCH_DELTA } from '@/lib/intelligence-v3/action/recommended
 /** Canonical decision detail returned by /api/prospect/analyze (Phase 25-31). */
 interface DecisionDetail {
   recommendedAction?: { action: string; reason: string; messageEligible: boolean; coldAction: string; conversationOverride: boolean; routing: { recommendation: string; reason: string | null; delta: number | null } } | null
-  routingRecommendation?: { action: string; reason: string; routing: { recommendation: string; reason: string | null; delta: number | null } } | null
+  routingRecommendation?: { recommendation?: string; reason?: string | null; delta?: number | null; routing?: { recommendation: string; reason: string | null; delta: number | null } } | null
   confidenceDetail?: { label: 'HIGH' | 'MEDIUM' | 'LOW'; reasons: string[]; researchMore: boolean } | null
   rejectedSignals?: RejectedSignalView[]
   resolved?: { access?: string; activityRecency?: string; buyerTiming?: string; fit?: string; authority?: string; commercialPotential?: string } | null
@@ -718,11 +718,16 @@ export default function ProspectCheckPage() {
                       {result.decision.confidenceDetail.reasons.slice(0, 3).map((r) => <li key={r} className="text-[11px] text-graphite">• {r}</li>)}
                     </ul>
                   ) : null}
-                  {result.decision.routingRecommendation && result.decision.routingRecommendation.routing.recommendation !== 'KEEP' && (
-                    <p className="mt-2 text-[11px] text-orange" data-testid="routing-recommendation">
-                      Routing: {result.decision.routingRecommendation.routing.recommendation.replaceAll('_', ' ').toLowerCase()}. {result.decision.routingRecommendation.routing.reason}
-                    </p>
-                  )}
+                  {(() => {
+                    const routing = result.decision.routingRecommendation?.routing ?? result.decision.routingRecommendation
+                    const recommendation = routing?.recommendation
+                    if (!recommendation || recommendation === 'KEEP') return null
+                    return (
+                      <p className="mt-2 text-[11px] text-orange" data-testid="routing-recommendation">
+                        Routing: {recommendation.replaceAll('_', ' ').toLowerCase()}. {routing?.reason}
+                      </p>
+                    )
+                  })()}
                   {result.decision.rejectedSignals && result.decision.rejectedSignals.length > 0 && (
                     <RejectedSignalInspector signals={result.decision.rejectedSignals} compact className="mt-2" />
                   )}
