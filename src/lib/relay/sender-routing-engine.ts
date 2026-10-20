@@ -236,7 +236,7 @@ function scoreSenderAgainstLead(
     1,
     0.3 +
       (skillHits > 3 ? 0.2 : skillHits > 0 ? 0.1 : 0) +
-      (bestProof?.points ?? 0 > 10 ? 0.2 : bestProof ? 0.1 : 0) +
+      ((bestProof?.points ?? 0) > 10 ? 0.2 : bestProof ? 0.1 : 0) +
       (industryHits > 0 ? 0.15 : 0) +
       (sender.historicalOutcomes ? 0.1 : 0),
   )

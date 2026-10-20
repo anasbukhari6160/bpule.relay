@@ -25,7 +25,10 @@ export const SOURCE_FACTS_VERSION = 'source_facts_v1'
 export const ATTRIBUTION_VERSION = 'attribution_v2'
 export const ACTION_POLICY_VERSION = 'action_policy_v2'
 export const DISPLAY_VERSION = 'display_v2'
-export const V3_DECISION_PROMPT_VERSION = 'v3_decision_prompt_v2'
+// v3: the organisation name now reaches the model (a template typo sent the
+// literal text "ctx.organization.name" before). Part of the reuse key only;
+// stored packets stay current (isPacketCurrent does not read the prompt).
+export const V3_DECISION_PROMPT_VERSION = 'v3_decision_prompt_v3'
 
 export { BUYER_INTENT_VERSION }
 

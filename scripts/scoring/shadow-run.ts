@@ -71,6 +71,7 @@ async function runGolden(): Promise<ShadowRow[]> {
 async function runDb(): Promise<ShadowRow[]> {
   const { createServiceSupabase } = await import('../../src/lib/supabase/service')
   const { recomputePacketFromStored, produceV3Intelligence } = await import('../../src/lib/intelligence-v3/bridge')
+  const { parsePacket } = await import('../../src/lib/relay/routing-context')
   const client = createServiceSupabase()
   const limit = Number(arg('limit', '200'))
   const days = Number(arg('days', '30'))
@@ -94,11 +95,14 @@ async function runDb(): Promise<ShadowRow[]> {
   for (const r of all) {
     const raw = typeof r.raw_input === 'string' ? r.raw_input : ''
     if (raw.length < 40) continue
-    const stored = (typeof r.canonical_intelligence === 'string' ? JSON.parse(r.canonical_intelligence as string) : r.canonical_intelligence) as Record<string, unknown> | null
-    const storedPacket = (stored?.v3Packet ?? stored?.packet ?? stored) as Record<string, unknown> | null
+    // The stored blob wraps the packet under `v3DecisionPacket`; parsePacket
+    // also accepts a bare packet (older rows, tests). Reading `.v3Packet`
+    // here replayed the whole blob and failed on every row.
+    const storedPacket = parsePacket(r.canonical_intelligence) as unknown as Record<string, unknown> | null
+    if (!storedPacket) continue
     try {
       const packet = useModel
-        ? (await produceV3Intelligence(raw, {})).packet
+        ? (await produceV3Intelligence(raw, {})).v3Packet
         : await recomputePacketFromStored(raw, storedPacket as never)
       if (!packet) continue
       rows.push({

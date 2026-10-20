@@ -200,7 +200,7 @@ export function buildDecisionUserPrompt(ctx: V3DecisionContext): string {
   }
 
   parts.push('\n## Organization')
-  parts.push(`Name: ctx.organization.name ?? 'Unknown'}`)
+  parts.push(`Name: ${ctx.organization.name ?? 'Unknown'}`)
   parts.push(`Industry: ${ctx.organization.industry ?? 'Unknown'}`)
   parts.push(`Size: ${ctx.organization.size ?? 'Unknown'}`)
 
