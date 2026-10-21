@@ -2773,6 +2773,7 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
       scoreBreakdown: Record<string, unknown> | null
       revenueIdentityId: string | null
       senderProfileId: string | null
+      isTest?: boolean
     }): Promise<CapturedProspect> {
       const entry: CapturedProspect = {
         id: nextId('cp'),
@@ -2792,6 +2793,9 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         senderProfileId: input.senderProfileId,
         status: 'captured',
         convertedLeadId: null,
+        opportunityKey: null,
+        isTest: input.isTest === true,
+        sourceKind: input.isTest === true ? 'E2E' : 'PRODUCTION',
         lastActivityAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),

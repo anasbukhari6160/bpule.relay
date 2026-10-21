@@ -108,6 +108,8 @@ export async function createSample(
     upwork_job_id: input.upworkJobId ?? null,
     platform: input.platform,
     source_type: input.sourceType ?? null,
+    is_test: input.isTest === true,
+    source_kind: input.isTest === true ? 'E2E' : 'PRODUCTION',
     version,
     funnel_stage: 'EXTRACTION',
     raw_input: input.rawInput ?? null,

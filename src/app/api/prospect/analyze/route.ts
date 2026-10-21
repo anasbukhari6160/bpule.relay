@@ -191,6 +191,8 @@ export async function POST(request: Request) {
      */
     existingCanonical?: CanonicalProspectIntelligence
     revenueIdentityId?: string | null
+    /** E2E/TEST harness flag: persisted so test data is excluded from analytics. */
+    isTest?: boolean
   }
   try {
     body = await request.json()
@@ -633,6 +635,7 @@ export async function POST(request: Request) {
           scoreBreakdown: canonical.scoreBreakdown as unknown as Record<string, unknown>,
           revenueIdentityId: requestedWorkspaceId,
           senderProfileId: bestSender?.id ?? null,
+          isTest: body.isTest === true,
         })
         await store.emitRelayEvent({
           eventType: 'PROSPECT_CAPTURED',

@@ -1882,6 +1882,12 @@ export interface CapturedProspect {
   senderProfileId: string | null
   status: 'captured' | 'converted' | 'discarded'
   convertedLeadId: string | null
+  /** Stable underlying-opportunity key (sha256 of the normalised source). */
+  opportunityKey: string | null
+  /** True for E2E/TEST/DEMO data; excluded from analytics by default. */
+  isTest: boolean
+  /** Explicit source classification (PRODUCTION/E2E/TEST/DEMO/SEED/IMPORT/MANUAL). */
+  sourceKind: string
   lastActivityAt: string
   createdAt: string
   updatedAt: string
@@ -1899,6 +1905,7 @@ export interface CapturedProspect {
 
 export type RelayEventType =
   | 'LEAD_CREATED'
+  | 'DATASET_CAPTURE_ERROR'
   | 'LEAD_QUALIFIED'
   | 'WORK_ASSIGNED'
   | 'OUTREACH_PREPARED'

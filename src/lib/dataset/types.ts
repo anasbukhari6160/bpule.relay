@@ -191,6 +191,8 @@ export interface CreateSampleInput {
   upworkJobId?: string
   rawInput?: string
   organizationId: string
+  /** Test/E2E/DEMO data is excluded from analytics by default (P0-2). */
+  isTest?: boolean
 }
 
 export interface DatasetMetrics {

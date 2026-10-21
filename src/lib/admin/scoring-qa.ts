@@ -48,14 +48,14 @@ export interface QaDecisionRow {
   contradictions: number
   fallbackUsed: boolean
   eventSource: string | null
+  /** Stable underlying-opportunity key; null on rows not yet backfilled. */
+  opportunityKey: string | null
   versions: V3LeadDecisionPacket['versions'] | null
   stale: boolean
   rejectedSignals: RejectedSignal[]
   decisionRunId: string | null
   /** Candidate-engine results for the same row (Phase 34: production vs candidate). */
   candidates: QaCandidate[]
-  /** Unique-opportunity key so a lead and its captured prospect can be grouped. */
-  opportunityKey: string | null
 }
 
 export interface QaCandidate {
@@ -101,6 +101,8 @@ export function projectDecisionRow(input: {
   bestSenderMatch?: number | null
   /** Raw source, used only to derive candidate features; never returned. */
   rawInput?: string | null
+  /** Stable underlying-opportunity key for dedupe. */
+  opportunityKey?: string | null
 }): QaDecisionRow {
   const packet = parsePacket(input.canonicalIntelligence)
   const ci = (typeof input.canonicalIntelligence === 'string' ? safeParse(input.canonicalIntelligence) : input.canonicalIntelligence) as Record<string, unknown> | null
@@ -147,7 +149,7 @@ export function projectDecisionRow(input: {
     rejectedSignals: packet?.sourceFacts?.rejectedSignals ?? [],
     decisionRunId: packet?.decisionRunId ?? null,
     candidates,
-    opportunityKey: opportunityKey(input.rawInput),
+    opportunityKey: input.opportunityKey ?? opportunityKey(input.rawInput),
   }
 }
 
@@ -253,12 +255,12 @@ export function buildScoringMonitor(rows: QaDecisionRow[], feedback: Array<{ fee
 }
 
 /** Load recent decisions for an org from leads and captured prospects. */
-export async function loadRecentDecisions(client: SupabaseClient, orgId: string, opts: { since: string; limit?: number }): Promise<QaDecisionRow[]> {
+export async function loadRecentDecisions(client: SupabaseClient, orgId: string, opts: { since: string; limit?: number; latestOnly?: boolean; includeTest?: boolean }): Promise<QaDecisionRow[]> {
   const limit = opts.limit ?? 300
   const [{ data: leads }, { data: prospects }] = await Promise.all([
     client
       .from('leads')
-      .select('id, company, contact_name, owner_rep_id, created_at, canonical_score, canonical_intelligence, sender_profile_id, best_profile_id, best_profile_match_score, raw_input')
+      .select('id, company, contact_name, owner_rep_id, created_at, canonical_score, canonical_intelligence, sender_profile_id, best_profile_id, best_profile_match_score, raw_input, opportunity_key, is_test')
       .eq('organization_id', orgId)
       .not('canonical_intelligence', 'is', null)
       .gte('created_at', opts.since)
@@ -266,7 +268,7 @@ export async function loadRecentDecisions(client: SupabaseClient, orgId: string,
       .limit(limit),
     client
       .from('captured_prospects')
-      .select('id, extracted_company, extracted_name, owner_rep_id, created_at, canonical_score, canonical_intelligence, sender_profile_id, raw_input')
+      .select('id, extracted_company, extracted_name, owner_rep_id, created_at, canonical_score, canonical_intelligence, sender_profile_id, raw_input, opportunity_key, is_test')
       .eq('organization_id', orgId)
       .eq('status', 'captured')
       .not('canonical_intelligence', 'is', null)
@@ -276,21 +278,36 @@ export async function loadRecentDecisions(client: SupabaseClient, orgId: string,
   ])
   const rows: QaDecisionRow[] = []
   for (const l of (leads ?? []) as Array<Record<string, unknown>>) {
+    if (!opts.includeTest && (l.is_test === true)) continue
     rows.push(projectDecisionRow({
       id: l.id as string, kind: 'lead', company: (l.company as string) ?? null, contactName: (l.contact_name as string) ?? null, repId: (l.owner_rep_id as string) ?? null,
       createdAt: l.created_at as string, canonicalScore: (l.canonical_score as number) ?? null, canonicalIntelligence: l.canonical_intelligence,
       currentSenderId: (l.sender_profile_id as string) ?? null, bestSenderId: (l.best_profile_id as string) ?? null, bestSenderMatch: (l.best_profile_match_score as number) ?? null,
-      rawInput: (l.raw_input as string) ?? null,
+      rawInput: (l.raw_input as string) ?? null, opportunityKey: (l.opportunity_key as string) ?? null,
     }))
   }
   for (const p of (prospects ?? []) as Array<Record<string, unknown>>) {
+    if (!opts.includeTest && (p.is_test === true)) continue
     rows.push(projectDecisionRow({
       id: p.id as string, kind: 'prospect', company: (p.extracted_company as string) ?? null, contactName: (p.extracted_name as string) ?? null, repId: (p.owner_rep_id as string) ?? null,
       createdAt: p.created_at as string, canonicalScore: (p.canonical_score as number) ?? null, canonicalIntelligence: p.canonical_intelligence,
       currentSenderId: (p.sender_profile_id as string) ?? null,
-      rawInput: (p.raw_input as string) ?? null,
+      rawInput: (p.raw_input as string) ?? null, opportunityKey: (p.opportunity_key as string) ?? null,
     }))
   }
   rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  // Default: latest decision per unique opportunity (P0-1). History stays
+  // available via latestOnly:false.
+  if (opts.latestOnly !== false) {
+    const seen = new Set<string>()
+    const deduped: QaDecisionRow[] = []
+    for (const r of rows) {
+      const key = r.opportunityKey ?? `${r.kind}:${r.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      deduped.push(r)
+    }
+    return deduped
+  }
   return rows
 }

@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
   }
 
-  let body: { rawText?: string; url?: string }
+  let body: { rawText?: string; url?: string; isTest?: boolean }
   try {
     body = await request.json()
   } catch {
@@ -131,6 +131,7 @@ export async function POST(request: Request) {
               upworkJobId: savedJob.id,
               rawInput: body.rawText,
               organizationId: orgId,
+              isTest: body.isTest === true,
             })
             if (sampleId && score) {
               await captureScore(client, sampleId, {
@@ -143,7 +144,21 @@ export async function POST(request: Request) {
                 scoringVersion: score.canonical.version,
               })
             }
-          } catch { /* never break extraction */ }
+          } catch (captureErr) {
+            // A completed analysis must never leave an incomplete sample silently.
+            const message = captureErr instanceof Error ? captureErr.message : JSON.stringify(captureErr)
+            console.error('[upwork-extract] dataset capture failed:', message)
+            try {
+              await store.emitRelayEvent({
+                eventType: 'DATASET_CAPTURE_ERROR',
+                entityType: 'intelligence_sample',
+                actorType: 'system',
+                payload: { platform: 'upwork', stage: 'SCORE', error: message.slice(0, 500) },
+                source: 'app',
+                sourceEventId: `dataset_capture_error:upwork:${Date.now()}`,
+              })
+            } catch { /* non-fatal */ }
+          }
         })()
 
         send({

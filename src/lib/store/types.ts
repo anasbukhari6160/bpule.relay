@@ -937,6 +937,8 @@ export interface ScoutStore {
     scoreBreakdown: Record<string, unknown> | null
     revenueIdentityId: string | null
     senderProfileId: string | null
+    /** Test/E2E/DEMO data is excluded from analytics by default (P0-2). */
+    isTest?: boolean
   }): Promise<CapturedProspect>
   listCapturedProspects(): Promise<CapturedProspect[]>
   getCapturedProspect(id: string): Promise<CapturedProspect | null>

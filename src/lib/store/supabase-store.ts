@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { opportunityKey } from '@/lib/scoring-v4/opportunity-key'
 import { determineFollowup } from '@/lib/relay/followup-engine'
 import type {
   ContentDraft,
@@ -5205,6 +5206,8 @@ export class SupabaseStore implements ScoutStore {
     scoreBreakdown: Record<string, unknown> | null
     revenueIdentityId: string | null
     senderProfileId: string | null
+    /** Test/E2E/DEMO data is excluded from analytics by default (P0-2). */
+    isTest?: boolean
   }): Promise<CapturedProspect> {
     const existing = await this.client
       .from('captured_prospects')
@@ -5219,6 +5222,7 @@ export class SupabaseStore implements ScoutStore {
       return { ...this.mapCapturedProspect(existing.data as Row), isNewCapture: false }
     }
 
+    const oppKey = opportunityKey(input.rawInput)
     const { data, error } = await this.client
       .from('captured_prospects')
       .insert({
@@ -5236,6 +5240,9 @@ export class SupabaseStore implements ScoutStore {
         score_breakdown: input.scoreBreakdown,
         revenue_identity_id: input.revenueIdentityId,
         sender_profile_id: input.senderProfileId,
+        opportunity_key: oppKey,
+        is_test: input.isTest === true,
+        source_kind: input.isTest === true ? 'E2E' : 'PRODUCTION',
         status: 'captured',
       })
       .select('*')
@@ -7017,6 +7024,9 @@ export class SupabaseStore implements ScoutStore {
       senderProfileId: (r.sender_profile_id as string) ?? null,
       status: r.status as CapturedProspect['status'],
       convertedLeadId: (r.converted_lead_id as string) ?? null,
+      opportunityKey: (r.opportunity_key as string) ?? null,
+      isTest: Boolean(r.is_test),
+      sourceKind: (r.source_kind as string) ?? 'PRODUCTION',
       lastActivityAt: r.last_activity_at as string,
       createdAt: r.created_at as string,
       updatedAt: r.updated_at as string,
