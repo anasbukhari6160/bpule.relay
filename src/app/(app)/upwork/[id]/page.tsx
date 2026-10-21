@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
 import { createScoutStore } from '@/lib/store'
+import { PageHeader } from '@/components/ui/page-header'
 import { computeUpworkScore } from '@/lib/score/upwork-rubric'
 import { matchProfilesToJob } from '@/lib/upwork/score'
 import { loadSenderProfiles } from '@/lib/relay/routing-context'
@@ -58,35 +58,47 @@ export default async function UpworkJobPage({
   } catch { profileMatch = null }
 
   const verdict = score.verdict ? VERDICT_STYLE[score.verdict] : VERDICT_STYLE.skip
+  // Read the canonical job facts for honest display: a source proposal range
+  // is shown verbatim, and missing Connects stays unknown (QA BUG-11-02/03).
+  const jobFacts = (job.jobFacts ?? null) as {
+    proposals?: { count: number | null; range?: [number, number] | null; evidence?: string | null }
+    connects?: number | null
+    rate?: { type?: string; fixedBudget?: number | null }
+  } | null
+  const proposalLabel = jobFacts?.proposals?.evidence
+    ?? (job.proposalCount !== null
+      ? (jobFacts?.proposals?.range ? `~${job.proposalCount} estimated` : `${job.proposalCount} proposals`)
+      : null)
+  const connectsLabel = jobFacts?.connects != null
+    ? `${jobFacts.connects} Connects`
+    : (job.connectsCost ? `${job.connectsCost} Connects` : 'Connects not stated')
   const facts = [
     payLabel(job),
     job.experienceLevel,
     job.duration,
     job.weeklyHours,
     job.engagementType,
-    job.proposalCount !== null ? `${job.proposalCount} proposals` : null,
-    `${job.connectsCost} Connects`,
+    proposalLabel,
+    connectsLabel,
     job.messages.length > 0 ? `${job.messages.length} message${job.messages.length === 1 ? '' : 's'}` : null,
   ].filter(Boolean)
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <Link href="/upwork" className="text-[13px] font-medium text-orange">All Upwork jobs</Link>
-
-      <header>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <h1 className="text-[22px] font-medium leading-tight text-ink">{job.title}</h1>
-          <span className={cn('rounded-full px-2.5 py-1 text-[12px] font-medium', verdict.bg, verdict.text)}>{verdict.label}</span>
-        </div>
-        <p className="mt-2 text-[13px] text-graphite">{facts.join(' · ')}</p>
-        <p className="mt-1 text-[13px] text-stone">
-          {score.total} / 10 <span className="text-graphite">({score.canonical.score}/100)</span>
-          <span> · {upworkStageLabel(job.status)}</span>
-        </p>
-      </header>
+      <PageHeader
+        title={job.title}
+        description={`${facts.join(' · ')} · ${score.total} / 10 (${score.canonical.score}/100) · ${upworkStageLabel(job.status)}`}
+        action={<span className={cn('rounded-full px-2.5 py-1 text-[12px] font-medium', verdict.bg, verdict.text)}>{verdict.label}</span>}
+      />
 
       <section className="rounded-2xl border border-line bg-bone-raised/30 p-4 sm:p-5">
-        <p className="text-[13px] text-graphite">Spend {job.connectsCost} Connects only if you are sending this proposal.</p>
+        <p className="text-[13px] text-graphite">
+          {jobFacts?.connects != null
+            ? `Spend ${jobFacts.connects} Connects only if you are sending this proposal.`
+            : job.connectsCost
+              ? `Spend ${job.connectsCost} Connects only if you are sending this proposal.`
+              : 'Connects cost not stated — confirm it on Upwork before applying.'}
+        </p>
 
         {(score.canonical.reasons.length > 0 || score.canonical.watchOut.length > 0) && (
           <div className="mt-3 grid gap-3 sm:grid-cols-2" data-testid="upwork-why">
@@ -238,8 +250,12 @@ function payLabel(job: {
       ? `$${job.hourlyRateMin}/hr`
       : `$${job.hourlyRateMin}–$${job.hourlyRateMax}/hr`
   }
-  if (job.budgetMin && job.budgetMax) return `$${job.budgetMin}–$${job.budgetMax} fixed`
-  if (job.budgetMin) return `From $${job.budgetMin}`
-  if (job.budgetMax) return `Up to $${job.budgetMax}`
+  if (job.budgetMin && job.budgetMax) {
+    return job.budgetMin === job.budgetMax
+      ? `$${job.budgetMin.toLocaleString()} fixed`
+      : `$${job.budgetMin.toLocaleString()}–$${job.budgetMax.toLocaleString()} fixed`
+  }
+  if (job.budgetMin) return `$${job.budgetMin.toLocaleString()} fixed`
+  if (job.budgetMax) return `Up to $${job.budgetMax.toLocaleString()}`
   return null
 }

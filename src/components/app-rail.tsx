@@ -32,6 +32,7 @@ import { NotificationCenter } from '@/components/notification-center'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { useActiveIdentity } from '@/components/workspace/active-identity-provider'
 import { APP_VERSION } from '@/lib/version'
+import { AppBackButton } from '@/components/app-back-button'
 import type { RepRole } from '@/lib/domain/types'
 
 const PRIMARY_NAV = [
@@ -400,8 +401,9 @@ export function AppRail({
     <>
       {/* Mobile top bar */}
       <header className="sticky top-0 z-40 border-b border-line bg-bone/95 backdrop-blur-sm lg:hidden">
-        <div className="flex items-center justify-between px-4 py-2.5">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <AppBackButton className="shrink-0" />
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}

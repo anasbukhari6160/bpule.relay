@@ -7,6 +7,7 @@ import { isDemoMode } from "@/lib/ai/config";
 import { createScoutStore } from "@/lib/store";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { AppRail } from "@/components/app-rail";
+import { AppBackButton } from "@/components/app-back-button";
 import { AppIdentifyWrapper } from "@/components/app-identify-wrapper";
 import { AnalyticsProvider } from "@/components/analytics-provider";
 import { ActiveIdentityProvider } from "@/components/workspace/active-identity-provider";
@@ -85,7 +86,10 @@ export default async function AppLayout({
               todaySends={queue.todaySends}
               dailyLimit={queue.dailyLimit}
             />
-            <main className="mx-auto w-full max-w-6xl px-5 pt-6 pb-24 lg:px-8 lg:pt-8 lg:pb-8">
+            <main className="mx-auto w-full max-w-6xl px-5 pt-6 pb-24 lg:px-8 lg:pt-0 lg:pb-8">
+              <div className="sticky top-0 z-30 -mx-8 mb-6 hidden border-b border-line bg-bone/95 px-8 py-2.5 backdrop-blur-sm lg:block">
+                <AppBackButton />
+              </div>
               {children}
             </main>
           </div>
