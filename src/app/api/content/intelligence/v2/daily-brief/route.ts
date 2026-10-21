@@ -124,13 +124,18 @@ async function generateAndRespond(
 
       return NextResponse.json({ brief: result.brief, ideas: result.ideas, cost: result.cost })
     } catch (aiErr) {
-      console.error('[daily-brief] AI generation failed:', aiErr instanceof Error ? aiErr.message : String(aiErr))
+      console.error('[daily-brief] AI generation failed:', aiErr instanceof Error ? aiErr.message : JSON.stringify(aiErr))
       // AI providers failed — fall back to deterministic brief from trends + profile
       try {
          const fallbackIdeas = generateFallbackIdeas(profile ?? null, trendCandidates, persona)
-         // Delete any failed brief for this persona+date to avoid unique constraint violation
-         await store.deleteDailyContentBriefByPersonaAndDate(persona.id, localDate).catch(() => {})
-         const brief = await store.createDailyContentBrief({
+         // The AI path may have left a brief for this persona+date. A rep cannot
+         // delete briefs (RLS allows only org admins), so delete+insert would hit
+         // the unique constraint — reuse the existing brief instead.
+         const existing = await store.getDailyContentBriefWithIdeas(persona.id, localDate).catch(() => null)
+         if (existing && existing.ideas.length > 0) {
+           return NextResponse.json({ brief: existing.brief, ideas: existing.ideas, fromFallback: true })
+         }
+         const brief = existing?.brief ?? await store.createDailyContentBrief({
            organizationId: persona.organizationId,
            personaId: persona.id,
            localDate,
