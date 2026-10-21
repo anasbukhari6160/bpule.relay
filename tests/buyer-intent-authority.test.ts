@@ -111,11 +111,14 @@ describe('resolveVerifiedBuyerIntent — the single authority', () => {
     expect(r.contradictions).toEqual([])
   })
 
-  it('fails closed when the opportunity model and the source disagree', () => {
+  it('credits a source-verified request even when the model scores it low (QA BUG-PRO-021)', () => {
     const r = resolveBuyerIntentFromSource(GENUINE_BUYER, { modelBuyerProbability: 0.1 })
     expect(r.verifiedBuyerRequest).toBe(true)
-    expect(r.buyerIntentLevel).toBe('UNKNOWN')
+    // The deterministic source reading is the authority; a low model score is
+    // recorded for audit but must not erase an explicit request.
+    expect(r.buyerIntentLevel).toBe('HIGH')
     expect(r.contradictions.join(' ')).toMatch(/opportunity model scored buyer request 0\.10/)
+    expect(r.effectiveBuyerProbability).toBeGreaterThanOrEqual(0.7)
   })
 
   it('fails closed when the signal check claims a request the model rejects', () => {
@@ -128,9 +131,9 @@ describe('resolveVerifiedBuyerIntent — the single authority', () => {
     expect(r.effectiveBuyerProbability).toBeLessThanOrEqual(0.2)
   })
 
-  it('never surfaces HIGH from a verified fact without an agreeing scorer', () => {
+  it('surfaces HIGH from a verified source request regardless of the model', () => {
     const r = resolveBuyerIntentFromSource(GENUINE_BUYER, { modelBuyerProbability: 0.45 })
-    expect(r.buyerIntentLevel).toBe('MEDIUM')
+    expect(r.buyerIntentLevel).toBe('HIGH')
   })
 })
 
@@ -161,7 +164,7 @@ describe('cache invalidation', () => {
     const key = buildV3ReuseKey({ rawText: SELLER_FOUNDER })
     expect(key).toMatch(/^[0-9a-f]{64}$/)
     // The version is part of the preimage: a bump yields a different key.
-    expect(BUYER_INTENT_VERSION).toBe('buyer_intent_v4')
+    expect(BUYER_INTENT_VERSION).toBe('buyer_intent_v5')
   })
 })
 
@@ -273,7 +276,7 @@ describe('API E2E: full seller-side founder profile', () => {
     expect(done.canonical.intelligence.company.industry).toBe('AI Governance / RegTech')
 
     // The model's contradiction is in the debug trace.
-    expect(done.score.decisionAdjustments.join(' ')).toMatch(/Contradiction:/)
+    expect(done.score.decisionAdjustments.join(' ')).toMatch(/Contradiction \(audit\):/)
 
     // Score stays in the moderate band from authority/fit/product, action is a soft touch.
     expect(done.score.total).toBeGreaterThanOrEqual(30)

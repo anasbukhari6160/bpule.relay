@@ -71,6 +71,9 @@ const INTERNAL_HIRING_CONTEXT =
 const EMPLOYMENT_HIRING: RegExp[] = [
   /\b(?:we(?:'|')?re|we\s+are|now|currently|is)\s+hiring\b/i,
   /\bhiring\s+(?:a|an|for|our|multiple|several|\d+)\b/i,
+  // "Hiring: 3x React developers for a fintech client" — a recruiter posting
+  // roles, not a buyer request (QA BUG-14-02).
+  /\bhiring\s*[:：]?\s*(?:\d+|a|an|two|three|four|five|multiple|several)/i,
   /\bjoin\s+our\s+(?:\w+\s+){0,3}team\b/i,
   /\b(?:submit|send|share|attach)\s+(?:your|their|a|an)?\s*(?:cv|resume|résumé)\b/i,
   /\b(?:interested|qualified|suitable)\s+candidates\b/i,
@@ -212,6 +215,25 @@ const SELLER_OWNERSHIP: RegExp[] = [
   /\b(?:services|solutions)\s+(?:for|to)\s+(?:websites|businesses|companies|startups|enterprises|brands|clients)\b/i,
 ]
 
+/**
+ * The seller grammar that must win over a first-person-request reading.
+ * "Looking for React projects" starts with "looking for" but is the prospect
+ * seeking work, not a request to buy — so it is checked before the
+ * first-person-request override.
+ */
+const SELLER_GRAMMAR: RegExp[] = [
+  /\b(?:i|we)\s+(?:am|are)\s+(?:a\s+|an\s+)?(?:freelance|independent|self[- ]employed|contract(?:or)?|solo|boutique)\b/i,
+  /\b(?:looking|searching|seeking)\s+for\s+(?:new\s+)?(?:clients?|projects?|work|gigs?|contracts?|assignments?|missions?)\b/i,
+  /\b(?:i|we)\s+can\s+(?:help|build|develop|design|create|ship|deliver|automate)\b/i,
+  /\bavailable\s+for\s+(?:new\s+)?(?:projects?|work|clients?|gigs?|contracts?|hire)\b/i,
+  // An invitation addressed to the reader is a seller offer only when it names
+  // a need to be filled — "contact me if you need a developer" is the prospect
+  // selling; "message me if you have done this before" is a buyer inviting a
+  // reply, and "if you love dense UI, DM me" is a hiring post.
+  /\b(?:contact|reach|dm|message|email)\s+(?:me|us)\s+if\s+(?:you|your\s+(?:team|company|organization))\b[^.\n]{0,50}\b(?:need|needs|hire|hiring|looking|seeking|want|interested)\b/i,
+  /\b(?:if|when)\s+(?:you|your\s+(?:team|company|organization))\b[^.\n]{0,60}\b(?:need|needs|hire|hiring|looking|seeking|want)\b[^.\n]{0,60}\b(?:contact|reach|dm|message|email)\s+(?:me|us)\b/i,
+]
+
 /** The prospect asking for something themselves — overrides a seller reading on the same line. */
 const FIRST_PERSON_REQUEST =
   /\b(?:we(?:'|’)?re|we\s+are|i(?:'|’)?m|i\s+am|we|i)\s+(?:(?:currently|now|actively|urgently|also)\s+)?(?:looking\s+for|seeking|searching\s+for|need|hiring|want\s+to\s+(?:hire|engage|work\s+with)|(?:issuing|running|launching|opening)\s+an?\s+rfp|requesting\s+proposals|evaluating\s+(?:vendors|agencies|partners))\b|^(?:looking\s+for|seeking|searching\s+for|need|hiring)\b/i
@@ -248,6 +270,9 @@ export function isNonProviderRequest(line: string): boolean {
 }
 
 export function isSellerOwnedLine(line: string): boolean {
+  // Seller grammar wins over a first-person-request reading: "Looking for
+  // React projects" is the prospect seeking work, not a request to buy.
+  if (SELLER_GRAMMAR.some((re) => re.test(line))) return true
   if (FIRST_PERSON_REQUEST.test(line) || mlMatches(ML_EXTERNAL_REQUEST, line)) return false
   return SELLER_OWNERSHIP.some((re) => re.test(line)) || mlMatches(ML_SELLER_OWNERSHIP, line)
 }
@@ -421,6 +446,99 @@ export function findLineMentioning(rawText: string, terms: string[]): SourceLine
   const re = new RegExp(`(?<![a-z0-9])(?:${escaped.join('|')})(?![a-z0-9])`, 'i')
   const line = lines(rawText).find((l) => re.test(l))
   return line ? { line } : null
+}
+
+// ── Terminal opportunity state ──────────────────────────────────────────────
+
+export type TerminalStateKind = 'DO_NOT_CONTACT' | 'CLOSED' | 'COMPLETED' | 'PARTNER_SELECTED'
+
+/** The prospect asked not to be contacted, or the search/project is over. */
+const DO_NOT_CONTACT =
+  /\b(?:do\s+not\s+contact|don'?t\s+contact|please\s+stop\s+(?:contacting|reaching\s+out)|stop\s+contacting|no\s+(?:unsolicited\s+)?(?:offers?|agency\s+offers?|solicitations?)|unsubscribe|opt[- ]?out|not\s+interested\s+in\s+(?:any\s+)?(?:agency\s+)?offers?|please\s+remove\s+us|do\s+not\s+reach\s+out|no\s+longer\s+accepting\s+(?:agency\s+)?offers?)\b/i
+
+/** The need was filled or the search closed — a terminal state, not a lead. */
+const TERMINAL_CLOSURE =
+  /\b(?:partner\s+(?:has\s+been\s+)?(?:selected|chosen|awarded)|(?:we|i|they)\s+(?:have\s+)?(?:selected|chosen|awarded|decided\s+on|went\s+with|hired|engaged)\s+(?:a\s+|an\s+)?(?:partner|agency|vendor|team|provider|supplier|consultant|firm)|project\s+(?:is\s+)?(?:complete(?:d)?|finished|done|closed|wrapped\s+up)|(?:position|role|project|search|engagement|requirement|need)\s+(?:has\s+been\s+)?(?:filled|closed|completed|on\s+hold)|no\s+longer\s+(?:looking|seeking|hiring|need|require)|(?:we|i)\s+(?:are|am)\s+not\s+(?:looking|seeking|hiring|accepting)|closed\s+(?:the\s+)?(?:project|search|engagement|requirement)|(?:search|project|engagement)\s+(?:is\s+)?closed|thank\s+you\s+but\s+we(?:'|’)?ve\s+(?:decided|moved\s+on))\b/i
+
+export interface TerminalState {
+  kind: TerminalStateKind
+  line: string
+  index: number
+}
+
+/**
+ * The latest explicit terminal state in the source. When present, historical
+ * buying intent is overridden: QA BUG-PRO-022 requires the newest state to win.
+ */
+export function detectTerminalState(rawText: string): TerminalState | null {
+  const all = lines(rawText)
+  let best: TerminalState | null = null
+  all.forEach((line, index) => {
+    let kind: TerminalStateKind | null = null
+    if (DO_NOT_CONTACT.test(line)) kind = 'DO_NOT_CONTACT'
+    else if (TERMINAL_CLOSURE.test(line)) {
+      kind = /partner|agency|vendor|team|provider|supplier|consultant|firm/i.test(line) ? 'PARTNER_SELECTED' : 'COMPLETED'
+    }
+    if (kind && (!best || index >= best.index)) best = { kind, line, index }
+  })
+  return best
+}
+
+// ── Explicit dates ──────────────────────────────────────────────────────────
+
+export interface ExplicitDateEvidence {
+  /** When the prospect posted / was active, from an absolute date. */
+  activityDate: string | null
+  /** When they want to start, from an explicit start/kickoff date. */
+  buyerStartDate: string | null
+  /** A stated deadline. */
+  deadline: string | null
+  /** Stated duration in days, when the source gives one. */
+  durationDays: number | null
+  /** Every explicit date line found, for the trace. */
+  lines: string[]
+}
+
+const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?'
+const ABSOLUTE_DATE = new RegExp(`\\b${MONTH}\\s+(?:(?:19|20)\\d{2}|\\d{1,2}(?:st|nd|rd|th)?)\\b`, 'i')
+const START_CTX = /\b(?:start|kick[- ]?off|begin|launch|go[- ]?live|onboard|engagement\s+starts?|project\s+starts?)\b/i
+const DEADLINE_CTX = /\b(?:deadline|by\s+(?:the\s+)?(?:end\s+of\s+)?|before\s+(?:the\s+)?(?:end\s+of\s+)?|due\s+(?:by|date)|no\s+later\s+than|target\s+date)\b/i
+
+/**
+ * Read absolute dates ("November 2026", "Oct 1", "Nov 2026") that the
+ * relative-age reader misses. Separates activity date from buyer start date
+ * and duration so a recent post is never confused with buyer timing
+ * (QA BUG-PRO-023).
+ */
+export function extractExplicitDates(rawText: string): ExplicitDateEvidence {
+  const all = lines(rawText)
+  let activityDate: string | null = null
+  let buyerStartDate: string | null = null
+  let deadline: string | null = null
+  let durationDays: number | null = null
+  const found: string[] = []
+
+  all.forEach((line) => {
+    const date = line.match(ABSOLUTE_DATE)?.[0]?.replace(/\s+/g, ' ').trim() ?? null
+    if (date) {
+      found.push(line)
+      if (START_CTX.test(line)) {
+        buyerStartDate = date
+      } else if (DEADLINE_CTX.test(line)) {
+        deadline = date
+      } else {
+        activityDate = date
+      }
+    }
+    const dur = line.match(/\b(?:about\s+|around\s+|~\s*)?(\d+)\s*(day|week|month)s?\b/i)
+    if (dur && durationDays === null) {
+      const n = Number(dur[1])
+      const u = dur[2].toLowerCase()
+      durationDays = u.startsWith('day') ? n : u.startsWith('week') ? n * 7 : n * 30
+    }
+  })
+
+  return { activityDate, buyerStartDate, deadline, durationDays, lines: found }
 }
 
 /**

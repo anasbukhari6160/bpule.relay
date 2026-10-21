@@ -147,7 +147,7 @@ Please send a short proposal with 2 examples of similar dashboards.`,
   {
     id: 'buyer-request-model-disagrees',
     category: 'explicit_buyer',
-    notes: 'Source states a request, model says 0.1. Contradiction fails closed to UNKNOWN; score must not be STRONG, and the trace records the contradiction.',
+    notes: 'Source states a request, model says 0.1. QA BUG-PRO-021: the deterministic source reading is the authority, so intent stays HIGH; the contradiction is recorded for audit and does not suppress the score.',
     rawText: li({
       name: 'Priya Raman', headline: 'CTO at Ledgerline', location: 'Austin, Texas, United States', degree: '2nd', connections: '500+ connections',
       about: ['Ledgerline is a payments startup.'],
@@ -155,7 +155,7 @@ Please send a short proposal with 2 examples of similar dashboards.`,
       experience: [{ title: 'CTO', company: 'Ledgerline', range: 'Jan 2023 - Present · 2 yrs 10 mos' }],
     }),
     model: { relationship: 'UNKNOWN', buyerRequestProbability: 0.1, externalNeedProbability: 0.1, fit: 'MEDIUM', timing: 'WEAK', access: 'INDIRECT' },
-    expect: { buyerIntent: ['UNKNOWN'], qualification: ['MAYBE', 'WORTH_PURSUING', 'LOW'], action: ['RESEARCH_MORE', 'CONNECT_WITHOUT_NOTE', 'OBSERVE', 'CONNECT_WITH_NOTE'] },
+    expect: { buyerIntent: ['HIGH'], qualification: ['STRONG', 'WORTH_PURSUING'], action: ['CONNECT_WITH_NOTE', 'CONNECT_WITHOUT_NOTE', 'CONTACT_NOW'] },
   },
   {
     id: 'buyer-help-us-build-no-noun',

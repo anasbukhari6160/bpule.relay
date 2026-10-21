@@ -22,6 +22,8 @@ export interface UpworkScoreResult {
   breakdown: ScoreBreakdownItem[]
   /** Canonical 0–100 score and its full explanation. */
   canonical: UpworkJobScore
+  /** False when no job was analyzed — the UI must show no score or action. */
+  hasJob: boolean
 }
 
 export function computeUpworkScore(input: {
@@ -38,6 +40,13 @@ export function computeUpworkScore(input: {
   orgCapabilities?: string[]
   orgProofTags?: string[]
 }): UpworkScoreResult {
+  // No analyzed job → no score. A blank form must never show a default score
+  // or an apply action (QA BUG-11-01).
+  const hasJob = Boolean(
+    input.rawInput?.trim() || input.title?.trim() || input.description?.trim()
+    || input.budgetMin != null || input.budgetMax != null
+    || input.hourlyRateMin != null || input.hourlyRateMax != null,
+  )
   const canonical = scoreUpworkJob({
     rawText: input.rawInput && input.rawInput.trim().length >= 40 ? input.rawInput : null,
     overrides: {
@@ -59,5 +68,5 @@ export function computeUpworkScore(input: {
     max: Math.round(d.weight * 100),
     note: d.note,
   }))
-  return { total: canonical.display, verdict: canonical.verdict, breakdown, canonical }
+  return { total: canonical.display, verdict: canonical.verdict, breakdown, canonical, hasJob }
 }

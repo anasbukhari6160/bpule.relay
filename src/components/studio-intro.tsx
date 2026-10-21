@@ -61,7 +61,7 @@ export function StudioIntro({ children }: { children: React.ReactNode }) {
 
         <p className="text-label text-cobalt-light">Part of Relay</p>
         <h1 className="text-display mt-3 text-4xl text-bone sm:text-5xl">Studio</h1>
-        <p className="mt-4 text-[15px] leading-relaxed text-bone/60">
+        <p className="mt-4 text-[15px] leading-relaxed text-bone/80">
           A quieter room for your writing. Answer a few real questions,
           get one real post, decide what stays.
         </p>

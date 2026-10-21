@@ -77,7 +77,7 @@ export default function ImportPage() {
           className="max-h-[28rem] overflow-y-auto font-mono text-[13px]"
         />
         <div className="mt-4 flex items-center justify-between gap-3">
-          <span className="text-xs text-slate">
+          <span className="text-xs text-stone">
             Required: company, signalType (1-7), signalEvidence.
           </span>
           <Button variant="orange" onClick={() => void upload()} loading={loading}>
@@ -127,7 +127,7 @@ export default function ImportPage() {
                           {r.status}
                         </span>
                       </td>
-                      <td className="py-2.5 text-xs text-slate">
+                      <td className="py-2.5 text-xs text-stone">
                         {r.reason ?? (r.leadId ? `Lead ${r.leadId}` : '—')}
                       </td>
                     </tr>

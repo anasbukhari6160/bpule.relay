@@ -186,7 +186,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
       buyerTiming: resolved.timing.buyerTiming,
       activityRecency: resolved.timing.activityRecency,
       commercialPotential: cpLevel,
-      episodeClosed: bestEpisode?.status === 'CLOSED',
+      episodeClosed: bestEpisode?.status === 'CLOSED' || buyerIntent.terminalState !== null,
     },
     confidence: { label: confidence.label, researchMore: confidence.researchMore },
     channel: 'linkedin',
@@ -347,7 +347,7 @@ export function projectBuyerIntent(
     adjustments.push(`Relationship BUYER → ${role}: no verified request to buy${intent.relationshipRole === 'SELLER' ? '; the source is seller-side promotion' : ''}.`)
     next.relationship = role
   }
-  for (const c of intent.contradictions) adjustments.push(`Contradiction: ${c} Buyer intent → UNKNOWN.`)
+  for (const c of intent.contradictions) adjustments.push(`Contradiction (audit): ${c}`)
   return next
 }
 

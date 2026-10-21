@@ -22,9 +22,11 @@ import {
 import {
   classifyLine,
   detectSellerOwnership,
+  extractExplicitDates,
   extractStatedTimeline,
   findContactInstruction,
   isRecruiterProfile,
+  type ExplicitDateEvidence,
   type StatedTimeline,
 } from './source-facts'
 import { segmentLinkedInSource } from './source-segmenter'
@@ -122,6 +124,10 @@ export interface SourceFacts {
   externalNeed: boolean
   budgetEvidence: { line: string; amount: string | null; approved: boolean } | null
   timelineEvidence: StatedTimeline | null
+  /** Absolute dates the relative-age reader misses (QA BUG-PRO-023). */
+  explicitDates: ExplicitDateEvidence
+  /** The newest explicit terminal state (do-not-contact, filled, completed). */
+  terminalState: { kind: 'DO_NOT_CONTACT' | 'CLOSED' | 'COMPLETED' | 'PARTNER_SELECTED'; line: string; index: number } | null
   authorityEvidence: AuthorityEvidence
   technologyContext: ExtractedSignals['technology']
   capabilityNeeds: string[]
@@ -502,6 +508,7 @@ export function readSourceFacts(rawText: string, options: ReadSourceFactsOptions
   // ── Timing / activity ─────────────────────────────────────────────────
   const recentPostAgeDays = mostRecentPostAgeDays(text)
   const timelineEvidence = extractStatedTimeline(text)
+  const explicitDates = extractExplicitDates(text)
 
   // ── Authority ─────────────────────────────────────────────────────────
   const authorityEvidence = resolveAuthority(title, [...header, ...(options.affiliationRoles ?? [])])
@@ -565,6 +572,8 @@ export function readSourceFacts(rawText: string, options: ReadSourceFactsOptions
     externalNeed: buyer.externalServiceRequest !== null,
     budgetEvidence: buyer.statedBudget,
     timelineEvidence,
+    explicitDates,
+    terminalState: buyer.terminalState ?? null,
     authorityEvidence,
     technologyContext: signals.technology,
     capabilityNeeds,
@@ -613,6 +622,8 @@ export interface SourceFactsSummary {
   buyerRequestAgeDays: number | null
   budgetEvidence: SourceFacts['budgetEvidence']
   timelineEvidence: { line: string; days: number; label: string } | null
+  explicitDates: ExplicitDateEvidence
+  terminalState: SourceFacts['terminalState']
   access: AccessFacts
   capabilityNeeds: string[]
   sourceCompleteness: SourceCompleteness
@@ -639,6 +650,8 @@ export function summarizeSourceFacts(f: SourceFacts): SourceFactsSummary {
     buyerRequestAgeDays: f.buyerRequestAgeDays,
     budgetEvidence: f.budgetEvidence,
     timelineEvidence: f.timelineEvidence ? { line: f.timelineEvidence.line, days: f.timelineEvidence.days, label: f.timelineEvidence.label } : null,
+    explicitDates: f.explicitDates,
+    terminalState: f.terminalState,
     access: f.access,
     capabilityNeeds: f.capabilityNeeds,
     sourceCompleteness: f.sourceCompleteness,

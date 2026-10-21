@@ -19,6 +19,12 @@ interface BriefData {
   platform?: Platform
 }
 
+const imageKey = (ideaId: string) => `studio-image-${ideaId}`
+/** Persist a generated image with its post idea so it survives reopen/refresh. */
+function persistImage(ideaId: string, url: string) {
+  try { sessionStorage.setItem(imageKey(ideaId), url) } catch { /* quota or unavailable */ }
+}
+
 export function StudioTodayV2({ personaId, displayName }: Props) {
   const router = useRouter()
   const [platform, setPlatform] = useState<Platform>('linkedin')
@@ -136,6 +142,16 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
     fetchBrief().finally(() => setLoading(false))
   }, [fetchBrief])
 
+  // A generated image is part of the post: restore it when the same idea is
+  // reopened or the page is refreshed (QA BUG-11-14).
+  useEffect(() => {
+    if (!activeIdeaId) { setImageUrl(null); return }
+    try {
+      const stored = sessionStorage.getItem(imageKey(activeIdeaId))
+      if (stored) setImageUrl(stored)
+    } catch { /* ignore */ }
+  }, [activeIdeaId])
+
   // Fetch persona list for the switcher (BUG-14: in-component switch).
   useEffect(() => {
     if (personas.length > 0) return
@@ -190,6 +206,7 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
       const json = await res.json()
       if (json.url) {
         setImageUrl(json.url)
+        persistImage(activeIdea.id, json.url)
       } else {
         throw new Error(json.error || 'No image')
       }
@@ -236,7 +253,9 @@ export function StudioTodayV2({ personaId, displayName }: Props) {
     ctx.fillStyle = '#3b82f6'
     ctx.font = 'bold 16px system-ui, sans-serif'
     ctx.fillText('RELAY', W - 100, H - 60)
-    setImageUrl(canvas.toDataURL('image/png'))
+    const dataUrl = canvas.toDataURL('image/png')
+    setImageUrl(dataUrl)
+    if (activeIdea) persistImage(activeIdea.id, dataUrl)
   }, [activeIdea, displayName])
 
   const downloadImage = () => {

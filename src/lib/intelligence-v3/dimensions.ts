@@ -187,6 +187,14 @@ export function resolveTiming(
     buyerTiming = 'WEAK'
   }
 
+  // An explicit start/deadline date in the source is buyer timing even when
+  // the relative-age reader cannot place the post (QA BUG-PRO-023).
+  const explicit = facts.explicitDates
+  if (verifiedRequest && buyerTiming !== 'URGENT' && (explicit.buyerStartDate || explicit.deadline)) {
+    buyerTiming = 'CURRENT'
+    evidence.push({ text: explicit.buyerStartDate ?? explicit.deadline!, kind: 'quote' })
+  }
+
   if ((modelTiming === 'URGENT' || modelTiming === 'CURRENT') && buyerTiming !== 'URGENT' && buyerTiming !== 'CURRENT') {
     urgencyRejected = true
   }
@@ -198,7 +206,9 @@ export function resolveTiming(
   if (evidence.length === 0) {
     evidence.push(ageDays !== null
       ? { text: `Most recent dated activity ${ageDays}d ago`, kind: 'signal' }
-      : { text: 'No post date, start date or deadline in the source', kind: 'inference' })
+      : explicit.activityDate
+        ? { text: `Explicit date in the source: ${explicit.activityDate}`, kind: 'signal' }
+        : { text: 'No post date, start date or deadline in the source', kind: 'inference' })
   }
 
   const note = urgencyRejected

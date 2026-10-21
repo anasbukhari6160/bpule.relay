@@ -77,14 +77,17 @@ export async function POST(request: Request) {
         const tags = buildTags(job)
         const urgencySignal = deriveUrgency(job, facts.start.urgency)
         const proposalCount = facts.proposals.count ?? job.proposalCount ?? null
-        const connectsCost = facts.connects ?? job.connectsCost ?? 0
+        // Missing Connects is unknown, never zero (QA BUG-11-03).
+        const connectsCost = facts.connects ?? job.connectsCost ?? null
         const screeningQuestions = (job.screeningQuestions?.length ? job.screeningQuestions : facts.screeningQuestions) ?? []
         const applicationRequirements = (job.applicationRequirements?.length ? job.applicationRequirements : facts.applicationRequirements) ?? []
         const savedJob = await store.createUpworkJob({
           title: job.title,
           description: job.description,
+          // One canonical budget: a fixed price is min = max, so every surface
+          // (scoring, snapshot, pay label) reads the same number (QA BUG-11-04).
           budgetMin: fixedBudget,
-          budgetMax: null,
+          budgetMax: fixedBudget,
           hourlyRateMin: hourlyMin,
           hourlyRateMax: hourlyMax,
           requiredSkills: skills,
@@ -98,7 +101,7 @@ export async function POST(request: Request) {
           duration: job.duration ?? facts.duration.label ?? null,
           experienceLevel: job.experienceLevel ?? facts.experience.level ?? null,
           proposalCount: proposalCount != null ? Math.round(proposalCount) : undefined,
-          connectsCost,
+          connectsCost: connectsCost ?? undefined,
         })
 
         // Score once, canonically, and persist it with the row.
@@ -163,7 +166,9 @@ export async function POST(request: Request) {
             duration: job.duration ?? facts.duration.label ?? '',
             experienceLevel: job.experienceLevel ?? facts.experience.level ?? '',
             proposalCount: proposalCount != null ? String(Math.round(proposalCount)) : '',
-            connectsCost: String(connectsCost),
+            proposalEvidence: facts.proposals.evidence ?? '',
+            proposalRange: facts.proposals.range ?? null,
+            connectsCost: connectsCost != null ? String(connectsCost) : '',
           },
           facts: {
             rate: facts.rate, client: facts.client, proposals: facts.proposals, start: facts.start, posted: facts.posted,

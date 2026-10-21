@@ -140,21 +140,21 @@ export default function PricingPage() {
                   </span>
                 )}
 
-                <p className="text-label text-stone">{plan.name}</p>
+                <p className={plan.featured ? "text-label text-[color:var(--console-text)]" : "text-label text-stone"}>{plan.name}</p>
                 <div className="mt-3 flex items-baseline gap-1">
-                  <span className="text-display text-4xl text-ink">{plan.price}</span>
+                  <span className={plan.featured ? "text-display text-4xl text-[color:var(--console-text)]" : "text-display text-4xl text-ink"}>{plan.price}</span>
                   {plan.period && (
                     <span className="text-[13px] text-stone">/{plan.period}</span>
                   )}
                 </div>
-                <p className="mt-3 text-[14px] text-graphite">{plan.desc}</p>
+                <p className={plan.featured ? "mt-3 text-[14px] text-[color:var(--console-mute)]" : "mt-3 text-[14px] text-graphite"}>{plan.desc}</p>
 
                 <div className="mt-6 border-t border-line pt-6">
                   <ul className="space-y-3">
                     {plan.features.map((feature) => (
                       <li key={feature} className="flex items-start gap-2.5">
                         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-status-success" />
-                        <span className="text-[14px] text-ink">{feature}</span>
+                        <span className={plan.featured ? "text-[14px] text-[color:var(--console-text)]" : "text-[14px] text-ink"}>{feature}</span>
                       </li>
                     ))}
                   </ul>
@@ -170,7 +170,9 @@ export default function PricingPage() {
                       <ArrowRight className="size-4" />
                     </Link>
                   ) : (
-                    <div className="flex h-11 w-full items-center justify-center rounded border border-line/60 text-[14px] font-medium text-stone">
+                    <div className={plan.featured
+                      ? "flex h-11 w-full items-center justify-center rounded border border-[color:var(--console-line)] text-[14px] font-medium text-[color:var(--console-mute)]"
+                      : "flex h-11 w-full items-center justify-center rounded border border-line/60 text-[14px] font-medium text-stone"}>
                       {plan.cta}
                     </div>
                   )}

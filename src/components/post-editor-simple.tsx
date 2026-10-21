@@ -167,8 +167,8 @@ export function SimplePostEditor({ post }: { post: PostData }) {
               onClick={handleCopy}
               className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink/60 hover:border-cobalt/40 hover:text-cobalt"
             >
-              <Copy className="h-4 w-4" />
-              Copy
+              {copied ? <Check className="h-4 w-4 text-status-success" /> : <Copy className="h-4 w-4" />}
+              {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
         </div>

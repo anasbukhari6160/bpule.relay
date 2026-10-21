@@ -54,11 +54,10 @@ export default async function SettingsPage() {
             </div>
           </Panel>
           <Panel title="Writing voice" subtitle="Shapes the tone of every draft">
-            <Link href="/onboarding" className="flex items-center gap-2 rounded-md border border-line bg-bone px-3 py-2 text-[12px] font-medium text-ink hover:border-ink/20">
+            <div className="flex items-center gap-2 rounded-md border border-line bg-bone px-3 py-2 text-[12px] font-medium text-ink">
               <Sparkles className="size-3.5 text-orange" aria-hidden="true" />
-              <span className="flex-1">{user.profile ? 'Review voice calibration' : 'Finish voice calibration'}</span>
-              <ChevronRight className="size-3.5 text-stone" aria-hidden="true" />
-            </Link>
+              <span className="flex-1">Voice calibration not available yet</span>
+            </div>
           </Panel>
         </div>
       </div>

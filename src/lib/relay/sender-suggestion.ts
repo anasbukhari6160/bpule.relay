@@ -38,6 +38,8 @@ export interface SenderSuggestion {
   platform: string | null
   score: number
   currentBestScore: number
+  /** The sender the rep is actually using, so the copy never says "your best". */
+  currentSenderName: string | null
   matchedTerms: string[]
   topProof: string | null
   holders: string[]
@@ -104,6 +106,7 @@ export function pickSuggestion(
     platform: top.c.platform,
     score: top.s.score,
     currentBestScore: bestMine,
+    currentSenderName: current?.c.name ?? null,
     matchedTerms: top.s.matchedTerms,
     topProof: top.s.topProof,
     holders,

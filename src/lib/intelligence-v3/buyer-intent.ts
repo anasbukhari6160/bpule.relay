@@ -19,6 +19,7 @@ import {
   classifyLine,
   detectSellerOwnership,
   isRecruiterProfile,
+  detectTerminalState,
   type SourceLine,
 } from './source-facts'
 import { splitCurrentAndPastLines } from './current-org'
@@ -27,7 +28,7 @@ import { parseHiringCount } from '@/lib/evidence/provenance'
 import { ML_CANDIDATE_SEEKING, ML_FOUNDER_ROLE, ML_PAST_PHRASE, mlMatches } from './multilingual'
 
 /** Bump when buyer-intent rules change; part of the V3 decision reuse key. */
-export const BUYER_INTENT_VERSION = 'buyer_intent_v4'
+export const BUYER_INTENT_VERSION = 'buyer_intent_v5'
 
 export type BuyerIntentLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
 export type RelationshipRole = 'BUYER' | 'BUYER_AND_SELLER' | 'SELLER' | 'BUILDER' | 'RECRUITER' | 'CANDIDATE' | 'UNKNOWN'
@@ -66,6 +67,8 @@ export interface BuyerSourceFacts {
   recruiter: boolean
   candidateSeeking: boolean
   founderOrBuilder: boolean
+  /** The newest explicit terminal state: do-not-contact, filled, completed. */
+  terminalState: { kind: 'DO_NOT_CONTACT' | 'CLOSED' | 'COMPLETED' | 'PARTNER_SELECTED'; line: string; index: number } | null
 }
 
 export interface BuyerAttributionAudit {
@@ -117,6 +120,8 @@ export interface VerifiedBuyerIntent {
     modelRelationship: string | null
     signalCheck: BuyerAttributionAudit['signalCheck']
   }
+  /** The newest explicit terminal state, when the source closed the opportunity. */
+  terminalState: { kind: 'DO_NOT_CONTACT' | 'CLOSED' | 'COMPLETED' | 'PARTNER_SELECTED'; line: string; index: number } | null
 }
 
 const HIRING_URGENT = /\b(?:immediately|asap|urgent(?:ly)?|right\s+now|this\s+week|starting\s+now)\b/i
@@ -128,7 +133,7 @@ const HYPOTHETICAL = /\b(?:thinking\s+about|considering|might|could|would\s+love
 /** Someone else's post shared by the prospect. Applies to its own block of lines. */
 const REPOST = /\b(?:repost(?:ed|ing)?|via\s+@\w+|shared\s+from|originally\s+posted\s+by|courtesy\s+of|great\s+(?:post|thread|insight|advice)\s+from|for\s+a\s+friend)\b/i
 const HELP_REQUEST = /\b(?:(?:we|i)\s+(?:really\s+|urgently\s+|also\s+)?need\s+(?:\w+\s+){0,2}help|help\s+us\s+(?:build|ship|scale|fix|automate|rebuild|migrate|launch))\b/i
-const BUDGET_LINE = /\b(?:budget(?:ed)?|funded|allocated|fixed\s+price|project\s+value)\b/i
+const BUDGET_LINE = /\b(?:budget(?:ed)?|funded|allocated|fixed\s+price|project\s+value|approved)\b/i
 const PRODUCT_METRIC = /\b(?:cpi|ltv|roi|roas|arpu|cac|mrr|arr|revenue|profit|burn\s+rate|runway|churn)\b/i
 const MONEY = /(?:[$€£]\s?\d[\d,.]*\s*(?:k|m|million|thousand)?(?:\s*\/\s*(?:month|mo|hour|hr|week))?|\b\d[\d,.]*\s*(?:k|m)?\s*(?:usd|eur|gbp|dollars)\b)/i
 
@@ -154,16 +159,16 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     && !HYPOTHETICAL.test(line)
     && !inRepostBlock(idx)
 
-  let externalServiceRequest: SourceLine | null = null
-  let employmentHiring: SourceLine | null = null
   let helpRequest: SourceLine | null = null
   let statedBudget: BuyerBudgetFact | null = null
+  const requestCandidates: Array<{ line: string; idx: number }> = []
+  const hiringCandidates: Array<{ line: string; idx: number }> = []
 
   all.forEach((line, idx) => {
     const kind = classifyLine(line)
     // A line the prospect owns as a sales pitch is not a request to buy.
-    if (!externalServiceRequest && kind === 'external_request' && usable(line, idx) && !sellerSet.has(line)) externalServiceRequest = { line }
-    if (!employmentHiring && kind === 'employment_hiring' && usable(line, idx) && verifyHiringProvenance(line).valid) employmentHiring = { line }
+    if (kind === 'external_request' && usable(line, idx) && !sellerSet.has(line)) requestCandidates.push({ line, idx })
+    if (kind === 'employment_hiring' && usable(line, idx) && verifyHiringProvenance(line).valid) hiringCandidates.push({ line, idx })
     if (!helpRequest && !sellerSet.has(line) && HELP_REQUEST.test(line) && usable(line, idx)) helpRequest = { line }
     if (!statedBudget && BUDGET_LINE.test(line) && !sellerSet.has(line) && !PRODUCT_METRIC.test(line)
       && usable(line, idx) && verifyBudgetProvenance(line).valid) {
@@ -175,13 +180,35 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     }
   })
 
+  // Latest explicit state wins (QA BUG-PRO-022): a terminal line that appears
+  // after the request overrides historical buying intent; a request that
+  // appears after the terminal is the current one.
+  const terminal = detectTerminalState(text)
+  const pickCurrent = (candidates: Array<{ line: string; idx: number }>): SourceLine | null => {
+    if (candidates.length === 0) return null
+    if (!terminal) return { line: candidates[0].line }
+    const after = candidates.filter((c) => c.idx > terminal.index)
+    if (after.length > 0) return { line: after[after.length - 1].line }
+    return null
+  }
+  let externalServiceRequest = pickCurrent(requestCandidates)
+
   // A stated opening ("We have 6 open positions") is a hiring fact too, under
   // the same provenance rules (current, own organization, not a repost).
+  let employmentHiring = pickCurrent(hiringCandidates)
   if (!employmentHiring) {
     const counted = parseHiringCount(text)?.sourceQuote?.trim()
     const idx = counted ? all.findIndex((l) => l.includes(counted) || counted.includes(l)) : -1
     if (idx >= 0 && usable(all[idx], idx) && !sellerSet.has(all[idx]) && verifyHiringProvenance(all[idx]).valid) employmentHiring = { line: all[idx] }
   }
+
+  // A request that appears after the terminal state means the opportunity was
+  // reopened: the closure no longer governs.
+  const reopened = Boolean(
+    (externalServiceRequest && terminal && all.indexOf(externalServiceRequest.line) > terminal.index)
+    || (employmentHiring && terminal && all.indexOf(employmentHiring.line) > terminal.index),
+  )
+  const effectiveTerminal = reopened ? null : terminal
 
   const hiring = employmentHiring as SourceLine | null
   const header = all.slice(0, 8).join('\n')
@@ -195,6 +222,7 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     recruiter: isRecruiterProfile(text),
     candidateSeeking: CANDIDATE.test(text) || mlMatches(ML_CANDIDATE_SEEKING, text),
     founderOrBuilder: FOUNDER.test(header) || ML_FOUNDER_ROLE.test(header),
+    terminalState: effectiveTerminal,
   }
 }
 
@@ -217,7 +245,10 @@ export function resolveVerifiedBuyerIntent(
   // agency in their own words is.
   const recruiterOnly = facts.recruiter && facts.externalServiceRequest === null
   const nonBuyerRole = recruiterOnly || facts.candidateSeeking
-  const verifiedBuyerRequest = !nonBuyerRole && facts.externalServiceRequest !== null
+  // A terminal state (do-not-contact, filled, completed) overrides any request.
+  const terminal = facts.terminalState ?? null
+  const terminalBlocksBuyer = terminal !== null
+  const verifiedBuyerRequest = !nonBuyerRole && !terminalBlocksBuyer && facts.externalServiceRequest !== null
   const verifiedHiringNeed = !facts.candidateSeeking && !facts.recruiter && facts.employmentHiring !== null
   const verifiedBudget = verifiedBuyerRequest && facts.statedBudget !== null
   const verifiedExternalNeed = verifiedBuyerRequest
@@ -228,15 +259,18 @@ export function resolveVerifiedBuyerIntent(
   if (verifiedBuyerRequest && facts.helpRequest) evidence.push({ kind: 'buyer_request', text: facts.helpRequest.line })
   for (const line of facts.sellerLines.slice(0, 3)) evidence.push({ kind: 'seller_offering', text: line })
   if (recruiterOnly) evidence.push({ kind: 'recruiter', text: 'Recruits for other organizations' })
+  if (terminal) evidence.push({ kind: 'contradiction', text: `${terminal.kind.replace(/_/g, ' ').toLowerCase()}: ${terminal.line}` })
 
   // ── Contradiction guard ────────────────────────────────────────────────
-  // Every scorer that ran must agree with the verified facts before intent
-  // can be surfaced. Disagreement fails closed.
+  // The deterministic source reading is the AUTHORITY. A scorer that denies a
+  // source-verified request is recorded for audit but does not erase it: QA
+  // BUG-PRO-021 requires an explicit buyer request never to resolve to
+  // UNKNOWN/LOW/SKIP because the model scored it low. Only a source-side
+  // problem (seller-owned, historical, negated, terminal) fails closed.
   const modelSaysBuyer = model !== null && model >= 0.6
   const modelSaysNoBuyer = model !== null && model < 0.3
   const signalSaysBuyer = Boolean(signal && (signal.explicitAsk || signal.seekingVendor))
 
-  // Hard contradictions: two scorers disagree outright.
   const hardContradiction = (signalSaysBuyer && modelSaysNoBuyer) || (verifiedBuyerRequest && modelSaysNoBuyer)
   if (signalSaysBuyer && modelSaysNoBuyer) {
     contradictions.push(`Signal check reported an explicit buyer request, opportunity model scored buyer request ${model!.toFixed(2)}.`)
@@ -254,18 +288,18 @@ export function resolveVerifiedBuyerIntent(
   for (const c of contradictions) evidence.push({ kind: 'contradiction', text: c })
 
   // ── Level ──────────────────────────────────────────────────────────────
+  // A source-verified request is HIGH: the source states it, the deterministic
+  // reader confirmed it is current, prospect-owned and not negated. The model's
+  // agreement is not required (it is an auditor, not the authority).
   let buyerIntentLevel: BuyerIntentLevel = 'UNKNOWN'
-  if (verifiedBuyerRequest && contradictions.length === 0) {
-    const scorerAgrees = model === null ? (signal ? signalSaysBuyer : false) : model >= 0.6
-    buyerIntentLevel = scorerAgrees ? 'HIGH' : 'MEDIUM'
-  }
+  if (verifiedBuyerRequest) buyerIntentLevel = 'HIGH'
 
   // ── Role ───────────────────────────────────────────────────────────────
-  // BUYER requires a request that survived contradiction. Seller activity,
-  // founder authority, or a model claim never confer it. A prospect may
-  // sell and buy when the buy is a separate, prospect-owned request.
+  // BUYER requires a request that survived the source-side guards. Seller
+  // activity, founder authority, or a model claim never confer it. A prospect
+  // may sell and buy when the buy is a separate, prospect-owned request.
   // That case is BUYER_AND_SELLER: the buy stays verified and is not capped.
-  const buyingNeedSurvived = verifiedBuyerRequest && contradictions.length === 0 && (buyerIntentLevel === 'HIGH' || buyerIntentLevel === 'MEDIUM')
+  const buyingNeedSurvived = verifiedBuyerRequest && buyerIntentLevel !== 'UNKNOWN'
   const independentSellerLines = facts.sellerLines.filter((line) => line !== facts.externalServiceRequest?.line)
   let relationshipRole: RelationshipRole = 'UNKNOWN'
   if (facts.candidateSeeking) relationshipRole = 'CANDIDATE'
@@ -278,13 +312,17 @@ export function resolveVerifiedBuyerIntent(
   // ── Effective probabilities every scorer must use ───────────────────────
   const nonBuyerCap = nonBuyerRole || relationshipRole === 'SELLER' || (hardContradiction && !verifiedBuyerRequest)
   const cap = verifiedBuyerRequest ? 1 : nonBuyerCap ? NON_BUYER_CAP : UNVERIFIED_CAP
-  const effectiveBuyerProbability = Math.min(model ?? 0, cap)
+  // A verified request is credited even when the model scored it low; the
+  // model's value only matters when it is higher.
+  const effectiveBuyerProbability = verifiedBuyerRequest
+    ? Math.max(model ?? 0, 0.7)
+    : Math.min(model ?? 0, cap)
   // External need is the model's own judgement unless the prospect is on the
   // supply side (seller, recruiter, candidate) or the scorers contradict.
   const effectiveExternalNeedProbability = Math.min(modelExternal ?? 0, verifiedExternalNeed ? 1 : nonBuyerCap ? NON_BUYER_CAP : 1)
 
   // ── Confidence ─────────────────────────────────────────────────────────
-  let confidence = buyerIntentLevel === 'HIGH' ? 0.85 : buyerIntentLevel === 'MEDIUM' ? 0.6 : verifiedBuyerRequest ? 0.45 : 0.5
+  let confidence = buyerIntentLevel === 'HIGH' ? 0.85 : verifiedBuyerRequest ? 0.6 : 0.5
   if (relationshipRole === 'SELLER' || relationshipRole === 'RECRUITER' || relationshipRole === 'CANDIDATE') confidence = Math.max(confidence, 0.7)
   confidence -= 0.15 * Math.min(2, contradictions.length)
   confidence = Math.round(Math.max(0.1, Math.min(1, confidence)) * 100) / 100
@@ -305,6 +343,7 @@ export function resolveVerifiedBuyerIntent(
     contradictions,
     effectiveBuyerProbability: Math.round(effectiveBuyerProbability * 100) / 100,
     effectiveExternalNeedProbability: Math.round(effectiveExternalNeedProbability * 100) / 100,
+    terminalState: terminal,
     claims: {
       modelBuyerProbability: model,
       modelExternalNeedProbability: modelExternal,

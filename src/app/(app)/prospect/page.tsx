@@ -94,7 +94,7 @@ type AnalyzeEvent =
       demoMode: boolean
       alternativeSenders: Array<{ profile: Profile; matchScore: number; topProof: string | null }>
       senderRouting?: { rankings?: SenderRankView[]; currentSenderId?: string | null } | null
-  senderSuggestion?: { profileId: string; name: string | null; role: string | null; platform: string | null; score: number; currentBestScore: number; matchedTerms: string[]; topProof: string | null; holders: string[]; reason: string } | null
+  senderSuggestion?: { profileId: string; name: string | null; role: string | null; platform: string | null; score: number; currentBestScore: number; currentSenderName: string | null; matchedTerms: string[]; topProof: string | null; holders: string[]; reason: string } | null
       qualification: ProspectQualificationAssessment
       revenue?: RevenueLoopSnapshot
     } & DecisionDetail
@@ -127,7 +127,7 @@ interface AnalysisState {
   strategy: { whyConnect: string; relevantObservation: string; forbidden: string[]; candidateAngles: string[] }
   alternativeSenders: Array<{ profile: Profile; matchScore: number; topProof: string | null }>
   senderRankings: SenderRankView[]
-  senderSuggestion?: { profileId: string; name: string | null; role: string | null; platform: string | null; score: number; currentBestScore: number; matchedTerms: string[]; topProof: string | null; holders: string[]; reason: string } | null
+  senderSuggestion?: { profileId: string; name: string | null; role: string | null; platform: string | null; score: number; currentBestScore: number; currentSenderName: string | null; matchedTerms: string[]; topProof: string | null; holders: string[]; reason: string } | null
   draftFailed: boolean
   demoMode: boolean
   qualification: ProspectQualificationAssessment
@@ -194,12 +194,39 @@ export default function ProspectCheckPage() {
   const rawRef = useRef<HTMLTextAreaElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const saveInFlightRef = useRef(false)
+  // Rapid-click guard: a state flag flips a render later, so two clicks in the
+  // same tick could both start an analysis (QA BUG-13-02).
+  const analyzingRef = useRef(false)
   const workspace = useActiveIdentity()
   const seenWorkspaceId = useRef<string | null | undefined>(undefined)
 
   // Preserve sender preference across re-analyses. The sidebar workspace
   // is the default sender; changing sender here is only for this check.
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
+
+  // Resilient workspace: the draft and the last completed result survive a
+  // refresh, back/forward and navigation away (QA BUG-13-01). Explicit Clear
+  // removes it; privacy stays local to this browser.
+  const DRAFT_KEY = 'relay.prospect.draft.v1'
+  const [draftRestored, setDraftRestored] = useState(false)
+  useEffect(() => {
+    if (searchParams?.get('paste')) { setDraftRestored(true); return }
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as { rawInput?: string; result?: AnalysisState | null }
+        if (parsed.rawInput) setRawInput(parsed.rawInput)
+        if (parsed.result) setResult(parsed.result)
+      }
+    } catch { /* corrupt or unavailable draft — start clean */ }
+    setDraftRestored(true)
+  }, [searchParams])
+  useEffect(() => {
+    if (!draftRestored) return
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ rawInput, result }))
+    } catch { /* quota or unavailable — never block the analysis */ }
+  }, [rawInput, result, draftRestored])
 
   useEffect(() => {
     return () => {
@@ -248,6 +275,7 @@ export default function ProspectCheckPage() {
   }, [workspace.active?.id, workspace.active?.profileId, resetResult])
 
   async function analyze(mode: 'analyze' | 'try-another-angle' | 'generate' = 'analyze', profileIdOverride?: string) {
+    if (analyzingRef.current) return
     const guard = pasteGuard(rawInput)
     if (guard) {
       setValidationError(guard)
@@ -255,6 +283,7 @@ export default function ProspectCheckPage() {
       return
     }
     setValidationError(null)
+    analyzingRef.current = true
 
     // "Try Another Angle" must never re-derive canonical evidence/score/
     // qualification/action — only a new message angle. Capture the
@@ -362,6 +391,7 @@ export default function ProspectCheckPage() {
         setError(err instanceof Error && err.name !== 'AbortError' ? err.message : 'Analysis failed.')
       }
     } finally {
+      analyzingRef.current = false
       setAnalyzing(false)
       setStatus(null)
     }
@@ -464,6 +494,7 @@ export default function ProspectCheckPage() {
   function skip() {
     resetResult()
     setRawInput('')
+    try { localStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
     rawRef.current?.focus()
   }
 
@@ -896,7 +927,7 @@ export default function ProspectCheckPage() {
                     </p>
                   )}
                   <p className="mt-1 text-[10px] text-stone">
-                    Match {result.senderSuggestion.score} vs your best {result.senderSuggestion.currentBestScore}
+                    Match {result.senderSuggestion.score} vs current sender {result.senderSuggestion.currentSenderName ?? 'yours'} {result.senderSuggestion.currentBestScore}
                     {result.senderSuggestion.holders.length > 0 ? ` · held by ${result.senderSuggestion.holders.join(', ')}` : ''}
                   </p>
                 </div>
@@ -966,7 +997,17 @@ export default function ProspectCheckPage() {
             <div className="rounded-md border border-dashed border-line bg-bone-raised/40 p-3">
               <p className="text-[12px] text-graphite">
                 {canSaveLead
-                  ? 'Analysis complete — qualification and signals are shown above. Create a lead to start outreach from the lead detail page.'
+                  ? (() => {
+                      // Action copy must match the recommended action: a SKIP or
+                      // OBSERVE profile must never be told to start outreach (QA BUG-13-04).
+                      switch (result.revenue?.act) {
+                        case 'SKIP': return 'No outreach recommended — this profile is not a fit.'
+                        case 'RESEARCH_MORE': return 'Research before contacting — add identifying and opportunity details, then create a lead.'
+                        case 'CONNECT_OR_OBSERVE': return 'No pitch recommended — create a lead to save this profile to your watchlist.'
+                        case 'CONTACT_NOW': return 'Analysis complete — create a lead to start outreach from the lead detail page.'
+                        default: return 'Analysis complete — qualification and signals are shown above.'
+                      }
+                    })()
                   : result.score
                     ? 'Add identifying and opportunity details to continue. A lead can’t be created from this paste yet.'
                     : 'A lead can’t be created from this paste yet.'}

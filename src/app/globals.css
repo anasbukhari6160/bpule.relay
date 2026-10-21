@@ -38,6 +38,14 @@
   --color-line: var(--line);
   --color-line-soft: var(--line-soft);
 
+  /* The console is always dark; these tokens keep its text readable in light
+     and dark themes (QA BUG-12-05). */
+  --color-console: var(--console);
+  --color-console-raised: var(--console-raised);
+  --color-console-line: var(--console-line);
+  --color-console-text: var(--console-text);
+  --color-console-mute: var(--console-mute);
+
   --color-orange: var(--orange);
   --color-orange-light: var(--orange-light);
   --color-orange-dark: var(--orange-dark);

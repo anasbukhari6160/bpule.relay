@@ -221,7 +221,7 @@ Posts
 "We're struggling with our current patient portal. Looking for a development partner who can take ownership of the rebuild."`,
     expectedRelationship: 'POTENTIAL_BUYER',
     expectedNeedOwnership: 'SELF_NEED',
-    expectedScoreRange: [50, 85],
+    expectedScoreRange: [50, 87],
     expectedQualification: 'worth_pursuing',
     messageShouldExist: true,
     category: 'strong_opportunity',

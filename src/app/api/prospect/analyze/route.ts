@@ -563,14 +563,18 @@ export async function POST(request: Request) {
       : []
 
     // Routing mismatch: a sender the rep does not hold ranks clearly above
-    // the rep's best → surface as a suggestion with who holds it. Same
-    // threshold as the lead page and the admin panel.
+    // the rep's current sender → surface as a suggestion with who holds it.
+    // Same threshold as the lead page and the admin panel.
     let senderSuggestion: SenderSuggestion | null = null
     if (senderRouting) {
-      const current = bestSender ? senderRouting.rankings.find((r) => r.senderId === bestSender.id) ?? null : null
+      const activeId = bestSender?.id ?? senderRouting.currentSenderId ?? null
+      const current = activeId ? senderRouting.rankings.find((r) => r.senderId === activeId) ?? null : null
       const top = senderRouting.rankings.find((r) => !r.accessibleToRep) ?? null
-      const currentMatch = current?.profileMatch ?? 0
-      if (top && top.profileMatch - currentMatch >= ROUTING_MISMATCH_DELTA) {
+      // The baseline is the sender the rep is actually using. Never treat a
+      // missing value as 0 (QA BUG-PRO-024).
+      const currentMatch = current?.profileMatch ?? senderRouting.currentSenderMatch ?? null
+      const currentSenderName = current?.name ?? bestSender?.label ?? null
+      if (top && currentMatch !== null && top.profileMatch - currentMatch >= ROUTING_MISMATCH_DELTA) {
         senderSuggestion = {
           profileId: top.senderId,
           name: top.name,
@@ -578,10 +582,11 @@ export async function POST(request: Request) {
           platform: top.platform,
           score: top.profileMatch,
           currentBestScore: currentMatch,
+          currentSenderName,
           matchedTerms: top.reasons,
           topProof: top.primaryProof,
           holders: top.holders,
-          reason: `${top.name ?? 'Another profile'} matches this lead at ${top.profileMatch}% vs your best ${currentMatch}% (${top.reasons[0] ?? 'stronger proof'}). Ask ${top.holders.length > 0 ? top.holders.join(', ') : 'an admin'} to send it, or ask for access.`,
+          reason: `${top.name ?? 'Another profile'} matches this lead at ${top.profileMatch}% vs current sender ${currentSenderName ?? 'yours'} ${currentMatch}% (${top.reasons[0] ?? 'stronger proof'}). Ask ${top.holders.length > 0 ? top.holders.join(', ') : 'an admin'} to send it, or ask for access.`,
         }
       }
     }

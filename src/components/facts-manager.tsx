@@ -11,6 +11,48 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Plus, X, Eye } from 'lucide-react'
 import type { Fact } from '@/lib/domain/types'
 
+/** Internal bookkeeping fields never shown in the normal proof UI (QA BUG-08-02). */
+const INTERNAL_FACT_KEYS = new Set(['fetch_status', 'raw', 'internal', 'debug', 'metadata'])
+
+/**
+ * Render a fact value as human-readable proof, never a raw JSON blob. If the
+ * stored value is JSON, show each field in plain language; internal fields are
+ * hidden unless the admin opens details.
+ */
+function FactValue({ value, isAdmin }: { value: string; isAdmin: boolean }) {
+  const trimmed = value.trim()
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      return <>{value}</>
+    }
+    const entries: Array<[string, unknown]> = Array.isArray(parsed)
+      ? parsed.map((v, i) => [String(i), v])
+      : Object.entries(parsed as Record<string, unknown>)
+    const visible = entries.filter(([k]) => isAdmin || !INTERNAL_FACT_KEYS.has(k))
+    if (visible.length === 0) return <>{value}</>
+    return (
+      <div className="mt-1 space-y-1.5">
+        {visible.map(([k, v]) => (
+          <div key={k}>
+            <p className="text-[11px] font-medium text-ink">
+              {k === 'permission_to_name_publicly'
+                ? 'Permission to name publicly'
+                : k.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())}
+            </p>
+            <p className="text-sm text-slate">
+              {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}
+            </p>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  return <>{value}</>
+}
+
 export function FactsManager({
   initialFacts,
   isAdmin,
@@ -166,7 +208,7 @@ export function FactsManager({
                     >
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-ink">{f.label}</p>
-                        <p className="mt-0.5 text-sm text-slate">{f.value}</p>
+                        <div className="mt-0.5 text-sm text-slate"><FactValue value={f.value} isAdmin={isAdmin} /></div>
                       </div>
                       {isAdmin ? (
                         <button

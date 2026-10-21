@@ -858,7 +858,7 @@ async function generatePostWithQualityGate(input: {
   return { caption: lastCaption, gateResult: lastGate ?? createFailGate('max attempts') }
 }
 
-function evaluatePostQuality(caption: string): PostQualityResult {
+export function evaluatePostQuality(caption: string): PostQualityResult {
   const failures: string[] = []
   const warnings: string[] = []
 
@@ -866,6 +866,28 @@ function evaluatePostQuality(caption: string): PostQualityResult {
   const fakeMetrics = /\b(\d+%|\d+x|\+\d+%).*(improvement|increase|decrease|faster|better)/gi
   if (fakeMetrics.test(caption) && !caption.includes('according to') && !caption.includes('data from')) {
     warnings.push('UNVERIFIED_METRIC')
+  }
+
+  // QA BUG-11-11: instruction leakage — the model's directions, not the post.
+  const INSTRUCTION_LEAKAGE: RegExp[] = [
+    /\b(as an ai|as a language model|i cannot|I'm unable|I'm just an ai|here is (a|the) (post|caption|linkedin|thread)|sure, here|hope this helps|let me know if)\b/i,
+    /\b(write (a|the|your) (post|caption|linkedin post|thread)|in conclusion|to summarize|in summary|as requested)\b/i,
+  ]
+  for (const re of INSTRUCTION_LEAKAGE) {
+    if (re.test(caption)) failures.push('INSTRUCTION_LEAKAGE')
+  }
+
+  // QA BUG-11-11: template markers and unfilled placeholders.
+  if (/\{\{[^}]+\}\}|\[[^\]]*(?:insert|your|here|name|company|client)[^\]]*\]|<[^>]*(?:insert|your|here)[^>]*>|\bTODO\b|\bLorem ipsum\b/i.test(caption)) {
+    failures.push('TEMPLATE_MARKER')
+  }
+
+  // QA BUG-11-11: an outcome metric is only credible when the persona backs it
+  // with their own experience or a cited source, in the same sentence.
+  const metricSentence = /\b\d+%|\b\d+x\b/i
+  const anchorInSentence = /\b(?:(?:I|we|my|our team)\s+(?:\w+\s+){0,3}?(?:found|measured|noticed|observed|ran|saw|built|shipped|deployed|migrated|reduced|cut|increased|improved|learned)|in our case|in production|at [A-Z][a-z]+|according to|data from)\b/i
+  for (const sentence of caption.split(/(?<=[.!?])\s+/)) {
+    if (metricSentence.test(sentence) && !anchorInSentence.test(sentence)) failures.push('UNVERIFIED_METRIC')
   }
 
   // Hard rule: no em dashes

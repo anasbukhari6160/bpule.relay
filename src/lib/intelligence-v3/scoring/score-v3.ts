@@ -312,7 +312,8 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   else if (timing.buyerTiming === 'CURRENT') reasons.push('Current buyer timing')
   if (timing.urgencyRejected) watchOut.push('Urgent timing claimed by the model — not verified against source dates')
   if (timing.activityRecency === 'STALE') watchOut.push('Most recent activity is stale')
-  if (timing.activityRecency === 'UNKNOWN') watchOut.push('No post date or start date in the source')
+  const hasExplicitDate = facts.explicitDates.activityDate !== null || facts.explicitDates.buyerStartDate !== null || facts.explicitDates.deadline !== null
+  if (timing.activityRecency === 'UNKNOWN' && !hasExplicitDate) watchOut.push('No post date or start date in the source')
 
   // ── 6. Access ─────────────────────────────────────────────────────────
   const access = resolveAccess(facts, decision.access, { relationshipRole: intent.relationshipRole, verifiedBuyerRequest: intent.verifiedBuyerRequest })

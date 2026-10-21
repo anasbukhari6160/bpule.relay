@@ -59,11 +59,16 @@ export async function readSse<T extends { type: string }>(
       }
     }
   } catch (err) {
+    // An intentional navigation abort is not a connection failure (QA BUG-13-03):
+    // the draft is persisted by the caller, so the navigation is silent.
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw err
+    }
     const message =
       err instanceof Error
         ? `Connection dropped: ${err.message}`
         : 'Connection dropped while the model was writing.'
-    notifyError(message, 'Connection dropped')
+    if (!handlers.silent) notifyError(message, 'Connection dropped')
     handlers.onError?.(message)
     throw err
   } finally {

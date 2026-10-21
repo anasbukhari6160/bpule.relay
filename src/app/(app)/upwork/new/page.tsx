@@ -23,6 +23,9 @@ interface FormState {
   hourlyRateMin: string
   hourlyRateMax: string
   proposalCount: string
+  /** Verbatim proposal wording, so a source range is never shown as exact. */
+  proposalEvidence: string
+  proposalRange: [number, number] | null
   connectsCost: string
   requiredSkills: string
   urgencySignal: string
@@ -38,6 +41,8 @@ const INITIAL: FormState = {
   hourlyRateMin: '',
   hourlyRateMax: '',
   proposalCount: '',
+  proposalEvidence: '',
+  proposalRange: null,
   connectsCost: '',
   requiredSkills: '',
   urgencySignal: '',
@@ -100,7 +105,7 @@ export default function NewUpworkJobPage() {
 
       type ExtractEvent =
         | { type: 'status'; message: string }
-        | { type: 'done'; jobId?: string; extracted: Partial<Omit<FormState, 'requiredSkills'>> & { tags: string[]; requiredSkills?: string[] | string }; demoMode: boolean }
+        | { type: 'done'; jobId?: string; extracted: Partial<Omit<FormState, 'requiredSkills' | 'proposalRange'>> & { tags: string[]; requiredSkills?: string[] | string; proposalRange?: [number, number] | null }; demoMode: boolean }
         | { type: 'error'; message: string }
 
       await readSse<ExtractEvent>(res, {
@@ -122,6 +127,8 @@ export default function NewUpworkJobPage() {
               hourlyRateMin: String(ex.hourlyRateMin ?? f.hourlyRateMin),
               hourlyRateMax: String(ex.hourlyRateMax ?? f.hourlyRateMax),
               proposalCount: String(ex.proposalCount ?? f.proposalCount),
+              proposalEvidence: ex.proposalEvidence?.trim() || f.proposalEvidence,
+              proposalRange: ex.proposalRange ?? f.proposalRange,
               connectsCost: String(ex.connectsCost ?? f.connectsCost),
               requiredSkills: Array.isArray(ex.requiredSkills) ? ex.requiredSkills.join(', ') : f.requiredSkills,
               urgencySignal: ex.urgencySignal?.trim() ?? f.urgencySignal,
@@ -159,7 +166,7 @@ export default function NewUpworkJobPage() {
           hourlyRateMin: form.hourlyRateMin ? Number(form.hourlyRateMin) : null,
           hourlyRateMax: form.hourlyRateMax ? Number(form.hourlyRateMax) : null,
           proposalCount: form.proposalCount ? Math.round(Number(form.proposalCount)) : null,
-          connectsCost: form.connectsCost ? Math.round(Number(form.connectsCost)) : 0,
+          connectsCost: form.connectsCost ? Math.round(Number(form.connectsCost)) : null,
           requiredSkills: form.requiredSkills.split(/[,;]/).map((s) => s.trim()).filter(Boolean),
           urgencySignal: form.urgencySignal.trim() || null,
           rawInput: form.rawInput.trim() || null,
@@ -176,8 +183,13 @@ export default function NewUpworkJobPage() {
     }
   }
 
-  const connectsPreview = form.connectsCost ? Number(form.connectsCost) : 0
-  const proposalsPreview = form.proposalCount ? Number(form.proposalCount) : 0
+  const connectsPreview = form.connectsCost ? Number(form.connectsCost) : null
+  const proposalsPreview = form.proposalCount ? Number(form.proposalCount) : null
+  // A source range ("Proposals: 10-15") is shown verbatim; the parsed midpoint
+  // is labelled an estimate, never presented as an observed exact count
+  // (QA BUG-11-02).
+  const proposalLabel = form.proposalEvidence
+    || (proposalsPreview !== null ? `~${proposalsPreview} estimated` : null)
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -190,9 +202,9 @@ export default function NewUpworkJobPage() {
           Relay extracts budget and urgency, scores the job with rubric math, and keeps the apply decision explicit.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <UpworkSignal label="Current score" value={`${score.total}/10`} />
-          <UpworkSignal label="Connects cost" value={String(connectsPreview)} />
-          <UpworkSignal label="Observed proposals" value={proposalsPreview > 0 ? String(proposalsPreview) : 'Unknown'} />
+          <UpworkSignal label="Current score" value={score.hasJob ? `${score.total}/10` : 'Paste a job'} />
+          <UpworkSignal label="Connects cost" value={connectsPreview !== null ? String(connectsPreview) : 'Not stated'} />
+          <UpworkSignal label="Observed proposals" value={proposalLabel ?? 'Unknown'} />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <Link href="/upwork/new" className="inline-flex items-center gap-1.5 rounded border border-orange/30 bg-orange/10 px-3 py-1.5 text-[12px] font-medium text-orange">
@@ -275,6 +287,7 @@ export default function NewUpworkJobPage() {
       </Step>
 
       <Step n={3} title="Score and save" hint="Pure arithmetic, never a model call." last>
+        {score.hasJob ? (
         <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-baseline gap-3">
@@ -319,6 +332,9 @@ export default function NewUpworkJobPage() {
             })}
           </ul>
         </div>
+        ) : (
+          <p className="text-[13px] text-graphite">Paste an Upwork job to analyze.</p>
+        )}
 
         <div className="mt-6 flex items-center justify-end border-t border-line pt-5">
           <Button

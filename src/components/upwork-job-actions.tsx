@@ -31,10 +31,18 @@ function markAppliedButtonClass(applied: boolean, belowGate: boolean): string {
 
 export function UpworkJobActions({ jobId, jobTitle, jobScore, profiles, matchedProofs }: UpworkJobActionsProps) {
   const belowGate = jobScore === null || jobScore < MIN_SCORE_TO_APPLY
+  // Exact eligibility reason for the disabled Generate button (QA BUG-11-08):
+  // never leave it disabled without saying why.
+  const eligibility = (() => {
+    if (profiles.length === 0) return { ok: false, reason: 'Assign a sending profile first.' }
+    if (jobScore === null) return { ok: false, reason: 'Analyze this job before generating a proposal.' }
+    return { ok: true as const, reason: null as string | null }
+  })()
   const [selectedProfileId, setSelectedProfileId] = useState(profiles[0]?.id ?? '')
   const [proposal, setProposal] = useState('')
   const [editing, setEditing] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const canGenerate = eligibility.ok && !generating
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [selfCheckNote, setSelfCheckNote] = useState<string | null>(null)
@@ -180,7 +188,8 @@ export function UpworkJobActions({ jobId, jobTitle, jobScore, profiles, matchedP
       <div className="flex items-center gap-3">
         <button
           onClick={() => void generate()}
-          disabled={generating || !selectedProfileId}
+          disabled={!canGenerate}
+          title={eligibility.ok ? undefined : eligibility.reason ?? undefined}
           className="inline-flex items-center gap-1.5 rounded bg-orange px-4 py-2 text-sm font-medium text-on-accent transition-all hover:bg-orange-dark active:scale-[0.97] disabled:opacity-50"
         >
           {generating ? (
@@ -192,6 +201,9 @@ export function UpworkJobActions({ jobId, jobTitle, jobScore, profiles, matchedP
             generationMode === 'premium' ? 'Generate premium proposal' : 'Generate proposal'
           )}
         </button>
+        {!eligibility.ok && (
+          <span className="text-[12px] text-status-warning">{eligibility.reason}</span>
+        )}
         {proposal && (
           <button
             onClick={() => void generate()}
