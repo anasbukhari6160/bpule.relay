@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   AlertTriangle,
@@ -161,7 +161,14 @@ function prospectCanBeSaved(
 
 export default function ProspectCheckPage() {
   const router = useRouter()
-  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+  // Read once. Recreating this every render made the draft-restore effect run on
+  // every commit, and JSON.parse returns a fresh object each time, so setResult
+  // scheduled another render forever — the page froze after an analysis and only
+  // the browser Back button responded.
+  const searchParams = useMemo(
+    () => (typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null),
+    [],
+  )
   const errorRef = useRef<HTMLDivElement | null>(null)
   const [rawInput, setRawInput] = useState(() => {
     const paste = searchParams?.get('paste')
@@ -209,7 +216,12 @@ export default function ProspectCheckPage() {
   // removes it; privacy stays local to this browser.
   const DRAFT_KEY = 'relay.prospect.draft.v1'
   const [draftRestored, setDraftRestored] = useState(false)
+  const restoredOnce = useRef(false)
   useEffect(() => {
+    // Restore exactly once. Re-running this would set a freshly-parsed result
+    // object on every render and loop forever.
+    if (restoredOnce.current) return
+    restoredOnce.current = true
     if (searchParams?.get('paste')) { setDraftRestored(true); return }
     try {
       const raw = localStorage.getItem(DRAFT_KEY)
@@ -220,7 +232,8 @@ export default function ProspectCheckPage() {
       }
     } catch { /* corrupt or unavailable draft — start clean */ }
     setDraftRestored(true)
-  }, [searchParams])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   useEffect(() => {
     if (!draftRestored) return
     try {
