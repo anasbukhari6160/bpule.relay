@@ -4,6 +4,7 @@ import { createScoutStore } from '@/lib/store'
 import { PageHeader } from '@/components/ui/page-header'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ConnectsPanel } from '@/components/upwork-connects-panel'
+import { upworkStageLabel } from '@/lib/upwork/pipeline'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,7 +55,7 @@ export default async function UpworkPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-medium text-ink">{job.title}</p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[11px] text-graphite capitalize">{job.status}</span>
+                      <span className="text-[11px] text-graphite">{upworkStageLabel(job.status)}</span>
                       {job.connectsCost > 0 && (
                         <span className="text-[10px] text-stone">• {job.connectsCost} Connects</span>
                       )}

@@ -2777,12 +2777,15 @@ export class SupabaseStore implements ScoutStore {
       proposedRate?: number | null
     },
   ): Promise<void> {
-    const { error } = await this.client
+    let query = this.client
       .from('upwork_jobs')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', id)
-      .eq('owner_rep_id', this.rep.id)
+      .eq('organization_id', this.orgId)
+    if (this.rep.role !== 'admin') query = query.eq('owner_rep_id', this.rep.id)
+    const { data, error } = await query.select('id')
     if (error) throw error
+    if (!data?.length) throw new Error('Could not update this job.')
   }
 
   async saveUpworkDraft(input: {
@@ -7795,6 +7798,7 @@ export class SupabaseStore implements ScoutStore {
        .eq('persona_id', personaId)
        .eq('local_date', localDate)
        .order('generation_version', { ascending: false })
+       .limit(1)
        .maybeSingle()
      if (error) throw error
      return data ? mapDailyContentBrief(data) : null
@@ -7857,6 +7861,7 @@ export class SupabaseStore implements ScoutStore {
       .eq('persona_id', personaId)
       .order('local_date', { ascending: false })
       .order('generation_version', { ascending: false })
+      .limit(1)
       .maybeSingle()
     if (error) throw error
     return data ? mapDailyContentBrief(data) : null
@@ -8091,6 +8096,7 @@ RULES:
       .eq('organization_id', this.orgId)
       .eq('local_date', localDate)
       .order('generation_version', { ascending: false })
+      .limit(1)
       .maybeSingle()
     if (error) throw error
     return data ? mapDailyGrowthBrief(data) : null
