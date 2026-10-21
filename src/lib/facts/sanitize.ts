@@ -23,6 +23,19 @@ function digitsOnly(s: string): string {
   return s.replace(/\./g, '')
 }
 
+/**
+ * Test/demo data must never approve a claim in a production draft. QA open
+ * observation: the approved library contained facts labelled (FAKE) and a raw
+ * internal JSON project proof whose numbers the guard would otherwise approve.
+ */
+export function isTestFact(fact: Pick<Fact, 'label' | 'value'>): boolean {
+  const label = (fact.label ?? '').toLowerCase()
+  if (/\b(fake|test|demo|sample|placeholder|lorem)\b/.test(label)) return true
+  const value = (fact.value ?? '').trim()
+  if (value.startsWith('{') && /fetch_status|permission_to_name_publicly/.test(value)) return true
+  return false
+}
+
 /** Truthy when the facts table says the public site is live. */
 export function siteIsLive(facts: Fact[]): boolean {
   const flag = facts.find(
@@ -70,6 +83,7 @@ export function stripUnauthorizedNumbers(
 ): { text: string; stripped: string[] } {
   const approved = new Set<string>()
   for (const fact of facts) {
+    if (isTestFact(fact)) continue
     const matches = fact.value.match(NUMBER_RE) ?? []
     for (const m of matches) {
       approved.add(digitsOnly(m))

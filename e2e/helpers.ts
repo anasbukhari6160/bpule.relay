@@ -58,7 +58,7 @@ async function loginWith(page: Page, email: string): Promise<void> {
       .first()
     const passInput = page.locator('#login-password, input[type="password"], input[name="password"]').first()
     const submitBtn = page
-      .locator('button:has-text("Sign in with password"), button:has-text("Sign in"), button:has-text("Log in"), button[type="submit"]')
+      .locator('button.auth-submit, button:has-text("Sign in with password"), button:has-text("Sign in"), button:has-text("Log in"), button[type="submit"]:not(.gv-submit-btn)')
       .first()
 
     await emailInput.click()
