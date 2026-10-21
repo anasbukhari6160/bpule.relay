@@ -7,7 +7,7 @@ import {
   Send, Reply, MessageSquare, X, Copy, Check, Trophy, Clock,
   Building2, ExternalLink, AlertTriangle, Sparkles,
   XCircle, Target, CalendarDays, Flame,
-  ChevronDown, ChevronUp, Mail,
+  ChevronDown, ChevronUp, Mail, Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -47,6 +47,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   const [sending, setSending] = useState(false)
   const [generationStatus, setGenerationStatus] = useState<string | null>(null)
   const [markingAccepted, setMarkingAccepted] = useState(false)
+  const [archiving, setArchiving] = useState(false)
 
   const relationshipState = computeRelationshipState(lead)
   const nextAction = deriveNextLeadAction(lead)
@@ -131,6 +132,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
       })
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Generation failed (${res.status})`) }
       let buffer = ''
+      let sawTerminal = false
       const reader = res.body?.getReader()
       if (!reader) throw new Error('No response stream')
       const decoder = new TextDecoder()
@@ -142,11 +144,21 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           try {
             const json = JSON.parse(line.slice(6))
             if (json.type === 'draft') { buffer += json.chunk ?? ''; setDraftText(buffer) }
-            else if (json.type === 'done' && json.draft) setDraftText(json.draft.draftText)
-            else if (json.type === 'error') { setGenerationStatus(json.message || 'Generation failed'); return }
+            else if (json.type === 'done' && json.draft) { sawTerminal = true; setDraftText(json.draft.draftText) }
+            else if (json.type === 'needs_rescoring') {
+              // The server could not derive a strategy. Say so instead of
+              // leaving a blank note (QA RQA-012).
+              sawTerminal = true
+              setGenerationStatus(json.reason || 'This lead needs rescoring before a message can be written.')
+              return
+            }
+            else if (json.type === 'error') { sawTerminal = true; setGenerationStatus(json.message || 'Generation failed'); return }
           } catch { /* skip */ }
         }
       }
+      // A stream that ends without a terminal event must not look like a
+      // silent success — the rep sees nothing and cannot tell what happened.
+      if (!sawTerminal) setGenerationStatus('Generation ended without a result. Please try again.')
     } catch (err) {
       setGenerationStatus(err instanceof Error ? err.message : 'Generation failed. Retry.')
     } finally { setGenerating(false) }
@@ -214,6 +226,14 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
 
   // A connection logged without a note has no text but still happened.
   const visibleMessages = messages.filter((m) => m.sentText || m.direction === 'inbound' || (m.type === 'connection' && m.sentAt)).sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
+
+  // The Won/Lost outcome is an event, not a message; show it as its own timeline
+  // row so History records the outcome (QA RQA-015).
+  const outcomeEntry = lead.status === 'won'
+    ? { id: 'outcome-won', type: 'won', sentText: 'Opportunity won', sentAt: lead.wonAt ?? null }
+    : lead.status === 'lost'
+      ? { id: 'outcome-lost', type: 'lost', sentText: 'Opportunity lost', sentAt: lead.lostAt ?? null }
+      : null
 
   // canonicalIntelligence may arrive as a JSON string from the DB — parse it
   let canonicalObj: Record<string, unknown> | null = null
@@ -306,6 +326,30 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                 <Target className="size-3" /> Refresh signals
               </button>
             )}
+
+            {/* Manual soft-archive / restore — distinct from the automatic
+                stale sweep and the Won/Lost conversation archive (QA RQA-019). */}
+            <button
+              disabled={archiving}
+              onClick={async () => {
+                setArchiving(true)
+                try {
+                  await fetch(`/api/leads/${lead.id}/archive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: lead.archived ? 'restore' : 'archive' }),
+                  })
+                  await refreshLead()
+                  router.refresh()
+                } finally {
+                  setArchiving(false)
+                }
+              }}
+              className="mt-1 inline-flex items-center gap-1 text-[10px] text-graphite hover:text-ink disabled:opacity-50"
+              title={lead.archived ? 'Restore this lead' : 'Archive this lead'}
+            >
+              <Archive className="size-3" /> {archiving ? 'Working…' : lead.archived ? 'Restore' : 'Archive'}
+            </button>
           </div>
         </div>
       </div>
@@ -553,6 +597,19 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
           <span className="ml-auto text-stone hidden group-open:inline"><ChevronUp className="size-4" /></span>
         </summary>
         <div className="border-t border-line/40">
+          {/* The Won/Lost outcome is an event, not a message — without this row
+              the History tab showed only the connection and no outcome
+              (QA RQA-015). */}
+          {outcomeEntry && (
+            <div className="border-b border-line/30 bg-status-success/5 px-5 py-3">
+              <div className="mb-1 flex items-center gap-2 text-[10px] text-stone">
+                <span className="rounded bg-status-success/10 px-1 py-0.5 text-[9px] font-medium uppercase text-status-success">Outcome</span>
+                <span className="capitalize">{outcomeEntry.type}</span>
+                {outcomeEntry.sentAt && <span>· {timeAgo(outcomeEntry.sentAt)}</span>}
+              </div>
+              <p className="text-[13px] text-ink">{outcomeEntry.sentText}</p>
+            </div>
+          )}
           {visibleMessages.length === 0 ? (
             <p className="py-8 text-center text-[13px] text-stone">No messages yet. Generate one above.</p>
           ) : (

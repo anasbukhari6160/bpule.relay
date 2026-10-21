@@ -244,7 +244,14 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
   if (intent.buyerIntentLevel === 'HIGH') reasons.push('Explicit buyer request detected (verified)')
   else if (intent.buyerIntentLevel === 'MEDIUM') reasons.push('Buyer request verified in the source')
   if (intent.verifiedBuyerRequest && requestAge !== null && requestAge > 180) watchOut.push(`The request is ${requestAge} days old — confirm it is still open`)
-  if (budgetLine) reasons.push(`Budget stated: ${facts.budgetEvidence?.amount ?? 'stated'}${facts.budgetEvidence?.approved ? ' (approved)' : ''}`)
+  if (budgetLine) {
+    // A budget can be stated without a figure ("Budget ist vorhanden"). Never
+    // render the placeholder as a value (QA RQA-006).
+    const amount = facts.budgetEvidence?.amount ?? null
+    reasons.push(amount
+      ? `Budget stated: ${amount}${facts.budgetEvidence?.approved ? ' (approved)' : ''}`
+      : `Budget available — amount not stated${facts.budgetEvidence?.approved ? ' (approved)' : ''}`)
+  }
   if (intent.contradictions.length > 0) watchOut.push('Buyer signals disagree — intent treated as UNKNOWN')
   if (!intent.verifiedBuyerRequest && (intent.claims.modelBuyerProbability ?? 0) >= 0.7) watchOut.push('Model claimed buyer intent the source does not state — not credited')
   if (intent.verifiedHiringNeed && !intent.verifiedBuyerRequest) watchOut.push('Employee hiring is not a request to buy services')

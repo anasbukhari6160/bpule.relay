@@ -36,6 +36,18 @@ export interface ReplyAnalysis {
   knowledge: ConversationKnowledge
 }
 
+/**
+ * Explicit buying confirmation — a confirmed/approved budget or an unambiguous
+ * "let's proceed". These outrank a bare pricing keyword: "confirmed the £85k
+ * budget and let's set up a call" is interest, not a price question (QA RQA-013).
+ */
+const BUYING_CONFIRMATION =
+  /\b(?:budget\s+(?:is\s+)?(?:confirmed|approved|allocated|set)|(?:confirmed|approved|allocated|set)\s+(?:the\s+)?(?:budget|£?\d[\d,.]*\s*[km]?)|we(?:'|’)?re\s+(?:good|ready|happy|all\s+set)\s+to\s+(?:proceed|move\s+forward|move\s+ahead|go\s+ahead|go)|let(?:'|’)?s\s+(?:proceed|move\s+forward|move\s+ahead|go\s+ahead)|we(?:'|’)?d\s+like\s+to\s+(?:proceed|move\s+forward|move\s+ahead|go\s+ahead)|go\s+ahead|ready\s+to\s+(?:sign|start|proceed|move\s+forward)|next\s+steps)\b/i
+
+/** A request for a call/meeting, including "discovery call" (QA RQA-013). */
+const MEETING_REQUEST =
+  /\b(?:book(?:\s+(?:a|an|us))?\s+(?:call|meeting|demo|slot)|schedule\s+(?:a|an)?\s*(?:call|meeting|demo)|discovery\s+call|set\s+up\s+(?:a|an)?\s*(?:call|meeting|demo)|call(?:\s+me|\s+next|\s+this|\s+tomorrow|\s+about)?|zoom|meet\s+(?:up|next|this|tomorrow|for|on)|let(?:'|’)?s\s+(?:talk|meet|chat)|talk\s+(?:this|next|on|tomorrow|about)|chat\s+(?:this|next|on|tomorrow|about)|available\s+(?:on|this|next|tomorrow|for\s+a\s+call))\b/i
+
 export function buildDeterministicConversationSummary(context: ReplyContext): string {
   const prior = [...context.priorMessages]
     .filter((m) => m.sentText)
@@ -119,14 +131,21 @@ export function analyzeReply(replyText: string, _context: ReplyContext): ReplyAn
     analysis.intent = 'not_interested'
     analysis.sentiment = 'neutral'
     analysis.nextBestAction = 'acknowledge_and_hold'
-  } else if (/\b(how much|pricing|cost|rate|budget|what is your)\b/i.test(lower)) {
-    analysis.intent = 'pricing'
-    analysis.nextBestAction = 'share_pricing_context'
-  } else if (/\b(book|schedule|call|meeting|zoom|chat about)\b/i.test(lower)) {
+  } else if (BUYING_CONFIRMATION.test(lower)) {
+    // A confirmed budget or an explicit "let's proceed" is a buying signal, not
+    // a pricing inquiry (QA RQA-013).
+    analysis.intent = 'interested'
+    analysis.buyingSignal = true
+    analysis.sentiment = 'positive'
+    analysis.nextBestAction = 'provide_more_detail'
+  } else if (MEETING_REQUEST.test(lower)) {
     analysis.intent = 'meeting_request'
     analysis.buyingSignal = true
     analysis.sentiment = 'positive'
     analysis.nextBestAction = 'move_to_meeting'
+  } else if (/\b(how much|pricing|cost|rate|budget|what is your)\b/i.test(lower)) {
+    analysis.intent = 'pricing'
+    analysis.nextBestAction = 'share_pricing_context'
   } else if (/\b(tell me more|more info|elaborate|what do you mean)\b/i.test(lower)) {
     analysis.intent = 'interested'
     analysis.buyingSignal = true

@@ -66,9 +66,10 @@ export function buildProfileIntelligence(
   const v2Industries = extractIndustriesV2(cards, profile.industries ?? [])
   const forbiddenClaims = [...new Set(cards.flatMap((c) => c.forbiddenClaims))]
 
-  const strongestProof = cards
+  const safeCards = cards.filter((c) => isProductionSafeProof(c))
+  const strongestProof = safeCards
     .filter((c) => c.strength === 'strong')
-    .sort((a, b) => b.tags.length - a.tags.length)[0] ?? cards[0] ?? null
+    .sort((a, b) => b.tags.length - a.tags.length)[0] ?? safeCards[0] ?? null
 
   return {
     profile,
@@ -106,6 +107,21 @@ function extractIndustriesV2(cards: ProofCard[], profileIndustries: string[]): s
 }
 
 /**
+ * A proof card is production-safe only when it is verified AND does not
+ * self-declare as fake/test/demo/sample/rejected. The Facts library can hold
+ * placeholder rows that are "approved" in the UI but must never be quoted in
+ * an outbound message (QA RQA-026).
+ */
+const SELF_DECLARED_UNTRUSTED = /\b(fake|test|demo|sample|example|placeholder|rejected|do\s*not\s*use|not\s*real)\b/i
+
+export function isProductionSafeProof(card: Pick<ProofCard, 'verified' | 'safeClaim' | 'capability'>): boolean {
+  if (!card.verified) return false
+  if (SELF_DECLARED_UNTRUSTED.test(card.safeClaim)) return false
+  if (SELF_DECLARED_UNTRUSTED.test(card.capability)) return false
+  return true
+}
+
+/**
  * Match a lead's tags to a profile's proof cards.
  * Returns the 1-3 most relevant proofs, ranked by relevance.
  */
@@ -116,7 +132,9 @@ export function matchProofToLead(
 ): MatchedProof[] {
   const lead = new Set(leadTags.map((t) => t.toLowerCase()))
 
-  const scored = profileIntelligence.proofCards.map((card) => {
+  const scored = profileIntelligence.proofCards
+    .filter((card) => isProductionSafeProof(card))
+    .map((card) => {
     const matchingTags = card.tags.filter((t) => lead.has(t.toLowerCase()))
     let relevanceScore = matchingTags.length * 3
 
@@ -164,7 +182,7 @@ export function classifyClaimSafety(
 
   // word from the capability (4+ chars, exact word match or substring of claim word)
   for (const card of profileIntelligence.proofCards) {
-    if (!card.verified) continue
+    if (!isProductionSafeProof(card)) continue
     const capWords = card.capability.toLowerCase().split(/\s+/)
     const claimWords = lower.split(/\s+/)
     // Match if any significant word from capability appears as a whole word in the claim
@@ -173,6 +191,7 @@ export function classifyClaimSafety(
   }
 
   for (const card of profileIntelligence.proofCards) {
+    if (!isProductionSafeProof(card)) continue
     if (card.safeClaim && lower.includes(card.safeClaim.toLowerCase().slice(0, 30))) {
       return 'APPROVED_CLAIM'
     }

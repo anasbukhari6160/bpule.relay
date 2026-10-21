@@ -7,29 +7,25 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
 import { validatePerformanceConfig } from '@/lib/performance/execution-score'
 
 export const maxDuration = 15
 
 export async function GET() {
-  const store = createServiceSupabase()
-  const { data: auth } = await store.auth.getUser()
-  if (!auth.user) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
-
-  const { data: rep } = await store
-    .from('reps')
-    .select('organization_id, role')
-    .eq('user_id', auth.user.id)
-    .single()
-
-  if (!rep || !['owner', 'admin'].includes(rep.role)) {
+  // Browser-triggered: resolve the signed-in rep from the request session, not
+  // a service-role client (QA RQA-016).
+  const auth = await getAuthContext()
+  if (!auth) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
+  if (!auth.isAdmin) {
     return NextResponse.json({ error: 'Admin only.' }, { status: 403 })
   }
 
+  const store = createServiceSupabase()
   const { data: rulebook } = await store
     .from('organization_rulebooks')
     .select('performance_weights, sla_config')
-    .eq('organization_id', rep.organization_id)
+    .eq('organization_id', auth.orgId)
     .single()
 
   const sla = (rulebook?.sla_config as any) ?? {}
@@ -44,20 +40,15 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const store = createServiceSupabase()
-  const { data: auth } = await store.auth.getUser()
-  if (!auth.user) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
-
-  const { data: rep } = await store
-    .from('reps')
-    .select('organization_id, role')
-    .eq('user_id', auth.user.id)
-    .single()
-
-  if (!rep || !['owner', 'admin'].includes(rep.role)) {
+  // Browser-triggered: resolve the signed-in rep from the request session, not
+  // a service-role client (QA RQA-016).
+  const auth = await getAuthContext()
+  if (!auth) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
+  if (!auth.isAdmin) {
     return NextResponse.json({ error: 'Admin only.' }, { status: 403 })
   }
 
+  const store = createServiceSupabase()
   const body = await req.json().catch(() => ({}))
   const sla = body.sla ?? {}
 
@@ -86,7 +77,7 @@ export async function POST(req: NextRequest) {
       performance_weights: validation.sanitized,
       sla_config: slaConfig,
     })
-    .eq('organization_id', rep.organization_id)
+    .eq('organization_id', auth.orgId)
 
   if (error) return NextResponse.json({ error: 'Save failed.' }, { status: 500 })
   return NextResponse.json({ ok: true, warnings: validation.errors })

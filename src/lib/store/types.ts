@@ -198,6 +198,9 @@ export interface RateMetric {
 export interface LeadDetail extends Lead {
   messages: Message[]
   outcomes: Outcome[]
+  /** When the lead was marked won/lost (from conversation_states); null otherwise. */
+  wonAt?: string | null
+  lostAt?: string | null
   /**
    * ConversationState.followupCount for this lead (0 if no conversation
    * state row exists yet). Callers computing follow-up eligibility (e.g.

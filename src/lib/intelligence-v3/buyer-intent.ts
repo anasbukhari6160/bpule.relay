@@ -20,6 +20,7 @@ import {
   detectSellerOwnership,
   isRecruiterProfile,
   detectTerminalState,
+  isInstructionLine,
   type SourceLine,
 } from './source-facts'
 import { splitCurrentAndPastLines } from './current-org'
@@ -157,6 +158,7 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     && !PAST_NARRATIVE.test(line)
     && !ML_PAST_PHRASE.test(line)
     && !HYPOTHETICAL.test(line)
+    && !isInstructionLine(line)
     && !inRepostBlock(idx)
 
   let helpRequest: SourceLine | null = null

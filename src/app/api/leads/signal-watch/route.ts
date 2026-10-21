@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
 import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { diffSignalSnapshots, buildSignalSnapshot, qualifiesForWatching } from '@/lib/relay/signal-watch'
 import { emitAction } from '@/lib/action-ledger'
@@ -22,18 +23,12 @@ export const maxDuration = 60
 const WATCH_MIN_SCORE = QUALIFICATION_BANDS.find((b) => b.qualification === 'WORTH_PURSUING')!.min
 
 export async function POST(req: NextRequest) {
+  // Browser-triggered: resolve the signed-in rep from the request session, not
+  // a service-role client (QA RQA-016).
+  const auth = await getAuthContext()
+  if (!auth) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
+
   const store = createServiceSupabase()
-  const { data: auth } = await store.auth.getUser()
-  if (!auth.user) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
-
-  const { data: rep } = await store
-    .from('reps')
-    .select('id, organization_id, role')
-    .eq('user_id', auth.user.id)
-    .single()
-
-  if (!rep) return NextResponse.json({ error: 'Not authorized.' }, { status: 401 })
-
   const url = new URL(req.url)
   const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '20'), 50)
 
@@ -41,7 +36,7 @@ export async function POST(req: NextRequest) {
   const { data: leads } = await store
     .from('leads')
     .select('id, company, contact_name, contact_title, raw_input, canonical_score, canonical_intelligence, direction')
-    .eq('organization_id', rep.organization_id)
+    .eq('organization_id', auth.orgId)
     .eq('archived', false)
     .neq('status', 'won')
     .neq('status', 'lost')
@@ -109,7 +104,7 @@ export async function POST(req: NextRequest) {
       for (const event of signalEvents) {
         if (event.severity === 'urgent' || event.severity === 'notable') {
           await emitAction({
-            orgId: rep.organization_id,
+            orgId: auth.orgId,
             actionType: 'OPPORTUNITY_CREATED',
             actorType: 'system',
             leadId: lead.id,
@@ -125,7 +120,7 @@ export async function POST(req: NextRequest) {
           // Persist to signal_events for queryable history
           await persistSignalEvent(store, {
             id: event.id,
-            organizationId: rep.organization_id,
+            organizationId: auth.orgId,
             leadId: event.leadId,
             signalType: event.type,
             severity: event.severity,

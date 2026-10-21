@@ -5,6 +5,7 @@ import { produceCanonicalIntelligence } from '@/lib/intelligence-v2/orchestrator
 import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
 import { hasProvider } from '@/lib/ai/config'
+import { extractTrailingSignature, profileInfoFromSignature } from '@/lib/inbound/signature'
 import { loadSenderProfiles, parsePacket, routeLead } from '@/lib/relay/routing-context'
 import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
 import type { InboundInput } from '@/lib/domain/types'
@@ -46,7 +47,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const profiles = await store.getAssignedProfiles()
-    const rawText = [body.message, body.profileInfo, body.jobInfo, body.context].filter((s): s is string => typeof s === 'string' && s.trim().length > 0).join('\n\n')
+    // A trailing "– Jonas, CTO at Fenwick Pay" is the sender's identity; lift it
+    // into a profile-shaped block so the reader finds the name, role and company
+    // instead of collapsing the whole message into the title (QA RQA-020).
+    const signature = extractTrailingSignature(typeof body.message === 'string' ? body.message : '')
+    const signatureContext = signature ? profileInfoFromSignature(signature) : ''
+    const rawText = [signatureContext, body.message, body.profileInfo, body.jobInfo, body.context].filter((s): s is string => typeof s === 'string' && s.trim().length > 0).join('\n\n')
 
     let canonical
     if (V3_CANONICAL) {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceSupabase } from '@/lib/supabase/service'
+import { createScoutStore } from '@/lib/store'
 
 export const maxDuration = 30
 
@@ -21,23 +21,23 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: leadId } = await params
-  const store = createServiceSupabase()
-  const { data: auth } = await store.auth.getUser()
-  if (!auth.user) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
 
-  const { data: rep } = await store
-    .from('reps')
-    .select('id, organization_id')
-    .eq('user_id', auth.user.id)
-    .single()
+  // This route serves a browser request, so it must authenticate the signed-in
+  // rep from the request session. A service-role client carries no user session
+  // and `auth.getUser()` always returned null here, producing a false
+  // "Not signed in" for an authenticated rep (QA RQA-016).
+  let store: Awaited<ReturnType<typeof createScoutStore>>
+  try {
+    store = await createScoutStore()
+  } catch {
+    return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
+  }
 
-  if (!rep) return NextResponse.json({ error: 'Not authorized.' }, { status: 401 })
-
-  const { data: lead } = await store
+  const { data: lead } = await store.getSupabaseClient()
     .from('leads')
     .select('id, org_id, company, contact_name, contact_title, raw_input, canonical_score, canonical_intelligence, created_at, updated_at, verdict')
     .eq('id', leadId)
-    .eq('organization_id', rep.organization_id)
+    .eq('organization_id', store.organizationId)
     .single()
 
   if (!lead) return NextResponse.json({ error: 'Lead not found.' }, { status: 404 })
@@ -95,7 +95,7 @@ export async function POST(
 
     const result = await produceV3Intelligence(rawText, {
       forceReanalyze: true,
-      trace: { leadId, organizationId: rep.organization_id, repId: rep.id },
+      trace: { leadId, organizationId: store.organizationId, repId: store.getCurrentRepId() },
     })
 
     if (result?.intelligence) {
@@ -118,6 +118,7 @@ export async function POST(
       }
 
       await store
+        .getSupabaseClient()
         .from('leads')
         .update({
           canonical_score: newScore,

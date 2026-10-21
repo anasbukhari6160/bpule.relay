@@ -60,6 +60,8 @@ export interface SenderRanking {
   risks: string[]
   accessibleToRep: boolean
   holders: string[]
+  /** Rep ids who hold this sender — lets the UI address a help request. */
+  holderRepIds: string[]
   primaryProof: string | null
 }
 
@@ -106,6 +108,7 @@ export function rankSendersForLead(
       risks: result.risks,
       accessibleToRep: sender.accessibleToRep,
       holders: sender.holders.map((h) => h.name),
+      holderRepIds: sender.holders.map((h) => h.repId).filter((id): id is string => Boolean(id)),
       primaryProof: result.primaryProof,
     }
   })

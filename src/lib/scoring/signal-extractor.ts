@@ -14,7 +14,7 @@
  *   - Access: connection degree, mutual signals
  */
 
-import { detectCommercialRequest } from '@/lib/intelligence-v3/source-facts'
+import { classifyLine, detectCommercialRequest } from '@/lib/intelligence-v3/source-facts'
 import { resolveCurrentIndustry } from '@/lib/intelligence-v3/current-org'
 import { detectFunding, parseHiringCount } from '@/lib/evidence/provenance'
 import { verifyBudgetProvenance, verifyHiringProvenance, classifyTemporalProvenance, isHistoricalYear } from '@/lib/scoring/signal-attribution'
@@ -164,10 +164,9 @@ const TECH_DOMAINS = [
   'data science', 'analytics', 'devops', 'cloud', 'mobile', 'frontend', 'backend',
 ]
 
-const ASK_PATTERNS = [
-  /\b(help me|looking for help|need advice|anyone know|recommendation|suggest)\b/i,
-  /\b(looking for a|seeking a|need a|want to hire|searching for a)\b/i,
-]
+const ASK_HELP = /\b(help me|looking for help|need advice|anyone know|recommendation|suggest)\b/i
+/** Broad ask wording — only an ask when the line is not a job/seller line. */
+const ASK_BROAD = /\b(looking for a|seeking a|need a|want to hire|searching for a)\b/i
 
 const LAUNCH_PATTERNS = [
   /\b(launched|launching|just released|new product|product hunt|show hn|built|shipped)\b/i,
@@ -280,8 +279,19 @@ function extractPersonSignals(text: string, lines: string[], lower: string): Per
   const nameParts = firstLine.split(/\s*[·|\-–]\s+/)[0].trim().split(' ')
   const name = nameParts.length >= 2 && nameParts.length <= 4 ? nameParts.join(' ') : null
 
-  const titleLine = lines.find((l) => /·|\-–/.test(l) && !l.startsWith('http')) || ''
-  const title = titleLine.split(/·|\-–/).pop()?.trim() || null
+  // The headline carries the role ("Role at Company"); LinkedIn's connection
+  // badge ("3rd · Connect", "2. · Vernetzen") is interface chrome, never a
+  // title. Skip chrome segments and pick the first real role segment
+  // (QA RQA-003).
+  const CHROME_TITLE = /^(?:connect|message|follow|following|pending|vernetzen|nachricht|folgen|kontakt|open\s+to\s+work|\d+(?:st|nd|rd|th)?)$/i
+  let title: string | null = null
+  for (const line of lines) {
+    if (!/·|\-–/.test(line) || line.startsWith('http')) continue
+    const segment = line.split(/·|\-–/).pop()?.trim() || ''
+    if (!segment || CHROME_TITLE.test(segment)) continue
+    title = segment
+    break
+  }
 
   let seniority: PersonSignals['seniority'] = 'unknown'
   for (const sp of SENIORITY_PATTERNS) {
@@ -324,17 +334,25 @@ function extractTenure(text: string): number | null {
 
 
 function extractIntentSignals(text: string, lower: string): IntentSignals {
-  const explicitAsk = ASK_PATTERNS.some((p) => p.test(text))
+  const textLines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  // Job seekers, sellers and customer-discovery lines are never a buyer ask
+  // or an employer hiring event (QA RQA-004). An external request is an ask,
+  // but it is never "the organization is hiring".
+  const NON_ASK_KINDS = new Set(['job_seeking', 'seller_offering', 'service_offering', 'customer_discovery'])
+  const NON_HIRING_KINDS = new Set([...NON_ASK_KINDS, 'external_request'])
+  const explicitAsk = ASK_HELP.test(text) || textLines.some((line) =>
+    ASK_BROAD.test(line) && !NON_ASK_KINDS.has(classifyLine(line)))
   const askingForHelp = /\b(help me|need\s+\w*\s*help|anyone who knows|recommendation|advice on)\b/i.test(text)
   const commercial = detectCommercialRequest(text)
   // "Looking for an agency" is a vendor search, not hiring. Generic
   // looking-for wording only counts as hiring when no external provider is
   // being sought and nothing else says employment.
   // Hiring provenance: verify current, not historical/background
-  const rawHiringMatch = commercial.employmentHiring !== null
-    || (commercial.externalServiceRequest === null && HIRING_PATTERNS.some((p) => p.test(text)))
-  const textLines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  const hiringLine = textLines.find((line) =>
+    !NON_HIRING_KINDS.has(classifyLine(line)) && HIRING_PATTERNS.some((p) => p.test(line)))
+  const rawHiringMatch = commercial.employmentHiring !== null || hiringLine !== undefined
   const hiring = rawHiringMatch && textLines.some(line => {
+    if (NON_HIRING_KINDS.has(classifyLine(line))) return false
     if (!HIRING_PATTERNS.some(p => p.test(line)) && !commercial.employmentHiring) return false
     const check = verifyHiringProvenance(line)
     return check.valid
@@ -357,8 +375,11 @@ function extractIntentSignals(text: string, lower: string): IntentSignals {
   const launchedProduct = extractProductName(text)
 
   const jobPosting = /\b(job|role|position|hiring for|apply now|we're hiring)\b/i.test(text)
+  // A vendor search is a line the classifier reads as an external request.
+  // The old generic "looking for a ..." test credited job seekers
+  // ("looking for a remote frontend role") as buyer requests (QA RQA-004).
   const seekingVendor = commercial.externalServiceRequest !== null
-    || (!hiring && /\b(looking for a|seeking a|need a vendor|need a partner|need a dev)\b/i.test(text))
+    || textLines.some((line) => classifyLine(line) === 'external_request')
   // Budget provenance: verify current, not historical/example
   const rawBudgetMatch = BUDGET_PATTERNS.some((p) => p.test(text))
   const budgetMentioned = rawBudgetMatch && textLines.some(line => {

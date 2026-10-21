@@ -949,7 +949,7 @@ export class SupabaseStore implements ScoutStore {
       throw new Error('You are not the owner of this lead.')
     }
 
-    const [messages, outcomes, followupCount] = await Promise.all([
+    const [messages, outcomes, convState] = await Promise.all([
       this.client
         .from('messages')
         .select('*')
@@ -969,16 +969,23 @@ export class SupabaseStore implements ScoutStore {
         }),
       this.client
         .from('conversation_states')
-        .select('followup_count')
+        .select('followup_count, won_at, lost_at')
         .eq('lead_id', id)
         .maybeSingle()
         .then((r) => {
           if (r.error) throw r.error
-          return (r.data as { followup_count?: number } | null)?.followup_count ?? 0
+          return r.data as { followup_count?: number; won_at?: string | null; lost_at?: string | null } | null
         }),
     ])
 
-    return { ...mapLead(data as Row), messages, outcomes, followupCount }
+    return {
+      ...mapLead(data as Row),
+      messages,
+      outcomes,
+      followupCount: convState?.followup_count ?? 0,
+      wonAt: convState?.won_at ?? null,
+      lostAt: convState?.lost_at ?? null,
+    }
   }
 
   async findLeadByIntelligenceInputHash(hash: string): Promise<LeadDetail | null> {

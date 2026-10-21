@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
 import {
   computeExecutionResult,
   mapActionEventToCanonical,
@@ -47,26 +48,20 @@ function localDateToUtcRange(date: string, timezone: string): { start: string; e
 }
 
 export async function GET(req: NextRequest) {
+  // Browser-triggered: resolve the signed-in rep from the request session, not
+  // a service-role client (QA RQA-016).
+  const auth = await getAuthContext()
+  if (!auth) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
+
   const store = createServiceSupabase()
-  const { data: auth } = await store.auth.getUser()
-  if (!auth.user) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
-
-  const { data: rep } = await store
-    .from('reps')
-    .select('id, organization_id, role')
-    .eq('user_id', auth.user.id)
-    .single()
-
-  if (!rep) return NextResponse.json({ error: 'Not authorized.' }, { status: 401 })
-
   const url = new URL(req.url)
-  const repId = url.searchParams.get('repId') ?? rep.id
+  const repId = url.searchParams.get('repId') ?? auth.repId
   const date = url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10)
 
   // 1. Get org timezone and performance config
   const [{ data: org }, { data: rulebook }] = await Promise.all([
-    store.from('organizations').select('timezone').eq('id', rep.organization_id).single(),
-    store.from('organization_rulebooks').select('performance_weights, sla_config').eq('organization_id', rep.organization_id).single(),
+    store.from('organizations').select('timezone').eq('id', auth.orgId).single(),
+    store.from('organization_rulebooks').select('performance_weights, sla_config').eq('organization_id', auth.orgId).single(),
   ])
 
   const timezone = org?.timezone ?? 'UTC'
@@ -99,7 +94,7 @@ export async function GET(req: NextRequest) {
   const { data: actionEvents } = await store
     .from('action_events')
     .select('action_type, lead_id, occurred_at, metadata')
-    .eq('organization_id', rep.organization_id)
+    .eq('organization_id', auth.orgId)
     .eq('actor_id', repId)
     .gte('occurred_at', dayStart)
     .lt('occurred_at', dayEnd)
@@ -108,7 +103,7 @@ export async function GET(req: NextRequest) {
   const { data: dailyTargets } = await store
     .from('daily_targets')
     .select('activity_type, target_count')
-    .eq('organization_id', rep.organization_id)
+    .eq('organization_id', auth.orgId)
     .eq('rep_id', repId)
     .eq('active', true)
 
@@ -152,7 +147,7 @@ export async function GET(req: NextRequest) {
   const { data: leads } = await store
     .from('leads')
     .select('id, status, connection_accepted_at')
-    .eq('organization_id', rep.organization_id)
+    .eq('organization_id', auth.orgId)
     .eq('owner_rep_id', repId)
     .eq('archived', false)
 
@@ -170,7 +165,7 @@ export async function GET(req: NextRequest) {
     const { data: connectionActions } = await store
       .from('action_events')
       .select('lead_id, action_type')
-      .eq('organization_id', rep.organization_id)
+      .eq('organization_id', auth.orgId)
       .eq('actor_id', repId)
       .in('lead_id', leadsWithoutAccept)
       .eq('action_type', 'CONNECTION_SENT')
@@ -226,7 +221,7 @@ export async function GET(req: NextRequest) {
     const { data: pendingMessages } = await store
       .from('messages')
       .select('lead_id, created_at, direction')
-      .eq('organization_id', rep.organization_id)
+      .eq('organization_id', auth.orgId)
       .in('lead_id', repliedLeadIds)
       .order('created_at', { ascending: false })
       .limit(200)

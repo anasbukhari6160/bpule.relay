@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceSupabase } from '@/lib/supabase/service'
+import { getAuthContext } from '@/lib/auth/organization'
 import {
   analyzeReply,
   buildReplyStrategy,
@@ -40,18 +41,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: leadId } = await params
+  // Browser-triggered: resolve the signed-in rep from the request session, not
+  // a service-role client (QA RQA-016).
+  const auth = await getAuthContext()
+  if (!auth) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
+
   const store = createServiceSupabase()
-  const { data: auth } = await store.auth.getUser()
-  if (!auth.user) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
-
-  const { data: rep } = await store
-    .from('reps')
-    .select('id, organization_id')
-    .eq('user_id', auth.user.id)
-    .single()
-
-  if (!rep) return NextResponse.json({ error: 'Not authorized.' }, { status: 401 })
-
   const body = await req.json().catch(() => ({}))
   const replyText = body.replyText ?? ''
   const replyToMessageId = body.replyToMessageId ?? null
@@ -65,7 +60,7 @@ export async function POST(
     .from('leads')
     .select('id, company, contact_name, contact_title, status, canonical_score, direction, organization_id')
     .eq('id', leadId)
-    .eq('organization_id', rep.organization_id)
+    .eq('organization_id', auth.orgId)
     .single()
 
   if (!lead) return NextResponse.json({ error: 'Lead not found.' }, { status: 404 })
@@ -97,9 +92,9 @@ export async function POST(
     .filter(m => m.sent_text)
     .map(m => ({
       id: m.id,
-      organizationId: lead.organization_id ?? rep.organization_id,
+      organizationId: lead.organization_id ?? auth.orgId,
       leadId: lead.id,
-      repId: rep.id,
+      repId: auth.repId,
       type: m.type ?? 'dm' as const,
       draftText: m.draft_text ?? null,
       sentText: m.sent_text!,

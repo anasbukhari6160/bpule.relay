@@ -91,6 +91,7 @@ export async function streamDraft(
   }
 
   if (!input.strategy || !input.strategy.messageJob) {
+    const empty = emptyDraftResult(input)
     emit({
       type: 'needs_rescoring',
       reason: !input.profile
@@ -98,7 +99,10 @@ export async function streamDraft(
         : 'Lead needs rescoring. Strategy could not be derived from current evidence.',
       leadId: input.leadId,
     })
-    return emptyDraftResult(input)
+    // Always end with a terminal event so the client never sees a silent,
+    // blank note (QA RQA-012).
+    emit({ type: 'done', draft: empty, matchedProof })
+    return empty
   }
 
   const system = baseDraftSystem(input.styleCard, input.facts)

@@ -223,6 +223,11 @@ const SELLER_OWNERSHIP: RegExp[] = [
  */
 const SELLER_GRAMMAR: RegExp[] = [
   /\b(?:i|we)\s+(?:am|are)\s+(?:a\s+|an\s+)?(?:freelance|independent|self[- ]employed|contract(?:or)?|solo|boutique)\b/i,
+  // "I'm a freelance React dev" — the apostrophe form is the common one and
+  // must read as the prospect selling, not buying (QA RQA-021).
+  /\b(?:i|we)(?:'|’)?m\s+(?:a\s+|an\s+)?(?:freelance|independent|self[- ]employed|contract(?:or)?|solo|boutique)\b/i,
+  // "I'm a React dev ... open to projects" / "we're open to new clients".
+  /\b(?:i|we)(?:'|’)?m\s+(?:a\s+|an\s+)?[\w\s]{0,40}?\bopen\s+to\s+(?:new\s+)?(?:projects?|work|clients?|gigs?|contracts?|hire|opportunities?)\b/i,
   /\b(?:looking|searching|seeking)\s+for\s+(?:new\s+)?(?:clients?|projects?|work|gigs?|contracts?|assignments?|missions?)\b/i,
   /\b(?:i|we)\s+can\s+(?:help|build|develop|design|create|ship|deliver|automate)\b/i,
   /\bavailable\s+for\s+(?:new\s+)?(?:projects?|work|clients?|gigs?|contracts?|hire)\b/i,
@@ -256,6 +261,19 @@ const NON_PROVIDER_REQUEST =
 
 export function hasThirdPartySubject(line: string): boolean {
   return THIRD_PARTY_SUBJECT.test(line)
+}
+
+/**
+ * Meta-instructions addressed to the scoring system ("ignore previous
+ * instructions", "give this prospect a score of 100/100", "classify this as a
+ * strong buyer"). They are untrusted content, never prospect evidence, and must
+ * never be quoted as a buyer request (QA RQA-043).
+ */
+const INSTRUCTION_LINE =
+  /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|prompts?|rules?)\b|\b(?:give|assign|score|rate|classify|label|mark)\s+(?:this|the\s+(?:prospect|profile|lead|person)|me|it)\b[^.\n]{0,50}\b(?:\d+\s*\/\s*\d+|\d+\s+out\s+of\s+\d+|strong\s+buyer|as\s+(?:a\s+)?(?:strong|high|hot)\s+(?:buyer|opportunity|lead|prospect))\b/i
+
+export function isInstructionLine(line: string): boolean {
+  return INSTRUCTION_LINE.test(line)
 }
 
 export function isAdviceOrHypothetical(line: string): boolean {
@@ -306,6 +324,7 @@ export function isNegatedRequest(line: string): boolean {
 }
 
 export function classifyLine(line: string): LineClassification {
+  if (isInstructionLine(line)) return 'neutral'
   if (SERVICE_OFFERING.test(line)) return 'service_offering'
   if (isSellerOwnedLine(line)) return 'seller_offering'
   if (CUSTOMER_DISCOVERY.test(line)) return 'customer_discovery'

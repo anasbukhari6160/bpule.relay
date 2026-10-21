@@ -45,19 +45,29 @@ export async function POST(request: Request) {
   }
   const signalType = signalTypeRaw as SignalId
 
+  // A manual lead is entered by hand: name, company, title and optional notes.
+  // It may have no pasted research at all, in which case it is created
+  // UNSCORED (never an invented score) and marked for research (QA RQA-018).
+  const isManual = body.manual === true
+
   const signalEvidence =
     typeof body.signalEvidence === 'string' ? body.signalEvidence.trim() : ''
-  if (!signalEvidence) {
+  if (!signalEvidence && !isManual) {
     return NextResponse.json(
       { error: 'Signal evidence is required.' },
       { status: 400 },
     )
   }
 
-  const canonical: CanonicalProspectIntelligence | null =
+  let canonical: CanonicalProspectIntelligence | null =
     body.canonicalIntelligence && typeof body.canonicalIntelligence === 'object'
       ? body.canonicalIntelligence as CanonicalProspectIntelligence
       : null
+
+  const scoreSource =
+    typeof body.rawInput === 'string' && body.rawInput.trim()
+      ? body.rawInput.trim()
+      : canonical?.rawSource.rawInput ?? ''
 
   const extracted: ExtractedLead = {
     name:
@@ -146,7 +156,7 @@ export async function POST(request: Request) {
         : canonical?.rawSource.rawInput ?? null,
     canonicalQualification: canonical?.qualification ?? null,
   })
-  if (!qualification.qualificationEligibility) {
+  if (!isManual && !qualification.qualificationEligibility) {
     return NextResponse.json(
       {
         error: 'NOT ENOUGH INFORMATION. Add richer person, company, and opportunity context before saving this lead.',
@@ -154,6 +164,20 @@ export async function POST(request: Request) {
       },
       { status: 422 },
     )
+  }
+
+  // A manual lead that carries research gets ONE canonical state: score it
+  // through the canonical pipeline (deterministic) instead of leaving a
+  // legacy/canonical split where the overview says "Send" and the decision
+  // card says "Research more" (QA RQA-017). No research → left unscored.
+  if (isManual && !canonical && scoreSource) {
+    try {
+      const { produceV3Intelligence } = await import('@/lib/intelligence-v3/bridge')
+      const v3 = await produceV3Intelligence(scoreSource, { deterministicOnly: true })
+      if (v3?.intelligence) canonical = v3.intelligence as unknown as CanonicalProspectIntelligence
+    } catch {
+      // Fall back to an unscored manual lead rather than blocking creation.
+    }
   }
 
   const allowPotentialDuplicate = body.allowPotentialDuplicate === true
@@ -171,11 +195,8 @@ export async function POST(request: Request) {
   const legacyRulebook = await store.getRulebook()
   // Score claims against the research the lead came from. No research means
   // nothing can be verified — an omitted source must not buy signal/quote points.
-  const scoreSource =
-    typeof body.rawInput === 'string' && body.rawInput.trim()
-      ? body.rawInput
-      : canonical?.rawSource.rawInput ?? ''
-  const legacyScore = legacyRulebook
+  // A manual lead with no research is left unscored: no invented score.
+  const legacyScore = legacyRulebook && scoreSource
     ? computeScore(extracted, legacyRulebook, {
         sourceText: scoreSource,
         signalOrigin: body.signalOrigin === 'AI_EXTRACTED' ? 'AI_EXTRACTED' : 'USER_ENTERED',
