@@ -167,6 +167,6 @@ alter table scoring_shadow_decisions add column if not exists is_test boolean no
 create index if not exists cp_opportunity_key_idx on captured_prospects (organization_id, opportunity_key);
 create index if not exists leads_opportunity_key_idx on leads (organization_id, opportunity_key);
 create index if not exists samples_opportunity_key_idx on intelligence_samples (organization_id, opportunity_key);
-update captured_prospects set opportunity_key = encode(sha256(lower(regexp_replace(coalesce(raw_input,''), '\s+', ' ', 'g'))::bytea), 'hex') where opportunity_key is null and length(regexp_replace(coalesce(raw_input,''), '\s+', ' ', 'g')) >= 40;
-update leads set opportunity_key = encode(sha256(lower(regexp_replace(coalesce(raw_input,''), '\s+', ' ', 'g'))::bytea), 'hex') where opportunity_key is null and length(regexp_replace(coalesce(raw_input,''), '\s+', ' ', 'g')) >= 40;
+update captured_prospects set opportunity_key = encode(sha256(convert_to(lower(regexp_replace(coalesce(raw_input,''), '[[:space:]]+', ' ', 'g')), 'UTF8')), 'hex') where opportunity_key is null and length(regexp_replace(coalesce(raw_input,''), '[[:space:]]+', ' ', 'g')) >= 40;
+update leads set opportunity_key = encode(sha256(convert_to(lower(regexp_replace(coalesce(raw_input,''), '[[:space:]]+', ' ', 'g')), 'UTF8')), 'hex') where opportunity_key is null and length(regexp_replace(coalesce(raw_input,''), '[[:space:]]+', ' ', 'g')) >= 40;
 update captured_prospects set is_test = true, source_kind = 'E2E' where is_test = false and extracted_company ~ '(NorthPeak [0-9]{10,}|BPulse Test)';

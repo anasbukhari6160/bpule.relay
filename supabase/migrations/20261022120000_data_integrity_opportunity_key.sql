@@ -29,16 +29,19 @@ alter table scoring_shadow_decisions add column if not exists is_test boolean no
 -- 3. BACKFILL opportunity_key from the stored raw source ----------------------
 -- Deterministic: same normalised source -> same key. History is preserved.
 update captured_prospects
-set opportunity_key = encode(sha256(lower(regexp_replace(coalesce(raw_input, ''), '\s+', ' ', 'g'))::bytea), 'hex')
-where opportunity_key is null and length(regexp_replace(coalesce(raw_input, ''), '\s+', ' ', 'g')) >= 40;
+set opportunity_key = encode(sha256(convert_to(lower(regexp_replace(coalesce(raw_input, ''), '[[:space:]]+', ' ', 'g')), 'UTF8')), 'hex')
+where opportunity_key is null
+  and length(regexp_replace(coalesce(raw_input, ''), '[[:space:]]+', ' ', 'g')) >= 40;
 
 update leads
-set opportunity_key = encode(sha256(lower(regexp_replace(coalesce(raw_input, ''), '\s+', ' ', 'g'))::bytea), 'hex')
-where opportunity_key is null and length(regexp_replace(coalesce(raw_input, ''), '\s+', ' ', 'g')) >= 40;
+set opportunity_key = encode(sha256(convert_to(lower(regexp_replace(coalesce(raw_input, ''), '[[:space:]]+', ' ', 'g')), 'UTF8')), 'hex')
+where opportunity_key is null
+  and length(regexp_replace(coalesce(raw_input, ''), '[[:space:]]+', ' ', 'g')) >= 40;
 
 update intelligence_samples
-set opportunity_key = encode(sha256(lower(regexp_replace(coalesce(raw_input, ''), '\s+', ' ', 'g'))::bytea), 'hex')
-where opportunity_key is null and length(regexp_replace(coalesce(raw_input, ''), '\s+', ' ', 'g')) >= 40;
+set opportunity_key = encode(sha256(convert_to(lower(regexp_replace(coalesce(raw_input, ''), '[[:space:]]+', ' ', 'g')), 'UTF8')), 'hex')
+where opportunity_key is null
+  and length(regexp_replace(coalesce(raw_input, ''), '[[:space:]]+', ' ', 'g')) >= 40;
 
 -- 4. BACKFILL test/demo fixtures (high-confidence only, never real users) -----
 -- Only the known E2E fixture naming pattern used by this repo's QA harness.
