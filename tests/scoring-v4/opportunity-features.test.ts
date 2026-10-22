@@ -77,6 +77,19 @@ describe('OpportunityFeatures (Phase 6)', () => {
     for (const k of FEATURE_NAMES) if (k !== 'source_completeness' && k !== 'fallback_used') expect(c[k], k).toBe(ar[k])
   })
 
+  it('degrades gracefully on a legacy stored sourceFacts shape (no technologyContext/signals/person)', async () => {
+    const packet = await runOffline(buyer, { referenceDate: REF })
+    const legacy = structuredClone(packet)
+    const sf = legacy.sourceFacts as unknown as Record<string, unknown>
+    delete sf.technologyContext
+    delete sf.signals
+    delete sf.person
+    delete sf.authorityEvidence
+    delete sf.currentOrganizations
+    expect(() => featuresFromPacket(legacy)).not.toThrow()
+    expect(featuresFromPacket(legacy)).toBeNull()
+  })
+
   it('projects to a fixed-order numeric vector in [0,1]', async () => {
     const packet = await runOffline(buyer, { referenceDate: REF })
     const v = featureVector(featuresFromPacket(packet)!)

@@ -381,6 +381,11 @@ export function buildOpportunityFeatures(input: BuildFeaturesInput): Opportunity
 /** Build features from a stored decision packet. The packet carries the complete facts. */
 export function featuresFromPacket(packet: V3LeadDecisionPacket, opts: { platform?: Platform; orgCapabilityFamilies?: readonly CapabilityFamily[] } = {}): OpportunityFeatures | null {
   if (!packet.sourceFacts || !packet.buyerIntent) return null
+  // Stored packets predate the SourceFactsSummary shape: their sourceFacts has
+  // no technologyContext/signals/person/authorityEvidence. Those rows still
+  // render in the QA surfaces — they simply get no candidate comparison.
+  const sf = packet.sourceFacts
+  if (!sf.technologyContext || !sf.signals || !sf.person || !sf.authorityEvidence || !sf.currentOrganizations) return null
   const selected = packet.episodes.find((e) => e.id === packet.selectedEpisodeId) ?? null
   return buildOpportunityFeatures({
     facts: packet.sourceFacts,
