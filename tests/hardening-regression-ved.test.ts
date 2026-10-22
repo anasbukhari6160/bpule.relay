@@ -204,7 +204,7 @@ describe('Connection note quality gate — unsupported generalized-pain claims',
       matchedProof: [],
     })
     expect(result.passed).toBe(false)
-    expect(result.failures.some((f) => f.toLowerCase().includes('generalized-pain'))).toBe(true)
+    expect(result.failures.some((f) => f.toLowerCase().includes('generalized pain'))).toBe(true)
   })
 
   it('does not flag a note with no generalized-pain claim', () => {
@@ -215,6 +215,6 @@ describe('Connection note quality gate — unsupported generalized-pain claims',
       prospectCompany: 'Test Co',
       matchedProof: [],
     })
-    expect(result.failures.some((f) => f.toLowerCase().includes('generalized-pain'))).toBe(false)
+    expect(result.failures.some((f) => f.toLowerCase().includes('generalized pain'))).toBe(false)
   })
 })

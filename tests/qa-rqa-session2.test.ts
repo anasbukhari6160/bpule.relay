@@ -5,6 +5,7 @@
  * terminal event, never a silent blank stream.
  */
 import { describe, expect, it } from 'vitest'
+import { HAS_AI_PROVIDER } from './helpers/needs-ai'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -17,7 +18,9 @@ import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 describe('RQA-012 — a missing strategy ends the draft stream terminally', () => {
-  it('emits needs_rescoring then done (no silent blank)', async () => {
+  // A missing strategy only reaches the terminal branch on the real
+  // generation path; demo mode (no provider) returns a demo draft instead.
+  it.skipIf(!HAS_AI_PROVIDER)('emits needs_rescoring then done (no silent blank)', async () => {
     const events: Array<{ type: string; reason?: string }> = []
     const input = {
       leadId: 'lead-1',
@@ -41,7 +44,6 @@ describe('RQA-012 — a missing strategy ends the draft stream terminally', () =
       strategy: null,
     }
     const result = await streamDraft(input as never, (e) => events.push(e as never), null, null)
-
     expect(events.some((e) => e.type === 'needs_rescoring')).toBe(true)
     expect(events.some((e) => e.type === 'done')).toBe(true)
     expect(result.draftText).toBe('')

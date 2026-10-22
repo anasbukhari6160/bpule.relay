@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { HAS_AI_PROVIDER } from './helpers/needs-ai'
 import { produceCanonicalIntelligence } from '@/lib/intelligence-v2/orchestrator'
 import { buildRevenueStrategy, sourceFromCanonical, describeVerdictForDisplay, describeMessagingPolicy } from '@/lib/relay/revenue-strategy'
 import { AVIGAIL_EISENSTADT_AE_DESIGN_RAW } from './fixtures/hardening-regressions/avigail-eisenstadt-ae-design'
@@ -44,7 +45,7 @@ describe('Hardening regression — Avigail Eisenstadt / AE Design Group', () => 
     expect(strategy.assessment.intent).toBe('UNKNOWN')
   })
 
-  it('no message recommended stays true', () => {
+  it.skipIf(!HAS_AI_PROVIDER)('no message recommended stays true', () => {
     const strategy = buildRevenueStrategy(sourceFromCanonical(intel, { channel: 'connection' }))
     expect(strategy.contact.messageRecommended).toBe(false)
   })

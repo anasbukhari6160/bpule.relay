@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { HAS_AI_PROVIDER } from './helpers/needs-ai'
 import { runIntelligencePipeline } from '@/lib/intelligence-v2/extraction-pipeline'
 
 /**
@@ -111,7 +112,9 @@ Warsaw, Poland`,
     expect(result.intelligence.company.name).toBe('B2Bnetwork')
   })
 
-  it('reads the employer from a connector phrase ("lead recruiting operations for X, a ... startup")', async () => {
+  // Only the live extraction pass reads the company out of a "for X, a …
+  // startup" connector phrase; the deterministic fallback returns null.
+  it.skipIf(!HAS_AI_PROVIDER)('reads the employer from a connector phrase ("lead recruiting operations for X, a ... startup")', async () => {
     const result = await runIntelligencePipeline(
       `Alex Rivera
 Recruiter

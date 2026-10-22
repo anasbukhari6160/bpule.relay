@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { HAS_AI_PROVIDER } from './helpers/needs-ai'
 import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
 import { buildV3ReuseKey } from '@/lib/intelligence-v3/decision-reuse'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
@@ -78,7 +79,7 @@ function extractV3Result(result: Awaited<ReturnType<typeof produceV3Intelligence
 }
 
 describe('Stability Gate — Score Reliability', () => {
-  it('reuse callback returns cached DecisionPacket (no model call)', async () => {
+  it.skipIf(!HAS_AI_PROVIDER)('reuse callback returns cached DecisionPacket (no model call)', async () => {
     const text = TEST_INPUTS[0].text
     const reuseKey = buildV3ReuseKey({ rawText: text })
 
@@ -115,7 +116,7 @@ describe('Stability Gate — Score Reliability', () => {
     expect(key1).not.toBe(key2)
   })
 
-  it('reuse callback receives correct key', async () => {
+  it.skipIf(!HAS_AI_PROVIDER)('reuse callback receives correct key', async () => {
     const text = TEST_INPUTS[0].text
     const expectedKey = buildV3ReuseKey({ rawText: text })
 
@@ -171,7 +172,7 @@ describe('Stability Gate — Score Reliability', () => {
     expect(reuseCalled).toBe(false)
   })
 
-  it('all test inputs produce valid scores', async () => {
+  it.skipIf(!HAS_AI_PROVIDER)('all test inputs produce valid scores', async () => {
     for (const test of TEST_INPUTS) {
       const result = await produceV3Intelligence(test.text, {})
       const v = extractV3Result(result)

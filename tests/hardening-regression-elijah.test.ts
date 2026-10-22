@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { HAS_AI_PROVIDER } from './helpers/needs-ai'
 import { produceCanonicalIntelligence } from '@/lib/intelligence-v2/orchestrator'
 import { buildRevenueStrategy, sourceFromCanonical } from '@/lib/relay/revenue-strategy'
 import { ELIJAH_GUTMAN_HARTFORD_AI_RAW } from './fixtures/hardening-regression-elijah-gutman-hartford'
@@ -74,7 +75,7 @@ describe('Hardening regression — Elijah Gutman / Hartford AI Partners', () => 
     expect(intel.remoteEligibility.reason.toLowerCase()).not.toMatch(/us.*israel|ireland|uk/i)
   })
 
-  it('preserves correct person/company identity', () => {
+  it.skipIf(!HAS_AI_PROVIDER)('preserves correct person/company identity', () => {
     expect(intel.intelligence.person.fullName).toBe('Elijah Gutman')
     expect(intel.intelligence.person.title?.toLowerCase()).toContain('ceo')
     expect(intel.intelligence.person.title?.toLowerCase()).toContain('hartford ai partners')

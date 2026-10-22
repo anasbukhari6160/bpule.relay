@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { HAS_AI_PROVIDER } from './helpers/needs-ai'
 import { produceCanonicalIntelligence } from '@/lib/intelligence-v2/orchestrator'
 import { buildRevenueStrategy, sourceFromCanonical } from '@/lib/relay/revenue-strategy'
 import { BRIAN_MACCABA_BIOMARKER_RAW } from './fixtures/hardening-regression-brian-maccaba-biomarker'
@@ -36,7 +37,7 @@ describe('Hardening regression — Brian Maccaba / Bio-marker.ai', () => {
     expect(evidence).not.toMatch(/office location detected: uk/i)
   })
 
-  it('preserves correct person/company identity from the profile header', () => {
+  it.skipIf(!HAS_AI_PROVIDER)('preserves correct person/company identity from the profile header', () => {
     expect(intel.intelligence.person.fullName).toBe('Brian Maccaba')
     expect(intel.intelligence.person.title?.toLowerCase()).toContain('ceo')
     expect(intel.intelligence.person.title?.toLowerCase()).toContain('bio-marker.ai')

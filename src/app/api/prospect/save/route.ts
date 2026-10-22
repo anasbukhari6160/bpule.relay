@@ -289,16 +289,19 @@ export async function POST(request: Request) {
 
     // Shadow scoring (SCORING_SHADOW_ENGINES): candidate engines beside the
     // production decision. Never changes the lead, never blocks the save.
-    void recordShadowDecisions({
-      client: createServiceSupabase(),
-      organizationId: lead.organizationId,
-      platform: 'linkedin',
-      leadId: lead.id,
-      rawText: normalizedRawInput,
-      canonicalIntelligence: canonical,
-      productionSenderId: senderProfileId ?? null,
-      repId: lead.ownerRepId ?? null,
-    })
+    // Best-effort: a missing service-role client must never fail the save.
+    try {
+      void recordShadowDecisions({
+        client: createServiceSupabase(),
+        organizationId: lead.organizationId,
+        platform: 'linkedin',
+        leadId: lead.id,
+        rawText: normalizedRawInput,
+        canonicalIntelligence: canonical,
+        productionSenderId: senderProfileId ?? null,
+        repId: lead.ownerRepId ?? null,
+      })
+    } catch { /* shadow is best-effort */ }
 
     // BUG-22: Do NOT save the generated note as a draft message. The note is
     // already persisted in extractionProfile.connectionNote. Saving it as a

@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { HAS_AI_PROVIDER } from './helpers/needs-ai'
 import { evaluateMessageStage, type MessageStage } from '@/lib/writing/engine'
 
 describe('Em-dash name formatting detection', () => {
@@ -228,7 +229,7 @@ describe('Reply quality', () => {
 })
 
 describe('Em-dash name format fix', () => {
-  it('fixes "Hi John - came across" → "Hi John, came across"', async () => {
+  it.skipIf(!HAS_AI_PROVIDER)('fixes "Hi John - came across" → "Hi John, came across"', async () => {
     const { extractUpworkJob } = await import('@/lib/upwork-v2')
     // Test via the backfill which uses similar logic
     const result = await extractUpworkJob({ rawText: 'Hi John - came across your work. Thought it was worth connecting.' })
