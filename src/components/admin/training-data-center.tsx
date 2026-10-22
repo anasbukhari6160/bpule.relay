@@ -333,7 +333,7 @@ function QuickLabelForm({ row, onSaved }: { row: TrainingRow; onSaved: () => voi
         </label>
         <label className="flex flex-col gap-0.5"><span className="text-stone">Best action</span>
           <select value={form.quickAction ?? ''} onChange={(e) => set('quickAction', e.target.value)} className={selectCls} data-testid="quick-action">
-            <option value="">—</option>{opts(LABEL_QUICK_ENUMS.bestAction)}
+            <option value="">—</option>{opts(LABEL_QUICK_ENUMS.quickAction)}
           </select>
         </label>
         <label className="flex flex-col gap-0.5"><span className="text-stone">Decision correct?</span>
