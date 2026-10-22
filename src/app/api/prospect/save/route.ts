@@ -297,6 +297,7 @@ export async function POST(request: Request) {
       rawText: normalizedRawInput,
       canonicalIntelligence: canonical,
       productionSenderId: senderProfileId ?? null,
+      repId: lead.ownerRepId ?? null,
     })
 
     // BUG-22: Do NOT save the generated note as a draft message. The note is

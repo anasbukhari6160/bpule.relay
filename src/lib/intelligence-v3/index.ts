@@ -118,7 +118,6 @@ export { assembleDecisionPacket } from './decision/decision-assembler'
 
 export {
   scoreEpisode,
-  scoreSourceWithoutModel,
 } from './scoring/score-v3'
 
 export type { V3ScoreInput, V3ScoreOutput, V3ScoreDimension } from './scoring/score-v3'

@@ -20,6 +20,7 @@ import { analyzeReply } from './conversation-engine'
 import { resolveConversationIntent } from '@/lib/conversation/intent'
 import { buildReplyStrategy } from './conversation-engine'
 import { buildRevenueStrategy, sourceFromLead, toUiSnapshot } from './revenue-strategy'
+import { factsFromCanonical } from './routing-context'
 import { priorityForCanonicalScore, qualifyCanonicalScore } from '@/lib/scoring/qualification'
 
 /**
@@ -764,7 +765,7 @@ function buildAdminTasks(input: QueueInput): RelayTask[] {
  * BD sees only their own pipeline tasks.
  */
 function whyLeadMatters(lead: Lead): string {
-  const snapshot = toUiSnapshot(buildRevenueStrategy(sourceFromLead(lead, null, { channel: 'dm' })))
+  const snapshot = toUiSnapshot(buildRevenueStrategy(sourceFromLead(lead, null, { channel: 'dm', facts: factsFromCanonical(lead.canonicalIntelligence) })))
   return snapshot.why
 }
 

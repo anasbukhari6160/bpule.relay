@@ -15,7 +15,7 @@ import Link from 'next/link'
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import { cn } from 'cn'
 import { DashHeader, EmptyNote, Panel, Pill, StatTile, type Tone } from '@/components/dashboard/kit'
-import type { TrainingRow, TrainingQueueSummary } from '@/lib/admin/training-data'
+import { LABEL_QUICK_ENUMS, type TrainingRow, type TrainingQueueSummary } from '@/lib/admin/training-data'
 
 interface Response {
   since: string
@@ -41,10 +41,12 @@ const QUAL_TONE: Record<string, Tone> = { STRONG: 'success', WORTH_PURSUING: 'su
 export function TrainingDataCenter() {
   const [days, setDays] = useState(90)
   const [active, setActive] = useState<Set<string>>(new Set(['unlabelled']))
+  const [mode, setMode] = useState<'quick' | 'detailed' | 'pairwise'>('quick')
   const [data, setData] = useState<Response | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [openKey, setOpenKey] = useState<string | null>(null)
+  const [pairIndex, setPairIndex] = useState(0)
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ days: String(days) })
@@ -99,6 +101,17 @@ export function TrainingDataCenter() {
           </div>
         </Panel>
       )}
+      <Panel title="Label mode" subtitle="Quick labels take under 15 seconds. Pairwise labels train a ranker directly.">
+        <div className="flex flex-wrap gap-1.5">
+          {([['quick', 'Quick label'], ['detailed', 'Detailed label'], ['pairwise', 'Pairwise ranking']] as const).map(([k, label]) => (
+            <button key={k} type="button" onClick={() => setMode(k)} data-testid={`mode-${k}`} className={cn('rounded-full px-3 py-1 text-[11px]', mode === k ? 'bg-ink text-bone' : 'border border-line text-graphite hover:bg-bone-raised')}>{label}</button>
+          ))}
+        </div>
+      </Panel>
+      {mode === 'pairwise' && data && (
+        <PairwisePanel rows={data.rows} index={pairIndex} onIndex={setPairIndex} onSaved={() => { void load() }} />
+      )}
+      {mode !== 'pairwise' && (
       <Panel title="Opportunities" subtitle="Ordered by review priority. Open a row to compare production with the candidate engines and record a label.">
         <div className="mb-3 flex flex-wrap gap-1.5">
           {FILTERS.map((f) => (
@@ -108,15 +121,16 @@ export function TrainingDataCenter() {
         {!loading && data && data.rows.length === 0 && <EmptyNote>No opportunities match these filters.</EmptyNote>}
         <div className="divide-y divide-line/60">
           {(data?.rows ?? []).map((r) => (
-            <Row key={r.opportunityKey} row={r} open={openKey === r.opportunityKey} onToggle={() => setOpenKey(openKey === r.opportunityKey ? null : r.opportunityKey)} ranges={data!.ranges} enums={data!.enums} onLabelled={() => { void load() }} />
+            <Row key={r.opportunityKey} row={r} open={openKey === r.opportunityKey} onToggle={() => setOpenKey(openKey === r.opportunityKey ? null : r.opportunityKey)} ranges={data!.ranges} enums={data!.enums} mode={mode} onLabelled={() => { void load() }} />
           ))}
         </div>
       </Panel>
+      )}
     </div>
   )
 }
 
-function Row({ row: r, open, onToggle, ranges, enums, onLabelled }: { row: TrainingRow; open: boolean; onToggle: () => void; ranges: Response['ranges']; enums: Response['enums']; onLabelled: () => void }) {
+function Row({ row: r, open, onToggle, ranges, enums, mode, onLabelled }: { row: TrainingRow; open: boolean; onToggle: () => void; ranges: Response['ranges']; enums: Response['enums']; mode: 'quick' | 'detailed'; onLabelled: () => void }) {
   const p = r.production
   return (
     <div className="py-2" data-testid="training-row">
@@ -178,7 +192,9 @@ function Row({ row: r, open, onToggle, ranges, enums, onLabelled }: { row: Train
                 </ul>
               </Section>
             )}
-            <LabelForm row={r} ranges={ranges} enums={enums} onSaved={onLabelled} />
+            {mode === 'quick'
+              ? <QuickLabelForm row={r} onSaved={onLabelled} />
+              : <LabelForm row={r} ranges={ranges} enums={enums} onSaved={onLabelled} />}
           </div>
         </div>
       )}
@@ -256,5 +272,146 @@ function LabelForm({ row, ranges, enums, onSaved }: { row: TrainingRow; ranges: 
         {msg && <span className="text-[11px] text-graphite">{msg}</span>}
       </div>
     </Section>
+  )
+}
+
+function observedPayload(row: TrainingRow) {
+  return {
+    score: row.production.score, qualification: row.production.qualification, action: row.production.action,
+    buyerIntent: row.production.buyerIntent, relationshipRole: row.production.relationshipRole,
+    versions: row.production.versions,
+    candidates: row.candidates.map((c) => ({ engine: c.engine, version: c.version, score: c.score })),
+  }
+}
+
+const selectCls = 'rounded border border-line bg-bone px-2 py-1 text-ink'
+
+/** Quick label (Phase F): five glanceable answers, under 15 seconds per lead. */
+function QuickLabelForm({ row, onSaved }: { row: TrainingRow; onSaved: () => void }) {
+  const [form, setForm] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }))
+
+  const submit = async () => {
+    setSaving(true); setMsg(null)
+    try {
+      const res = await fetch('/api/admin/training-data/labels', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'quick',
+          opportunityKey: row.opportunityKey,
+          leadId: row.primary.kind === 'lead' ? row.primary.id : null,
+          capturedProspectId: row.primary.kind === 'prospect' ? row.primary.id : null,
+          decisionRunId: row.production.decisionRunId,
+          ...Object.fromEntries(Object.entries(form).filter(([, v]) => v)),
+          observed: observedPayload(row),
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed')
+      setMsg('Saved — next one.'); setForm({}); onSaved()
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed')
+    } finally { setSaving(false) }
+  }
+
+  const opts = (list: readonly string[]) => list.map((v) => <option key={v} value={v}>{v.replaceAll('_', ' ').toLowerCase()}</option>)
+
+  return (
+    <Section title="Quick label (under 15 seconds)">
+      <div className="grid grid-cols-2 gap-2 text-[11px]">
+        <label className="flex flex-col gap-0.5"><span className="text-stone">Prospect quality</span>
+          <select value={form.prospectQuality ?? ''} onChange={(e) => set('prospectQuality', e.target.value)} className={selectCls} data-testid="quick-quality">
+            <option value="">—</option>{opts(LABEL_QUICK_ENUMS.prospectQuality)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-0.5"><span className="text-stone">Likely opportunity</span>
+          <select value={form.likelyOpportunity ?? ''} onChange={(e) => set('likelyOpportunity', e.target.value)} className={selectCls} data-testid="quick-opportunity">
+            <option value="">—</option>{opts(LABEL_QUICK_ENUMS.likelyOpportunity)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-0.5"><span className="text-stone">Best action</span>
+          <select value={form.quickAction ?? ''} onChange={(e) => set('quickAction', e.target.value)} className={selectCls} data-testid="quick-action">
+            <option value="">—</option>{opts(LABEL_QUICK_ENUMS.bestAction)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-0.5"><span className="text-stone">Decision correct?</span>
+          <select value={form.decisionCorrect ?? ''} onChange={(e) => set('decisionCorrect', e.target.value)} className={selectCls} data-testid="quick-decision">
+            <option value="">—</option>{opts(LABEL_QUICK_ENUMS.decisionCorrect)}
+          </select>
+        </label>
+        <label className="col-span-2 flex flex-col gap-0.5"><span className="text-stone">Best sender profile id (optional)</span>
+          <input value={form.bestSenderProfileId ?? ''} onChange={(e) => set('bestSenderProfileId', e.target.value)} className={selectCls} placeholder="profile uuid" />
+        </label>
+        <label className="col-span-2 flex flex-col gap-0.5"><span className="text-stone">Note (optional)</span>
+          <textarea value={form.reason ?? ''} onChange={(e) => set('reason', e.target.value)} rows={2} className={selectCls} placeholder="One line, only if it changes the call." />
+        </label>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <button type="button" disabled={saving} onClick={() => void submit()} className="rounded-full bg-ink px-3 py-1 text-[11px] text-bone disabled:opacity-50" data-testid="quick-submit">{saving ? 'Saving…' : 'Save quick label'}</button>
+        {msg && <span className="text-[11px] text-graphite">{msg}</span>}
+      </div>
+    </Section>
+  )
+}
+
+/** Pairwise review: "which should BD work first?" — direct learning-to-rank supervision. */
+function PairwisePanel({ rows, index, onIndex, onSaved }: { rows: TrainingRow[]; index: number; onIndex: (i: number) => void; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const a = rows[index]
+  const b = rows[index + 1]
+
+  const submit = async (winner: 'A' | 'B' | 'TIE') => {
+    if (!a || !b) return
+    setSaving(true); setMsg(null)
+    try {
+      const res = await fetch('/api/admin/training-data/pairwise', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ opportunityKeyA: a.opportunityKey, opportunityKeyB: b.opportunityKey, winner }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed')
+      setMsg(`Saved ${winner}.`)
+      onIndex(Math.min(index + 1, Math.max(0, rows.length - 2)))
+      onSaved()
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed')
+    } finally { setSaving(false) }
+  }
+
+  if (!a || !b) return <EmptyNote>Need at least two opportunities to compare.</EmptyNote>
+
+  const card = (row: TrainingRow, tag: string) => {
+    const p = row.production
+    return (
+      <div className="rounded-lg bg-bone-raised/40 p-3">
+        <div className="mb-1 flex items-center gap-2">
+          <Pill tone="cobalt">{tag}</Pill>
+          <span className="text-[13px] font-medium text-ink">{row.company ?? row.contactName ?? row.opportunityKey.slice(0, 8)}</span>
+          <Pill tone={QUAL_TONE[p.qualification ?? ''] ?? 'neutral'}>{p.qualification?.replaceAll('_', ' ').toLowerCase()}</Pill>
+          <span className="text-[11px] text-stone">{p.score ?? '—'}/100 · {p.action ?? '—'}</span>
+        </div>
+        <p className="line-clamp-4 whitespace-pre-wrap text-[11px] text-graphite">{row.rawSource}</p>
+      </div>
+    )
+  }
+
+  return (
+    <Panel title={`Pairwise · ${index + 1} of ${Math.max(1, rows.length - 1)}`} subtitle="Which should BD work first? Pairwise beats invented scores.">
+      <div className="grid gap-3 lg:grid-cols-2">
+        {card(a, 'A')}
+        {card(b, 'B')}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" disabled={saving} onClick={() => void submit('A')} className="rounded-full bg-ink px-3 py-1 text-[11px] text-bone disabled:opacity-50" data-testid="pairwise-a">Work A first</button>
+        <button type="button" disabled={saving} onClick={() => void submit('B')} className="rounded-full bg-ink px-3 py-1 text-[11px] text-bone disabled:opacity-50" data-testid="pairwise-b">Work B first</button>
+        <button type="button" disabled={saving} onClick={() => void submit('TIE')} className="rounded-full border border-line px-3 py-1 text-[11px] text-graphite hover:bg-bone-raised" data-testid="pairwise-tie">Tie / unsure</button>
+        <button type="button" onClick={() => onIndex(Math.max(0, index - 1))} className="rounded-full border border-line px-2.5 py-1 text-[11px] text-graphite hover:bg-bone-raised">Prev</button>
+        <button type="button" onClick={() => onIndex(Math.min(index + 1, Math.max(0, rows.length - 2)))} className="rounded-full border border-line px-2.5 py-1 text-[11px] text-graphite hover:bg-bone-raised">Next</button>
+        {msg && <span className="text-[11px] text-graphite">{msg}</span>}
+      </div>
+    </Panel>
   )
 }

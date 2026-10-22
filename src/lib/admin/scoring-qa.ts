@@ -111,7 +111,7 @@ export function projectDecisionRow(input: {
   let candidates: QaCandidate[] = []
   if (packet) {
     try {
-      const shadow = computeShadowCandidates(packet, input.rawInput ?? null, { engines: QA_CANDIDATE_ENGINES })
+      const shadow = computeShadowCandidates(packet, { engines: QA_CANDIDATE_ENGINES })
       candidates = shadow.rows.map((r) => ({
         engine: r.engine, version: r.candidate.version, score: r.candidate.score, display: displayScoreForCanonical(r.candidate.score),
         qualification: r.candidate.qualification, action: r.candidateAction, confidence: r.candidate.confidence,

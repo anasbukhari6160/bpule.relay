@@ -11,6 +11,7 @@
  */
 
 import type { CanonicalProspectIntelligence, EvidenceEntry, OpportunitySignal, CommercialRelationship, BusinessModel } from '@/lib/intelligence-v2/types'
+import type { SourceFactsSummary } from '@/lib/intelligence-v3/source-facts-model'
 import type { ExtractedLead, Lead, OutreachStrategy } from '@/lib/domain/types'
 import { isNonBuyerRelationship } from '@/lib/intelligence-v2/subject-attribution'
 import { isStrategyGroundingText } from '@/lib/intelligence-v2/commercial-reading'
@@ -359,6 +360,10 @@ export interface StrategySource {
   connectionAccepted?: boolean
   /** Buyer evidence kinds from commercial reading — distinguishes hiring+apply from generic hiring */
   buyerEvidenceKinds?: string[]
+  /** Canonical recruiter flag from the source facts — never re-derived from raw text. */
+  recruiterProfile: boolean
+  /** Canonical external-need flag from the source facts — never re-derived from raw text. */
+  externalNeed: boolean
   /** Remote eligibility assessment — suppress outreach if INELIGIBLE */
   remoteEligibility?: {
     eligibility: string
@@ -398,6 +403,8 @@ export function sourceFromCanonical(
   canonical: CanonicalProspectIntelligence,
   opts: {
     channel: StrategyChannel
+    /** Canonical source facts, when the caller has them. */
+    facts?: SourceFactsSummary | null
     relationshipStage?: StrategyStage
     alreadyShared?: string[]
     conversation?: ConversationKnowledge | null
@@ -413,6 +420,8 @@ export function sourceFromCanonical(
     qualification: canonical.qualification,
     relationship: intel.relationship,
     businessModel: intel.businessModel,
+    recruiterProfile: intel.relationship === 'RECRUITER' || Boolean(opts.facts?.recruiterProfile),
+    externalNeed: Boolean(opts.facts?.buyer.externalServiceRequest) || intel.commercialReading?.externalEngineeringNeed === 'EXPLICIT',
     canonicalScore: canonical.canonicalScore,
     extractionCompleteness: canonical.extractionCompleteness.score,
     opportunitySignals: intel.opportunity.signals,
@@ -459,6 +468,8 @@ export function sourceFromLead(
   extracted: ExtractedLead | null,
   opts: {
     channel: StrategyChannel
+    /** Canonical source facts, when the caller has them. */
+    facts?: SourceFactsSummary | null
     relationshipStage?: StrategyStage
     alreadyShared?: string[]
     conversation?: ConversationKnowledge | null
@@ -485,6 +496,8 @@ export function sourceFromLead(
     // not "buyer confirmed".
     relationship: 'UNKNOWN',
     businessModel: 'UNKNOWN',
+    recruiterProfile: Boolean(opts.facts?.recruiterProfile),
+    externalNeed: Boolean(opts.facts?.buyer.externalServiceRequest),
     canonicalScore: lead.canonicalScore ?? null,
     extractionCompleteness: extracted?.extractionConfidence ?? lead.extractionConfidence ?? null,
     opportunitySignals: inferSignalsFromLegacy(lead.signalType, lead.signalEvidence ?? extracted?.signalEvidence),
@@ -871,9 +884,8 @@ function assessFitIntentConfidence(source: StrategySource, scoped: ScopedItem[])
     confidenceWhy = 'Some reliable facts exist; several commercially important fields are still unknown.'
   }
 
-  const recruiterHeader = `${source.title ?? ''}\n${(source.rawText ?? '').split('\n').slice(0, 12).join('\n')}`
-  const recruiterProfile = /\b(?:it recruiter|technical recruiter|tech recruiter|recruiter|rekruter(?:ka)?|talent acquisition|sourcer|headhunter)\b/i.test(recruiterHeader)
-  const externalPurchase = /\b(?:looking for|need|seeking|hire)\b[\s\S]{0,80}\b(?:agency|vendor|outsourc\w*|development partner|software partner|external team|staff augmentation)\b/i.test(source.rawText ?? '')
+  const recruiterProfile = source.recruiterProfile
+  const externalPurchase = source.externalNeed || source.opportunitySignals.includes('explicit_ask')
   if (recruiterProfile && !externalPurchase && intent !== 'LOW') {
     intent = 'UNKNOWN'
     intentWhy = 'Buying intent is unproven. This is employer hiring, not a request to buy services. Research before treating them as a buyer.'

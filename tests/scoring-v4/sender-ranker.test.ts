@@ -42,7 +42,7 @@ describe('SenderCapabilityProfile (Phase 5) and sender ranker v2 (Phase 12/13/20
 
   it('ranks the sender whose verified proof covers the requested capabilities first, explains why, and reports org match separately', async () => {
     const packet = await runOffline(aiSaas, { model: { relationship: 'BUYER', buyerRequestProbability: 0.9, fit: 'STRONG', access: 'DIRECT' }, referenceDate: REF })
-    const f = featuresFromPacket(packet, aiSaas)!
+    const f = featuresFromPacket(packet)!
     const senders = [
       buildSenderCapabilityProfile(sender('aneeb', ['React', 'Node', 'AWS'], [{ text: 'Shipped a React portal on AWS for a clinic chain', tags: ['react', 'aws'], strong: true, verified: true }])),
       buildSenderCapabilityProfile(sender('madiha', ['React', 'AWS', 'LLM', 'RAG', 'Python'], [{ text: 'RAG pipeline and React portal for a healthtech SaaS', tags: ['rag', 'react', 'aws'], strong: true, verified: true }])),
@@ -62,7 +62,7 @@ describe('SenderCapabilityProfile (Phase 5) and sender ranker v2 (Phase 12/13/20
 
   it('is deterministic and independent of the opportunity score', async () => {
     const packet = await runOffline(aiSaas, { referenceDate: REF })
-    const f = featuresFromPacket(packet, aiSaas)!
+    const f = featuresFromPacket(packet)!
     const senders = [buildSenderCapabilityProfile(sender('a', ['React'])), buildSenderCapabilityProfile(sender('b', ['React', 'AWS']))]
     const r1 = rankSendersV2(f, senders)
     const r2 = rankSendersV2({ ...f, intent: { ...f.intent, level: 'UNKNOWN', verifiedRequest: false } }, senders)
@@ -71,7 +71,7 @@ describe('SenderCapabilityProfile (Phase 5) and sender ranker v2 (Phase 12/13/20
 
   it('history never beats proof', async () => {
     const packet = await runOffline(aiSaas, { referenceDate: REF })
-    const f = featuresFromPacket(packet, aiSaas)!
+    const f = featuresFromPacket(packet)!
     const proven = buildSenderCapabilityProfile(sender('proof', ['React', 'AWS', 'RAG'], [{ text: 'RAG on AWS with a React front end', tags: ['rag', 'aws', 'react'], strong: true, verified: true }]))
     const lucky = buildSenderCapabilityProfile(sender('lucky', ['React'], [], { historicalOutcomes: { leadsContacted: 40, replies: 30, meetings: 10 } }))
     const r = rankSendersV2(f, [proven, lucky])

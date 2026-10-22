@@ -34,8 +34,8 @@ import type {
   V3ScoreCalculationStep,
 } from '../types'
 import { V3_SCORING_WEIGHTS } from '../config'
-import { readSourceFacts, type SourceFacts } from '../source-facts-model'
-import { resolveBuyerIntentFromSource, resolveVerifiedBuyerIntent, type VerifiedBuyerIntent } from '../buyer-intent'
+import type { SourceFacts } from '../source-facts-model'
+import type { VerifiedBuyerIntent } from '../buyer-intent'
 import {
   assessCommercialPotentialFromFacts,
   assessEvidenceQuality,
@@ -52,17 +52,14 @@ import {
   type EvidenceQualityResolution,
 } from '../dimensions'
 import { QUALIFICATION_BANDS, qualifyCanonicalScore, type CanonicalQualification } from '@/lib/scoring/qualification'
-import { detectCommercialRequest } from '../source-facts'
 
 export interface V3ScoreInput {
   episode: V3OpportunityEpisode
   decision: V3BoundedDecision
-  /** Raw source text; SourceFacts are read from it when not passed. */
-  rawText?: string
-  /** Pre-read SourceFacts (preferred — read once per analysis). */
-  sourceFacts?: SourceFacts
-  /** The canonical buyer decision; resolved from source + model claims when not passed. */
-  buyerIntent?: VerifiedBuyerIntent
+  /** The canonical facts, read once by `readSourceFacts`. Required: the scorer never reads raw text. */
+  sourceFacts: SourceFacts
+  /** The canonical buyer decision, resolved once by `resolveVerifiedBuyerIntent`. Required. */
+  buyerIntent: VerifiedBuyerIntent
   /** Verbatim source quotes attached to this episode, for row evidence. */
   episodeQuotes?: string[]
   /** Organization capability set for fit (defaults to the agency's). */
@@ -109,51 +106,16 @@ export interface V3ScoreOutput {
 
 export const COMPETITOR_PENALTY = 6
 
-/** SourceFacts for this input; read once and cached on the input. */
+/** SourceFacts for this input. Read once by the canonical reader; never re-read here. */
 export function sourceFactsFor(input: V3ScoreInput): SourceFacts {
-  if (!input.sourceFacts) input.sourceFacts = readSourceFacts(input.rawText ?? '')
+  if (!input.sourceFacts) throw new Error('scoreEpisode: sourceFacts are required — read them once with readSourceFacts.')
   return input.sourceFacts
 }
 
-/** The canonical buyer decision for this input; resolved from source + model claims when not passed. */
+/** The canonical buyer decision for this input. Resolved once by the assembler; never re-read here. */
 export function buyerIntentFor(input: V3ScoreInput): VerifiedBuyerIntent {
-  if (!input.buyerIntent) {
-    const facts = sourceFactsFor(input)
-    input.buyerIntent = resolveVerifiedBuyerIntent(facts.buyer, {
-      modelBuyerProbability: input.decision.buyerRequestProbability,
-      modelExternalNeedProbability: input.decision.externalNeedProbability,
-      modelRelationship: input.decision.relationship,
-      signalCheck: {
-        explicitAsk: facts.signals.intent.explicitAsk,
-        seekingVendor: facts.signals.intent.seekingVendor,
-        hiring: facts.signals.intent.hiring,
-        budgetMentioned: facts.signals.intent.budgetMentioned,
-      },
-    })
-  }
+  if (!input.buyerIntent) throw new Error('scoreEpisode: buyerIntent is required — resolve it once with resolveVerifiedBuyerIntent.')
   return input.buyerIntent
-}
-
-/** Kept for the decision assembler's guards. */
-export function isEmploymentHiringNotPurchase(
-  rawText: string | undefined,
-  episode?: Pick<V3OpportunityEpisode, 'anchorEvent' | 'explicitRequest'> | null,
-): boolean {
-  const text = rawText ?? ''
-  const facts = detectCommercialRequest(text)
-  if (facts.externalServiceRequest) return false
-  if (facts.employmentHiring) return true
-  if (isCandidateSeeking(text)) return true
-  return episode?.anchorEvent?.eventType === 'HIRING' && !episode.explicitRequest
-}
-
-export function isCandidateSeeking(text: string): boolean {
-  const lower = text.toLowerCase()
-  if (/i'?m\s+(?:open\s+to|looking\s+for|seeking|available\s+for)\s+.{0,30}?(?:contract|full[- ]time|part[- ]time|freelance|work|opportunities|roles|positions|gigs|projects)/i.test(lower)) return true
-  if (/if\s+you(?:'|')?re\s+(?:hiring|looking|seeking)\b[^.]*(?:let'?s?\s+(?:connect|talk|chat)|dm\s+(?:me|us)|reach\s+(?:out|me)|contact\s+(?:me|us)|know\s+(?:great|good|awesome))/i.test(lower)) return true
-  if (/i\s+(?:am|m)\s+(?:open|available|interested)\s+to\s+(?:new\s+)?(?:opportunities|work|roles|projects)/i.test(lower)) return true
-  if (/looking\s+for\s+(?:my\s+)?(?:next\s+(?:role|position|opportunity|gig|project))/i.test(lower)) return true
-  return false
 }
 
 function quote(line: string | null | undefined): V3DimensionEvidence[] {
@@ -414,10 +376,4 @@ export function scoreEpisode(input: V3ScoreInput): V3ScoreOutput {
     },
     resolved: { access, timing, fit, authority, commercialPotential: cp, evidenceQuality: eq },
   }
-}
-
-/** Convenience for callers without a model: score a source with the deterministic decision. */
-export function scoreSourceWithoutModel(rawText: string, episode: V3OpportunityEpisode, decision: V3BoundedDecision): V3ScoreOutput {
-  const facts = readSourceFacts(rawText)
-  return scoreEpisode({ episode, decision, rawText, sourceFacts: facts, buyerIntent: resolveBuyerIntentFromSource(rawText) })
 }

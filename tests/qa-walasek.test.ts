@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { deriveCommercialReading } from '@/lib/intelligence-v2/commercial-reading'
 import { scoreEpisode } from '@/lib/intelligence-v3/scoring/score-v3'
+import { readSourceFacts } from '@/lib/intelligence-v3/source-facts-model'
+import { resolveVerifiedBuyerIntent } from '@/lib/intelligence-v3/buyer-intent'
 import type { V3BoundedDecision, V3OpportunityEpisode } from '@/lib/intelligence-v3/types'
 import { determineFollowup } from '@/lib/relay/followup-engine'
 import { displayScoreFromCanonical, normalizeScoreDimensions, scoreExplanation } from '@/lib/scoring/display-score'
@@ -113,10 +115,13 @@ We are looking for an agency to build our platform.`)
       messageEligible: 0.4,
       providerConfidence: 0.8,
     } as V3BoundedDecision
+    const rawText = `Michał Walasek\nIT Recruiter\nB2Bnetwork\nHelping companies hire engineers.`
+    const facts = readSourceFacts(rawText)
     const result = scoreEpisode({
       episode,
       decision,
-      rawText: `Michał Walasek\nIT Recruiter\nB2Bnetwork\nHelping companies hire engineers.`,
+      sourceFacts: facts,
+      buyerIntent: resolveVerifiedBuyerIntent(facts.buyer),
     })
     expect(result.reasons.join(' ')).not.toMatch(/explicit buyer request|strong buyer signal/i)
     const buyer = result.dimensions.find((d) => d.key === 'buyerIntent')

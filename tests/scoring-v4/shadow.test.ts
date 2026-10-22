@@ -24,8 +24,10 @@ describe('shadow mode (Phase 27)', () => {
     const fx = GOLDEN_SET.find((x) => x.id === 'buyer-agency-react-budget-deadline')!
     const packet = await runOffline(fx.rawText, { model: fx.model ?? null, referenceDate: REF })
     const before = JSON.stringify(packet)
-    const { features, rows } = computeShadowCandidates(packet, fx.rawText, { engines: ['calibrated_v4', 'ordinal_logit'] })
+    const { features, thesis, rows } = computeShadowCandidates(packet, { engines: ['calibrated_v4', 'ordinal_logit'] })
     expect(features).not.toBeNull()
+    expect(thesis?.version).toBe('sales_thesis_v1')
+    expect(thesis?.likelyProblems.every((p) => /potential|possible|unconfirmed/i.test(p))).toBe(true)
     expect(rows.map((r) => r.engine)).toEqual(['calibrated_v4', 'ordinal_logit'])
     for (const r of rows) {
       expect(r.candidate.score).toBeGreaterThanOrEqual(0)
@@ -50,6 +52,8 @@ describe('shadow mode (Phase 27)', () => {
     expect(typeof row.candidate_score).toBe('number')
     expect(row.opportunity_key).toMatch(/^[a-f0-9]{64}$/)
     expect(row.features_version).toBe('opportunity_features_v1')
+    expect(row.sales_thesis_version).toBe('sales_thesis_v1')
+    expect(row.sales_thesis.whyThisAccount.length).toBeGreaterThanOrEqual(0)
     // No raw text in the stored features.
     expect(JSON.stringify(row.features)).not.toContain(fx.rawText.slice(0, 40))
 

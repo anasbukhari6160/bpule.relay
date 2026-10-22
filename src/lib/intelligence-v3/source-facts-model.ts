@@ -602,59 +602,24 @@ function dedupeRejected(items: RejectedSignal[]): RejectedSignal[] {
   })
 }
 
-/** Serializable subset stored on the decision packet (no regex state, bounded size). */
-export interface SourceFactsSummary {
-  version: string
-  sourceLanguage: SourceLanguage
-  currentCompany: string | null
-  currentIndustry: string | null
-  historicalIndustries: string[]
+/**
+ * Serializable form of `SourceFacts` stored on the decision packet.
+ *
+ * It is the full fact set (bounded only by capping `rejectedSignals`), so every
+ * downstream layer — scoring, features, routing, messaging — consumes this
+ * object and never re-reads the raw source.
+ */
+export type SourceFactsSummary = SourceFacts & {
+  /** Flat aliases for the authority fields, kept for existing consumers. */
   authority: AuthorityLevel
   decisionAuthority: number
-  activityRecency: ActivityRecency
-  recentPostAgeDays: number | null
-  currentProductActivity: boolean
-  currentHiringActivity: string | null
-  candidateSeeking: boolean
-  sellerActivity: boolean
-  recruiterProfile: boolean
-  buyerRequest: string | null
-  buyerRequestAgeDays: number | null
-  budgetEvidence: SourceFacts['budgetEvidence']
-  timelineEvidence: { line: string; days: number; label: string } | null
-  explicitDates: ExplicitDateEvidence
-  terminalState: SourceFacts['terminalState']
-  access: AccessFacts
-  capabilityNeeds: string[]
-  sourceCompleteness: SourceCompleteness
-  rejectedSignals: RejectedSignal[]
 }
 
 export function summarizeSourceFacts(f: SourceFacts): SourceFactsSummary {
   return {
-    version: f.version,
-    sourceLanguage: f.sourceLanguage,
-    currentCompany: f.currentCompany,
-    currentIndustry: f.currentIndustry,
-    historicalIndustries: f.historicalIndustries,
+    ...f,
     authority: f.authorityEvidence.level,
     decisionAuthority: f.authorityEvidence.decisionAuthority,
-    activityRecency: f.activityRecency,
-    recentPostAgeDays: f.recentPostAgeDays,
-    currentProductActivity: f.currentProductActivity,
-    currentHiringActivity: f.currentHiringActivity,
-    candidateSeeking: f.candidateSeeking,
-    sellerActivity: f.sellerActivity,
-    recruiterProfile: f.recruiterProfile,
-    buyerRequest: f.buyerRequest,
-    buyerRequestAgeDays: f.buyerRequestAgeDays,
-    budgetEvidence: f.budgetEvidence,
-    timelineEvidence: f.timelineEvidence ? { line: f.timelineEvidence.line, days: f.timelineEvidence.days, label: f.timelineEvidence.label } : null,
-    explicitDates: f.explicitDates,
-    terminalState: f.terminalState,
-    access: f.access,
-    capabilityNeeds: f.capabilityNeeds,
-    sourceCompleteness: f.sourceCompleteness,
     rejectedSignals: f.rejectedSignals.slice(0, 40),
   }
 }

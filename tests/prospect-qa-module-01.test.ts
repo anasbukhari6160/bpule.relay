@@ -11,6 +11,7 @@ import { buildMinimalV2Canonical, buildV3BridgeInput } from '@/lib/intelligence-
 import { runV3Decision } from '@/lib/intelligence-v3/orchestrator'
 import { getDecisionRegistry, type V3DecisionProvider, type V3ProviderResult } from '@/lib/intelligence-v3/decision/decision-provider'
 import { guardBoundedDecision } from '@/lib/intelligence-v3/decision/decision-assembler'
+import { readSourceFacts } from '@/lib/intelligence-v3/source-facts-model'
 import { detectCommercialRequest, extractStatedBudget, extractStatedTimeline } from '@/lib/intelligence-v3/source-facts'
 import { classifyInput, evaluateProspectQualification } from '@/lib/prospect/qualification-gate'
 import { deriveSignalEvidenceFallback } from '@/lib/intelligence-v2/orchestrator'
@@ -113,7 +114,7 @@ function event(partial: Partial<ExtractedEvent>): ExtractedEvent {
 async function decide(rawText: string, events: ExtractedEvent[]): Promise<V3LeadDecisionPacket> {
   const v2 = buildMinimalV2Canonical(rawText)
   const input = buildV3BridgeInput(v2, rawText, events)
-  const result = await runV3Decision(input, { providerId: 'qa_captured', v2Canonical: v2 })
+  const result = await runV3Decision(input, { providerId: 'qa_captured', v2Canonical: v2, sourceFacts: readSourceFacts(rawText) })
   return result.packet
 }
 
@@ -238,7 +239,7 @@ describe('PRO-004 / PRO-005: explicit agency request is the selected opportunity
       needOwnerType: 'HIRING_NEED', fit: 'EXCELLENT', timing: 'CURRENT', access: 'DIRECT',
       messageEligible: 0.9, providerConfidence: 0.96,
     }
-    const { decision: guarded } = guardBoundedDecision(decision, EXTERNAL_AGENCY, null)
+    const { decision: guarded } = guardBoundedDecision(decision, readSourceFacts(EXTERNAL_AGENCY), null)
     expect(guarded.buyerRequestProbability).toBe(0.98)
     expect(guarded.relationship).toBe('BUYER')
     expect(guarded.needOwnerType).toBe('ORGANIZATION_NEED')
@@ -250,11 +251,11 @@ describe('PRO-004 / PRO-005: explicit agency request is the selected opportunity
       needOwnerType: 'ORGANIZATION_NEED', fit: 'MEDIUM', timing: 'CURRENT', access: 'NONE',
       messageEligible: 0.6, providerConfidence: 0.8,
     }
-    const { decision: guarded, adjustments } = guardBoundedDecision(decision, EXTERNAL_AGENCY, null)
+    const { decision: guarded, adjustments } = guardBoundedDecision(decision, readSourceFacts(EXTERNAL_AGENCY), null)
     expect(guarded.access).toBe('CONNECTION')
     expect(adjustments.some((a) => /Access NONE → CONNECTION/.test(a))).toBe(true)
-    expect(guardBoundedDecision(decision, 'We are looking for an external agency.', null).decision.access).toBe('NONE')
-    expect(guardBoundedDecision(decision, HIRING_ONLY, null).decision.access).toBe('NONE')
+    expect(guardBoundedDecision(decision, readSourceFacts('We are looking for an external agency.'), null).decision.access).toBe('NONE')
+    expect(guardBoundedDecision(decision, readSourceFacts(HIRING_ONLY), null).decision.access).toBe('NONE')
   })
 })
 

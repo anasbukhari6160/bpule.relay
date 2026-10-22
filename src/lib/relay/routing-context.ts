@@ -10,7 +10,7 @@ import { loadSenderCandidates } from './sender-suggestion'
 import { computeHistoricalOutcomes, toRoutingFormat } from './historical-outcomes'
 import { rankSendersForLead, type RoutingLeadContext, type RoutingResult, type SenderProfile } from './sender-routing-engine'
 import type { V3LeadDecisionPacket } from '@/lib/intelligence-v3/types'
-import { readSourceFacts } from '@/lib/intelligence-v3/source-facts-model'
+import type { SourceFactsSummary } from '@/lib/intelligence-v3/source-facts-model'
 
 export interface RoutingLeadLike {
   company?: string | null
@@ -37,10 +37,10 @@ export function parsePacket(ci: unknown): V3LeadDecisionPacket | null {
 /**
  * Lead-side routing context: capabilities the prospect asked for, their
  * stack, their industry and the terms a sender's proof can match. Reads the
- * packet's SourceFacts; falls back to re-reading the raw source.
+ * packet's SourceFacts only — never the raw source.
  */
 export function buildRoutingLeadContext(lead: RoutingLeadLike, packet: V3LeadDecisionPacket | null, platform: string | null = null): RoutingLeadContext {
-  const facts = packet?.sourceFacts ?? (lead.rawInput ? summarizeFromRaw(lead.rawInput) : null)
+  const facts = packet?.sourceFacts ?? null
   const capabilities = new Set<string>()
   for (const c of facts?.capabilityNeeds ?? []) capabilities.add(c)
   for (const ep of packet?.episodes ?? []) for (const c of ep.requestedCapabilities ?? []) capabilities.add(c)
@@ -54,9 +54,7 @@ export function buildRoutingLeadContext(lead: RoutingLeadLike, packet: V3LeadDec
   if (lead.contactTitle) rawTerms.add(lead.contactTitle)
   for (const c of capabilities) rawTerms.add(c)
   for (const i of industries) rawTerms.add(i)
-  const proofCandidates = (packet?.sourceFacts as { proofCandidates?: string[] } | undefined)?.proofCandidates
-    ?? (lead.rawInput ? readSourceFacts(lead.rawInput).proofCandidates : [])
-  for (const t of proofCandidates) rawTerms.add(t)
+  for (const t of facts?.proofCandidates ?? []) rawTerms.add(t)
 
   return {
     capabilities: [...capabilities],
@@ -68,9 +66,13 @@ export function buildRoutingLeadContext(lead: RoutingLeadLike, packet: V3LeadDec
   }
 }
 
-function summarizeFromRaw(rawText: string) {
-  const f = readSourceFacts(rawText)
-  return { capabilityNeeds: f.capabilityNeeds, currentIndustry: f.currentIndustry, proofCandidates: f.proofCandidates }
+/**
+ * Source facts from a stored canonical blob, when it carries a V3 packet.
+ * Downstream layers (messaging, revenue strategy) read these instead of raw text.
+ */
+export function factsFromCanonical(ci: unknown): SourceFactsSummary | null {
+  const packet = parsePacket(ci)
+  return packet?.sourceFacts ?? null
 }
 
 /** Every active sender profile in the org, with proof, industries and bounded historical outcomes. */

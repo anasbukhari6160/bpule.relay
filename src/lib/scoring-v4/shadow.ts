@@ -17,6 +17,10 @@ import { parsePacket } from '@/lib/relay/routing-context'
 import { ENGINES, productionEngineId, shadowEngineIds } from './engines/registry'
 import type { CandidateScore, EngineId } from './engines/types'
 import { featuresFromPacket, OPPORTUNITY_FEATURES_VERSION, type OpportunityFeatures, type Platform } from './opportunity-features'
+import { buildSalesThesis, SALES_THESIS_VERSION, type SalesThesis } from './sales-thesis'
+import { buildSenderCapabilityProfile, type SenderCapabilityProfile } from './sender-capability-profile'
+import { compareRouting, type RoutingComparison } from './routing-compare'
+import { loadSenderProfiles } from '@/lib/relay/routing-context'
 import { opportunityKey } from './opportunity-key'
 
 export interface ShadowRecordInput {
@@ -31,6 +35,8 @@ export interface ShadowRecordInput {
   productionSenderId?: string | null
   /** Sender the v2 ranker would pick, when the caller computed it. */
   candidateSenderId?: string | null
+  /** The rep whose sender set should be ranked (v1 vs v2 comparison). */
+  repId?: string | null
   /** Override for tests. */
   env?: NodeJS.ProcessEnv
 }
@@ -42,9 +48,10 @@ export interface ShadowCandidateRow {
 }
 
 /** Pure part: compute every shadow candidate for a packet. Exported for tests and the audit script. */
-export function computeShadowCandidates(packet: V3LeadDecisionPacket, rawText: string | null | undefined, opts: { platform?: Platform; engines?: EngineId[]; env?: NodeJS.ProcessEnv } = {}): { features: OpportunityFeatures | null; rows: ShadowCandidateRow[] } {
-  const features = featuresFromPacket(packet, rawText, { platform: opts.platform })
-  if (!features) return { features: null, rows: [] }
+export function computeShadowCandidates(packet: V3LeadDecisionPacket, opts: { platform?: Platform; engines?: EngineId[]; env?: NodeJS.ProcessEnv } = {}): { features: OpportunityFeatures | null; thesis: SalesThesis | null; rows: ShadowCandidateRow[] } {
+  const features = featuresFromPacket(packet, { platform: opts.platform })
+  if (!features) return { features: null, thesis: null, rows: [] }
+  const thesis = packet.sourceFacts ? buildSalesThesis({ features, facts: packet.sourceFacts }) : null
   const engines = opts.engines ?? shadowEngineIds(opts.env)
   const rows: ShadowCandidateRow[] = []
   for (const id of engines) {
@@ -69,11 +76,19 @@ export function computeShadowCandidates(packet: V3LeadDecisionPacket, rawText: s
     })
     rows.push({ engine: id, candidate, candidateAction: action.action })
   }
-  return { features, rows }
+  return { features, thesis, rows }
 }
 
-/** Best-effort persistence. Resolves to the number of rows written (0 when shadow is off). */
-export async function recordShadowDecisions(input: ShadowRecordInput): Promise<number> {
+/** v1 vs v2 routing comparison for the shadow record. Best-effort. */
+async function computeRoutingComparison(input: ShadowRecordInput, features: OpportunityFeatures): Promise<RoutingComparison | null> {
+  if (!input.repId) return null
+  const profiles = await loadSenderProfiles(input.client, input.organizationId, input.repId)
+  if (profiles.length === 0) return null
+  const senders: SenderCapabilityProfile[] = profiles.map(buildSenderCapabilityProfile)
+  return compareRouting({ features, senders, currentSenderId: input.productionSenderId ?? null })
+}
+
+/** Best-effort persistence. Resolves to the number of rows written (0 when shadow is off). */export async function recordShadowDecisions(input: ShadowRecordInput): Promise<number> {
   const engines = shadowEngineIds(input.env)
   if (engines.length === 0) return 0
   try {
@@ -81,8 +96,9 @@ export async function recordShadowDecisions(input: ShadowRecordInput): Promise<n
     if (!packet) return 0
     const key = opportunityKey(input.rawText)
     if (!key) return 0
-    const { features, rows } = computeShadowCandidates(packet, input.rawText, { platform: input.platform, engines, env: input.env })
+    const { features, thesis, rows } = computeShadowCandidates(packet, { platform: input.platform, engines, env: input.env })
     if (!features || rows.length === 0) return 0
+    const routing = await computeRoutingComparison(input, features)
     const production = productionEngineId(input.env)
     const inserts = rows.map((r) => ({
       organization_id: input.organizationId,
@@ -106,6 +122,19 @@ export async function recordShadowDecisions(input: ShadowRecordInput): Promise<n
       candidate_detail: { accountValue: r.candidate.accountValue, intentValue: r.candidate.intentValue, rawScore: r.candidate.rawScore, guards: r.candidate.guards, reasons: r.candidate.reasons },
       features: { ...features, fit: { ...features.fit, matches: undefined } },
       features_version: OPPORTUNITY_FEATURES_VERSION,
+      sales_thesis: thesis ?? null,
+      sales_thesis_version: thesis ? SALES_THESIS_VERSION : null,
+      routing_v1: routing ? { senderId: routing.v1.senderId, score: routing.v1.score } : null,
+      routing_v2: routing ? {
+        bestSenderId: routing.v2.bestSenderId,
+        bestSenderMatch: routing.v2.bestSenderMatch,
+        orgCapabilityMatch: routing.v2.orgCapabilityMatch,
+        senderChanged: routing.difference.senderChanged,
+        delta: routing.difference.delta,
+        confidence: routing.confidence,
+        proofUsed: routing.proofUsed,
+        eligibility: routing.eligibility,
+      } : null,
     }))
     const { error } = await input.client.from('scoring_shadow_decisions').insert(inserts)
     if (error) { console.warn('[scoring-v4/shadow] insert failed:', error.message); return 0 }

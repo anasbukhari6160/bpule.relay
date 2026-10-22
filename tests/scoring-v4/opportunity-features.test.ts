@@ -30,7 +30,7 @@ const candidate = li({
 describe('OpportunityFeatures (Phase 6)', () => {
   it('separates verified intent from account value and reads semantic fit for a buyer', async () => {
     const packet = await runOffline(buyer, { model: { relationship: 'BUYER', buyerRequestProbability: 0.9, fit: 'STRONG', timing: 'URGENT', access: 'DIRECT' }, referenceDate: REF })
-    const f = featuresFromPacket(packet, buyer)!
+    const f = featuresFromPacket(packet)!
     expect(f).not.toBeNull()
     expect(f.intent.verifiedRequest).toBe(true)
     expect(f.intent.level).toBe('HIGH')
@@ -46,7 +46,7 @@ describe('OpportunityFeatures (Phase 6)', () => {
 
   it('marks a software-services seller as supply-side with fit capped at WEAK', async () => {
     const packet = await runOffline(seller, { model: { relationship: 'SERVICE_PROVIDER', buyerRequestProbability: 0.1, fit: 'EXCELLENT' }, referenceDate: REF })
-    const f = featuresFromPacket(packet, seller)!
+    const f = featuresFromPacket(packet)!
     expect(f.relationshipRole).toBe('SELLER')
     expect(f.supply.softwareServicesSeller).toBe(true)
     expect(f.intent.verifiedRequest).toBe(false)
@@ -56,7 +56,7 @@ describe('OpportunityFeatures (Phase 6)', () => {
 
   it('marks a candidate seeking work and gives them no account value', async () => {
     const packet = await runOffline(candidate, { referenceDate: REF })
-    const f = featuresFromPacket(packet, candidate)!
+    const f = featuresFromPacket(packet)!
     expect(f.relationshipRole).toBe('CANDIDATE')
     expect(f.supply.candidateSeeking).toBe(true)
     expect(f.accountValue.outsourcingPlausibility).toBeLessThanOrEqual(0.05)
@@ -72,14 +72,14 @@ describe('OpportunityFeatures (Phase 6)', () => {
     // The packet path (summary stored on the packet) agrees on every
     // feature except the two that depend on how the pipeline ran: the
     // identity-aware completeness read and the fallback flag.
-    const c = featureRecord(featuresFromPacket(packet, buyer)!)
+    const c = featureRecord(featuresFromPacket(packet)!)
     const ar = featureRecord(a)
     for (const k of FEATURE_NAMES) if (k !== 'source_completeness' && k !== 'fallback_used') expect(c[k], k).toBe(ar[k])
   })
 
   it('projects to a fixed-order numeric vector in [0,1]', async () => {
     const packet = await runOffline(buyer, { referenceDate: REF })
-    const v = featureVector(featuresFromPacket(packet, buyer)!)
+    const v = featureVector(featuresFromPacket(packet)!)
     expect(v).toHaveLength(FEATURE_NAMES.length)
     for (const x of v) { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(1) }
   })

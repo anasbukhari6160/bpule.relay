@@ -7,14 +7,14 @@ import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
 import { initializeV3 } from '@/lib/intelligence-v3/index'
 import { extractEventsFromSource, type ExtractedEvent } from './event-extractor'
 import { buildV3ReuseKey, ATTRIBUTION_VERSION } from './decision-reuse'
-import { readSourceFacts } from './source-facts-model'
+import { readSourceFacts, type SourceFacts } from './source-facts-model'
 import { extractEventsDeterministically } from './deterministic-events'
 import { isPacketCurrent, SCORING_VERSION } from './versions'
 import { qualifyCanonicalScore, toStoredQualification } from '@/lib/scoring/qualification'
 import type { V3DecisionProvider } from './decision/decision-provider'
 import { cleanCompanyName } from '@/lib/leads/normalize'
 import { extractHiringOrganization, extractStatedLocation, isPlausibleCompanyName, looksLikeJobAd, separateRoleFromEmployer } from '@/lib/intelligence-v2/extraction-pipeline'
-import { deriveCommercialReading } from '@/lib/intelligence-v2/commercial-reading'
+import { commercialReadingFromFacts } from '@/lib/intelligence-v2/commercial-reading'
 import { isLinkedInChromeLine, nameFromViewProfileLabel } from '@/lib/prospect/paste-normalize'
 import { stripEmployerFromTitle } from '@/lib/leads/role-line'
 
@@ -459,7 +459,7 @@ function pickPersonName(identityLines: string[], allLines: string[]): string | n
   return !ROLE_WORDS.test(candidate) && candidate.split(/\s+/).length <= 5 ? candidate : null
 }
 
-export function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntelligence {
+export function buildMinimalV2Canonical(rawText: string, facts?: SourceFacts): CanonicalProspectIntelligence {
   const lines = rawText.split('\n').map((l) => l.trim()).filter((l) => l && !isLinkedInChromeLine(l))
   const { identity: identityLines, body: bodyLines } = splitIdentityAndBody(lines)
 
@@ -534,7 +534,7 @@ export function buildMinimalV2Canonical(rawText: string): CanonicalProspectIntel
       resolvedContradictions: [],
       businessModel: 'PRODUCT',
       relationship: 'UNKNOWN',
-      commercialReading: deriveCommercialReading(rawText),
+      commercialReading: commercialReadingFromFacts(facts ?? readSourceFacts(rawText)),
       remoteEligibility: { workplaceType: 'REMOTE', remoteScope: 'UNKNOWN', eligibility: 'ELIGIBLE', reason: 'No restrictions stated', evidence: [] },
       needOwnershipSummary: { dominant: 'UNKNOWN', counts: { SELF_NEED: 0, CUSTOMER_NEED: 0, MARKET_PROBLEM: 0, SERVICE_OFFERING: 0, PRODUCT_PROBLEM: 0, EMPLOYER_NEED: 0, UNKNOWN: 0 } },
     },
@@ -586,16 +586,11 @@ export async function produceV3Intelligence(
     }
   }
 
-  // V3 canonical mode: Build minimal V2 structure deterministically (no AI calls).
-  v2Canonical = buildMinimalV2Canonical(rawText)
-  const sourceFacts = readSourceFacts(rawText, {
-    identity: {
-      name: v2Canonical.intelligence.person.fullName,
-      title: v2Canonical.intelligence.person.title,
-      company: v2Canonical.intelligence.company.name,
-      location: v2Canonical.intelligence.person.location,
-    },
-  })
+  // V3 canonical mode: read the source once, then build the minimal V2 structure
+  // deterministically (no AI calls). The facts are the only interpretation of
+  // the raw text; the canonical builder receives them instead of re-reading.
+  const sourceFacts = readSourceFacts(rawText)
+  v2Canonical = buildMinimalV2Canonical(rawText, sourceFacts)
 
   // Step 3: Check for a reusable DecisionPacket. The key is sender-independent;
   // a cached packet from an older scoring version is never served.

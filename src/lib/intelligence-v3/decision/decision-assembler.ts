@@ -24,12 +24,11 @@ import type {
   V3Event,
 } from '../types'
 import type { V3EvidenceGraph } from '../graph/evidence-graph'
-import { scoreEpisode, isEmploymentHiringNotPurchase, isCandidateSeeking, type V3ScoreInput, type V3ScoreOutput } from '../scoring/score-v3'
-import { detectCommercialRequest, findContactInstruction, isVerbatimInSource } from '../source-facts'
+import { scoreEpisode, type V3ScoreInput, type V3ScoreOutput } from '../scoring/score-v3'
+import { isVerbatimInSource } from '../source-facts'
 import { NORMALIZED_ANSWER_CONFIDENCE_CAP, type V3ProviderResult } from './decision-provider'
-import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 import { resolveVerifiedBuyerIntent, type VerifiedBuyerIntent } from '../buyer-intent'
-import { readSourceFacts, summarizeSourceFacts, type SourceFacts } from '../source-facts-model'
+import { summarizeSourceFacts, type SourceFacts } from '../source-facts-model'
 import { computeConfidence } from '../dimensions'
 import { deriveRecommendedAction } from '../action/recommended-action'
 import { currentVersions, SCORING_VERSION } from '../versions'
@@ -49,12 +48,10 @@ export interface V3AssemblerInput {
   proofRelevanceMap?: Record<string, number>
   /** @deprecated */
   evidenceQualityMap?: Record<string, number>
-  /** V2 canonical intelligence (identity for SourceFacts) */
-  v2Canonical?: CanonicalProspectIntelligence
-  /** Raw source text */
+  /** Raw source text, for verbatim quote verification only. */
   rawText?: string
-  /** Pre-read SourceFacts; read here when not passed. */
-  sourceFacts?: SourceFacts
+  /** The canonical facts, read once by the caller with readSourceFacts. Required. */
+  sourceFacts: SourceFacts
   /** Organization capability set for fit. */
   orgCapabilities?: string[]
   /** The episode the provider's bounded answers were produced for. */
@@ -72,16 +69,8 @@ export interface V3AssemblerOutput {
 export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V3AssemblerOutput> {
   const { graph, providerResult, productionScore, productionAction, productionDecision } = input
   const rawText = input.rawText ?? ''
-  const v2 = input.v2Canonical
-  const facts = input.sourceFacts ?? readSourceFacts(rawText, {
-    identity: v2 ? {
-      name: v2.intelligence.person.fullName,
-      title: v2.intelligence.person.title,
-      company: v2.intelligence.company.name,
-      location: v2.intelligence.person.location,
-    } : undefined,
-    currentOrganizations: v2?.intelligence.person.affiliations?.filter((a) => a.isCurrent).map((a) => a.organizationName) ?? [],
-  })
+  if (!input.sourceFacts) throw new Error('assembleDecisionPacket: sourceFacts are required — read them once with readSourceFacts.')
+  const facts = input.sourceFacts
 
   // Every profile has at least one opportunity context to score, even when
   // no event was found: the organization itself. Without this, "no events"
@@ -93,7 +82,7 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     : null
   const { decision: guarded, adjustments: decisionAdjustments } = guardBoundedDecision(
     buildBoundedDecision(providerResult),
-    rawText,
+    facts,
     rawDecidedEpisode,
   )
 
@@ -129,7 +118,6 @@ export async function assembleDecisionPacket(input: V3AssemblerInput): Promise<V
     const out = scoreEpisode({
       episode,
       decision,
-      rawText,
       sourceFacts: facts,
       buyerIntent,
       episodeQuotes: quotesFor(episode),
@@ -355,18 +343,30 @@ export function projectBuyerIntent(
  * Deterministic guards on the model's bounded answers. The model is a
  * classifier over one episode; these rules hold regardless of its output and
  * every change is recorded so the response explains it.
+ *
+ * Consumes the canonical `SourceFacts` only. The safety rules it enforces
+ * (employee hiring is not a purchase, candidate-seeking is not a buyer, a
+ * contact invitation opens access) are read from the one reader, never
+ * re-derived from raw text here.
  */
 export function guardBoundedDecision(
   decision: V3BoundedDecision,
-  rawText: string | undefined,
+  facts: SourceFacts,
   episode: V3OpportunityEpisode | null,
 ): { decision: V3BoundedDecision; adjustments: string[] } {
   const adjustments: string[] = []
   const next = { ...decision }
-  const text = rawText ?? ''
 
-  if (isEmploymentHiringNotPurchase(text, episode)) {
-    if (isCandidateSeeking(text)) {
+  const externalRequest = facts.buyer.externalServiceRequest !== null
+  const candidateSeeking = facts.buyer.candidateSeeking
+  const employmentHiringNotPurchase =
+    !externalRequest
+    && (facts.buyer.employmentHiring !== null
+      || candidateSeeking
+      || (episode?.anchorEvent?.eventType === 'HIRING' && !episode.explicitRequest))
+
+  if (employmentHiringNotPurchase) {
+    if (candidateSeeking) {
       if (next.relationship === 'BUYER' || next.relationship === 'UNKNOWN') {
         adjustments.push('Relationship → CANDIDATE: prospect is seeking opportunities, not buying services.')
         next.relationship = 'CANDIDATE'
@@ -396,14 +396,14 @@ export function guardBoundedDecision(
         next.needOwnerType = 'HIRING_NEED'
       }
     }
-  } else if (detectCommercialRequest(text).externalServiceRequest && next.needOwnerType === 'HIRING_NEED') {
+  } else if (externalRequest && next.needOwnerType === 'HIRING_NEED') {
     adjustments.push('Need owner HIRING_NEED → ORGANIZATION_NEED: the source asks for an external provider, not employees.')
     next.needOwnerType = 'ORGANIZATION_NEED'
   }
 
-  const contact = isEmploymentHiringNotPurchase(text, episode) ? null : findContactInstruction(text)
+  const contact = employmentHiringNotPurchase ? null : facts.access.contactLine
   if (contact && (next.access === 'NONE' || next.access === 'INDIRECT')) {
-    adjustments.push(`Access ${next.access} → CONNECTION: the source invites contact ("${contact.line.slice(0, 100)}").`)
+    adjustments.push(`Access ${next.access} → CONNECTION: the source invites contact ("${contact.slice(0, 100)}").`)
     next.access = 'CONNECTION'
   }
 

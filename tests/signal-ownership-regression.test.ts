@@ -13,14 +13,20 @@ import { describe, it, expect } from 'vitest'
 import { detectCommercialRequest, isEmploymentHiringOnly } from '@/lib/intelligence-v3/source-facts'
 import { extractEventsDeterministically } from '@/lib/intelligence-v3/deterministic-events'
 import { readSourceFacts } from '@/lib/intelligence-v3/source-facts-model'
+import { resolveVerifiedBuyerIntent } from '@/lib/intelligence-v3/buyer-intent'
 
 /** Production deterministic event path: source facts first, then events. */
 function eventsFor(text: string) {
   return extractEventsDeterministically(text, readSourceFacts(text))
 }
+/** Score input built the way production builds it: read once, then score. */
+function scoreInput(rawText: string, episode: V3OpportunityEpisode, decision: V3BoundedDecision): V3ScoreInput {
+  const facts = readSourceFacts(rawText)
+  return { episode, decision, sourceFacts: facts, buyerIntent: resolveVerifiedBuyerIntent(facts.buyer) }
+}
 import { extractSignals } from '@/lib/scoring/signal-extractor'
 import { assessCommercialPotential } from '@/lib/intelligence-v3/latent-opportunity'
-import { scoreEpisode, isEmploymentHiringNotPurchase, type V3ScoreInput } from '@/lib/intelligence-v3/scoring/score-v3'
+import { scoreEpisode, type V3ScoreInput } from '@/lib/intelligence-v3/scoring/score-v3'
 import type { V3OpportunityEpisode, V3BoundedDecision, V3Event, CommercialPotentialAssessment } from '@/lib/intelligence-v3/types'
 import type { CanonicalProspectIntelligence } from '@/lib/intelligence-v2/types'
 
@@ -142,8 +148,9 @@ describe('Case 1: job-seeking language is CANDIDATE, not HIRING or BUYER', () =>
   })
 
   it('"open to work" is candidate language — never a purchase', () => {
-    const episode = makeEpisode({ anchorEvent: makeEvent({ eventType: 'OTHER' }) })
-    expect(isEmploymentHiringNotPurchase("I'm open to contract opportunities", episode)).toBe(true)
+    const facts = readSourceFacts("I'm open to contract opportunities")
+    expect(facts.buyer.candidateSeeking).toBe(true)
+    expect(facts.buyer.externalServiceRequest).toBeNull()
   })
 })
 
@@ -359,7 +366,7 @@ describe('Case 8: founder with multiple products has HIGH commercial potential',
       signals: ['Decision-maker role', 'Active building (VERY_HIGH)', 'Technical stack overlap', 'Likely needs external help', 'Reachable'],
     }
     void cp
-    const input: V3ScoreInput = { episode, decision, rawText: 'Taylor Kim\nCEO at CompanyA | Founder at CompanyB\n\nAbout\nWe are building multiple SaaS products on React and Node. Just launched ProductA and ProductB beta.\n\nActivity\n2d •\nProductB beta is live — 300 signups in a day.' }
+    const input = scoreInput('Taylor Kim\nCEO at CompanyA | Founder at CompanyB\n\nAbout\nWe are building multiple SaaS products on React and Node. Just launched ProductA and ProductB beta.\n\nActivity\n2d •\nProductB beta is live — 300 signups in a day.', episode, decision)
     const result = scoreEpisode(input)
     expect(result.score).toBeGreaterThanOrEqual(35)
   })
@@ -456,11 +463,7 @@ describe('Case 10: service provider with separate buyer request keeps buyer epis
     }
     void buyerCp
     void sellerEpisode
-    const buyerResult = scoreEpisode({
-      episode: buyerEpisode,
-      decision,
-      rawText: 'Dana Cole\nCEO at ClientCo\n· 2nd\n500+ connections\nMessage\n\nActivity\n3d •\nLooking for a development agency to build our platform. React + Node.js. Budget $50k approved. DM me with references.',
-    })
+    const buyerResult = scoreEpisode(scoreInput('Dana Cole\nCEO at ClientCo\n· 2nd\n500+ connections\nMessage\n\nActivity\n3d •\nLooking for a development agency to build our platform. React + Node.js. Budget $50k approved. DM me with references.', buyerEpisode, decision))
     expect(buyerResult.score).toBeGreaterThan(55)
     expect(['STRONG', 'WORTH_PURSUING']).toContain(buyerResult.qualification)
   })
@@ -585,12 +588,7 @@ describe('Genuine buyer remains highly ranked', () => {
       confidence: 0.6,
       signals: ['Decision-maker role', 'Likely needs external help', 'Reachable'],
     }
-    const result = scoreEpisode({
-      episode,
-      decision,
-      commercialPotential: buyerCp,
-      rawText: 'Looking for a development agency to build our platform. React + Node.js. Budget $50k approved.',
-    })
+    const result = scoreEpisode(scoreInput('Looking for a development agency to build our platform. React + Node.js. Budget $50k approved.', episode, decision))
     expect(result.score).toBeGreaterThan(55)
     expect(['STRONG', 'WORTH_PURSUING']).toContain(result.qualification)
   })

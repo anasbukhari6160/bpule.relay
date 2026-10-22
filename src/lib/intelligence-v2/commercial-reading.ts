@@ -1,5 +1,6 @@
 import { extractStatedTimeline } from '@/lib/intelligence-v3/source-facts'
 import { resolveBuyerIntentFromSource } from '@/lib/intelligence-v3/buyer-intent'
+import type { SourceFacts } from '@/lib/intelligence-v3/source-facts-model'
 import type { OpportunitySignal } from './types'
 
 export type ServiceBuyerIntent = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
@@ -156,6 +157,66 @@ export function deriveCommercialReading(rawText: string): CommercialReading {
     technicalRelevance,
     buyerEvidenceKinds,
   }))
+}
+
+/**
+ * Derive the same commercial reading from the canonical facts, with no
+ * raw-text pass. Used by the V3 light canonical builder so the reader is the
+ * only place raw source is interpreted.
+ */
+export function commercialReadingFromFacts(facts: SourceFacts): CommercialReading {
+  const external = facts.buyer.externalServiceRequest !== null
+  const help = facts.buyer.helpRequest !== null
+  const hiring = facts.buyer.employmentHiring !== null
+
+  const kinds: BuyerEvidenceKind[] = []
+  if (external || help) kinds.push('BUYER_REQUEST')
+  if (hiring && !external) kinds.push('HIRING_SIGNAL')
+
+  const serviceBuyerIntent: ServiceBuyerIntent = external ? 'HIGH' : help ? 'MEDIUM' : hiring ? 'LOW' : 'UNKNOWN'
+
+  let buyerTiming: BuyerTiming = 'UNKNOWN'
+  let immediateBuyerNeed = false
+  if ((external || help) && facts.timelineEvidence) {
+    if (facts.timelineEvidence.days <= 7) { buyerTiming = 'IMMEDIATE'; immediateBuyerNeed = true }
+    else if (facts.timelineEvidence.days <= 90) buyerTiming = 'NEAR_TERM'
+  }
+
+  const tc = facts.technologyContext
+  const technicalRelevance: CommercialReading['technicalRelevance'] =
+    tc.hasAI || tc.hasWeb || tc.hasCloud || tc.hasMobile || tc.languages.length > 0 ? 'HIGH'
+      : facts.currentProductActivity ? 'MEDIUM' : 'NONE'
+
+  const productMomentum: CommercialReading['productMomentum'] =
+    facts.currentProductActivity && (facts.signals.company.growthSignals.length > 0 || facts.fundingEvidence) ? 'HIGH'
+      : facts.currentProductActivity ? 'MEDIUM' : 'NONE'
+
+  const reading: CommercialReading = {
+    serviceBuyerIntent,
+    externalEngineeringNeed: external ? 'EXPLICIT' : 'NONE_DETECTED',
+    immediateBuyerNeed,
+    buyerTiming,
+    productMomentum,
+    customerDiscovery: 'NONE',
+    preLaunchActivity: 'NONE',
+    technicalRelevance,
+    buyerEvidenceKinds: kinds,
+  }
+  return enforceBuyerIntentBoundary(recruiterHiringIsNotAPurchaseFromFacts(facts, reading))
+}
+
+function recruiterHiringIsNotAPurchaseFromFacts(facts: SourceFacts, reading: CommercialReading): CommercialReading {
+  if (!facts.buyer.recruiter) return reading
+  if (facts.buyer.externalServiceRequest) return reading
+  const kinds = reading.buyerEvidenceKinds.filter((kind) => kind === 'HIRING_SIGNAL')
+  return {
+    ...reading,
+    serviceBuyerIntent: kinds.includes('HIRING_SIGNAL') ? 'LOW' : 'UNKNOWN',
+    externalEngineeringNeed: 'NONE_DETECTED',
+    immediateBuyerNeed: false,
+    buyerTiming: 'UNKNOWN',
+    buyerEvidenceKinds: kinds,
+  }
 }
 
 const RECRUITER_HEADER = /\b(?:it recruiter|technical recruiter|tech recruiter|recruiter|rekruter(?:ka)?|talent acquisition|sourcer|headhunter)\b/i

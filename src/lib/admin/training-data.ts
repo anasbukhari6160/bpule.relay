@@ -33,6 +33,17 @@ export const LABEL_ENUMS = {
   labelerConfidence: ['HIGH', 'MEDIUM', 'LOW'],
 } as const
 
+/**
+ * Quick-label enums (Phase F). A reviewer answers five things at a glance —
+ * no score ranges, no role taxonomy. One label should take under 15 seconds.
+ */
+export const LABEL_QUICK_ENUMS = {
+  prospectQuality: ['GREAT', 'GOOD', 'MAYBE', 'POOR', 'NEVER_CONTACT'],
+  likelyOpportunity: ['YES', 'MAYBE', 'NO'],
+  quickAction: ['CONTACT_NOW', 'CONNECT', 'RESEARCH', 'OBSERVE', 'CLOSE'],
+  decisionCorrect: ['YES', 'NO'],
+} as const
+
 /** Score ranges reviewers pick from (Phase 4). Boundaries follow the band table so a label maps to a band. */
 export const LABEL_SCORE_RANGES: Array<{ id: string; min: number; max: number; label: string }> = [
   { id: 'skip', min: 0, max: 14, label: '0–14 · Skip' },
@@ -62,6 +73,11 @@ export interface TrainingLabel {
   bestSenderProfileId: string | null
   labelerConfidence: string | null
   reason: string | null
+  /** Quick-label fields (Phase F). */
+  prospectQuality: string | null
+  likelyOpportunity: string | null
+  quickAction: string | null
+  decisionCorrect: string | null
   createdAt: string
 }
 
@@ -240,7 +256,10 @@ export async function loadTrainingQueue(client: SupabaseClient, orgId: string, o
       relationshipRole: (l.relationship_role as string) ?? null, buyerIntent: (l.buyer_intent as string) ?? null, commercialPotential: (l.commercial_potential as string) ?? null,
       fit: (l.fit as string) ?? null, authority: (l.authority as string) ?? null, timing: (l.timing as string) ?? null, access: (l.access as string) ?? null,
       expectedScoreMin: (l.expected_score_min as number) ?? null, expectedScoreMax: (l.expected_score_max as number) ?? null, expectedAction: (l.expected_action as string) ?? null,
-      bestSenderProfileId: (l.best_sender_profile_id as string) ?? null, labelerConfidence: (l.labeler_confidence as string) ?? null, reason: (l.reason as string) ?? null, createdAt: l.created_at as string,
+      bestSenderProfileId: (l.best_sender_profile_id as string) ?? null, labelerConfidence: (l.labeler_confidence as string) ?? null, reason: (l.reason as string) ?? null,
+      prospectQuality: (l.prospect_quality as string) ?? null, likelyOpportunity: (l.likely_opportunity as string) ?? null,
+      quickAction: (l.quick_action as string) ?? null, decisionCorrect: (l.decision_correct as string) ?? null,
+      createdAt: l.created_at as string,
     }])
   }
 
@@ -252,7 +271,7 @@ export async function loadTrainingQueue(client: SupabaseClient, orgId: string, o
     const ci = safeParse(primary.canonicalIntelligence) as Record<string, unknown> | null
     const score = primary.canonicalScore ?? packet?.score ?? null
     const band = score === null ? null : qualifyCanonicalScore(score)
-    const shadow = packet ? computeShadowCandidates(packet, primary.rawInput, { engines }) : { features: null, rows: [] }
+    const shadow = packet ? computeShadowCandidates(packet, { engines }) : { features: null, rows: [] }
     const msgs = reps.filter((r) => r.kind === 'lead').flatMap((r) => msgsByLead.get(r.id) ?? [])
     const sent = msgs.filter((m) => m.direction !== 'inbound' && m.sent_text)
     const firstSent = sent.sort((a, b) => String(a.sent_at ?? '').localeCompare(String(b.sent_at ?? '')))[0]
@@ -340,6 +359,71 @@ export interface LabelInput {
   reason?: string | null
   evidenceLines?: string[]
   observed?: Record<string, unknown>
+}
+
+/** A quick label (Phase F): five glanceable answers, under 15 seconds. */
+export interface QuickLabelInput {
+  opportunityKey: string
+  leadId?: string | null
+  capturedProspectId?: string | null
+  decisionRunId?: string | null
+  prospectQuality?: string | null
+  likelyOpportunity?: string | null
+  quickAction?: string | null
+  bestSenderProfileId?: string | null
+  decisionCorrect?: string | null
+  reason?: string | null
+  observed?: Record<string, unknown>
+}
+
+/** Validate a quick-label body. */
+export function validateQuickLabel(body: Record<string, unknown>): { ok: true; label: QuickLabelInput } | { ok: false; error: string } {
+  const str = (k: string) => (typeof body[k] === 'string' && (body[k] as string).trim() ? (body[k] as string).trim() : null)
+  const key = str('opportunityKey')
+  if (!key || !/^[a-f0-9]{64}$/.test(key)) return { ok: false, error: 'opportunityKey must be a sha256 hex string.' }
+  const fields = {
+    prospectQuality: str('prospectQuality'), likelyOpportunity: str('likelyOpportunity'),
+    quickAction: str('quickAction'), decisionCorrect: str('decisionCorrect'),
+  }
+  for (const [k, v] of Object.entries(fields)) {
+    if (v !== null && !(LABEL_QUICK_ENUMS[k as keyof typeof LABEL_QUICK_ENUMS] as readonly string[]).includes(v)) {
+      return { ok: false, error: `${k} must be one of ${(LABEL_QUICK_ENUMS[k as keyof typeof LABEL_QUICK_ENUMS] as readonly string[]).join(', ')}.` }
+    }
+  }
+  const hasAny = Object.values(fields).some(Boolean) || str('bestSenderProfileId') || str('reason')
+  if (!hasAny) return { ok: false, error: 'A quick label needs at least one answer.' }
+  return {
+    ok: true,
+    label: {
+      opportunityKey: key,
+      leadId: str('leadId'), capturedProspectId: str('capturedProspectId'), decisionRunId: str('decisionRunId'),
+      ...fields,
+      bestSenderProfileId: str('bestSenderProfileId'),
+      reason: str('reason')?.slice(0, 1000) ?? null,
+      observed: body.observed && typeof body.observed === 'object' ? (body.observed as Record<string, unknown>) : {},
+    },
+  }
+}
+
+/** A pairwise preference: work A before B, or tie. */
+export interface PairwiseLabelInput {
+  opportunityKeyA: string
+  opportunityKeyB: string
+  winner: 'A' | 'B' | 'TIE'
+  reason?: string | null
+}
+
+/** Validate a pairwise label body. */
+export function validatePairwiseLabel(body: Record<string, unknown>): { ok: true; label: PairwiseLabelInput } | { ok: false; error: string } {
+  const keyA = typeof body.opportunityKeyA === 'string' ? body.opportunityKeyA : null
+  const keyB = typeof body.opportunityKeyB === 'string' ? body.opportunityKeyB : null
+  if (!keyA || !/^[a-f0-9]{64}$/.test(keyA)) return { ok: false, error: 'opportunityKeyA must be a sha256 hex string.' }
+  if (!keyB || !/^[a-f0-9]{64}$/.test(keyB)) return { ok: false, error: 'opportunityKeyB must be a sha256 hex string.' }
+  if (keyA === keyB) return { ok: false, error: 'The two opportunities must be different.' }
+  const winner = body.winner
+  if (winner !== 'A' && winner !== 'B' && winner !== 'TIE') return { ok: false, error: 'winner must be A, B or TIE.' }
+  const reason = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 1000) : null
+  return { ok: true, label: { opportunityKeyA: keyA, opportunityKeyB: keyB, winner, reason } }
 }
 
 /** Validate a label body. Returns the row to insert or an error message. */

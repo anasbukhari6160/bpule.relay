@@ -26,6 +26,7 @@ import {
   shouldWriteMessage,
   sourceFromLead,
 } from '@/lib/relay/revenue-strategy'
+import { factsFromCanonical } from '@/lib/relay/routing-context'
 
 export const maxDuration = 120
 
@@ -319,6 +320,7 @@ export async function POST(
       }
 
       const revenue = buildRevenueStrategy(sourceFromLead(detail, extracted, {
+        facts: factsFromCanonical(detail.canonicalIntelligence),
         channel: type === 'followup' ? 'followup' : type === 'connection' ? 'connection' : type === 'reply' ? 'reply' : type === 'upwork' ? 'upwork' : 'dm',
         relationshipStage: type === 'followup' ? 'followup' : type === 'reply' ? 'reply' : 'first_touch',
         alreadyShared,

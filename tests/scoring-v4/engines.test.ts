@@ -13,7 +13,7 @@ async function featuresFor(id: string): Promise<{ f: OpportunityFeatures; v3: nu
   const fx = GOLDEN_SET.find((x) => x.id === id)
   if (!fx) throw new Error(`fixture ${id} missing`)
   const packet = await runOffline(fx.rawText, { model: fx.model ?? null, referenceDate: REF })
-  return { f: featuresFromPacket(packet, fx.rawText)!, v3: packet.score }
+  return { f: featuresFromPacket(packet)!, v3: packet.score }
 }
 
 describe('candidate engines (Phase 14) — shared contract', () => {
@@ -21,7 +21,7 @@ describe('candidate engines (Phase 14) — shared contract', () => {
     const samples = GOLDEN_SET.filter((x) => !x.id.startsWith('attack-')).slice(0, 25)
     for (const fx of samples) {
       const packet = await runOffline(fx.rawText, { model: fx.model ?? null, referenceDate: REF })
-      const f = featuresFromPacket(packet, fx.rawText)!
+      const f = featuresFromPacket(packet)!
       for (const id of ENGINE_IDS) {
         const c = ENGINES[id].score(f, { v3Score: packet.score })
         expect(c.engine).toBe(id)
@@ -48,7 +48,7 @@ describe('candidate engines (Phase 14) — shared contract', () => {
     expect(sellers.length).toBeGreaterThan(5)
     for (const fx of sellers) {
       const packet = await runOffline(fx.rawText, { model: fx.model ?? null, referenceDate: REF })
-      const f = featuresFromPacket(packet, fx.rawText)!
+      const f = featuresFromPacket(packet)!
       if (f.intent.verifiedRequest) continue
       for (const id of ENGINE_IDS) {
         const c = ENGINES[id].score(f, { v3Score: packet.score })
@@ -72,7 +72,7 @@ describe('candidate engines (Phase 14) — shared contract', () => {
     expect(clones.length).toBeGreaterThan(100)
     const rows = await Promise.all(clones.map(async (fx) => {
       const packet = await runOffline(fx.rawText, { model: fx.model ?? null, referenceDate: REF })
-      return { id: fx.id, f: featuresFromPacket(packet, fx.rawText)!, v3: packet.score }
+      return { id: fx.id, f: featuresFromPacket(packet)!, v3: packet.score }
     }))
     for (const id of ENGINE_IDS) {
       const scored = rows.map((r) => ({ id: r.id, s: ENGINES[id].score(r.f, { v3Score: r.v3 }).score }))
@@ -112,7 +112,7 @@ describe('calibrated_v4 (Phase 9): unknown intent is not medium', () => {
   it('guards are visible in the trace, never hidden', async () => {
     const seller = GOLDEN_SET.find((x) => x.category === 'competitor')!
     const packet = await runOffline(seller.rawText, { model: seller.model ?? null, referenceDate: REF })
-    const f = featuresFromPacket(packet, seller.rawText)!
+    const f = featuresFromPacket(packet)!
     const forced = { ...f, episodeClosed: true }
     const g = applyGuards(90, forced)
     expect(g.score).toBeLessThanOrEqual(GUARD_CEILINGS.closed)

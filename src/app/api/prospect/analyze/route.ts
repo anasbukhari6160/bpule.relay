@@ -404,7 +404,7 @@ export async function POST(request: Request) {
     }
 
     // (score, qualification, relationship) from the canonical blob.
-    const revenue = buildRevenueStrategy(sourceFromCanonical(canonical, { channel: 'connection' }))
+    const revenue = buildRevenueStrategy(sourceFromCanonical(canonical, { channel: 'connection', facts: (v3Packet as V3LeadDecisionPacket | null)?.sourceFacts ?? null }))
     const loop = toUiSnapshot(revenue)
 
     // The ONE buyer decision. V3 packets carry it; the V2 path resolves it
@@ -668,6 +668,7 @@ export async function POST(request: Request) {
             rawText: rawText,
             canonicalIntelligence: canonical,
             productionSenderId: bestSender?.id ?? null,
+            repId: auth.repId,
           })).catch(() => { /* shadow is best-effort */ })
         }
       } catch {

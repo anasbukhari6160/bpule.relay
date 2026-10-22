@@ -15,6 +15,7 @@ import {
   toVerificationStatus,
 } from '@/lib/email/contact-points'
 import { buildRevenueStrategy, shouldWriteMessage, sourceFromLead } from '@/lib/relay/revenue-strategy'
+import { factsFromCanonical } from '@/lib/relay/routing-context'
 import { buildResearchBrief } from '@/lib/email/research-brief'
 import { buildEmailStrategy } from '@/lib/email/strategy'
 import { generateEmailCopy } from '@/lib/email/writer'
@@ -209,6 +210,7 @@ export async function prepareEmailDraft(input: {
   const relationshipStage = input.followup ? 'followup' : 'first_touch'
   const alreadyShared = lead.messages.filter((m) => m.sentText).map((m) => m.sentText as string)
   const revenue = buildRevenueStrategy(sourceFromLead(lead, null, {
+    facts: factsFromCanonical(lead.canonicalIntelligence),
     channel,
     relationshipStage,
     alreadyShared,

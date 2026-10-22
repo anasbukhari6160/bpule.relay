@@ -119,5 +119,5 @@ export function scoreSourceForTest(rawText: string, decision: Partial<V3BoundedD
     lastActivityAt: null,
     ageDays: facts.recentPostAgeDays,
   }
-  return scoreEpisode({ episode, decision: d, rawText, sourceFacts: facts, buyerIntent: intent, episodeQuotes: facts.buyerRequest ? [facts.buyerRequest] : [] })
+  return scoreEpisode({ episode, decision: d, sourceFacts: facts, buyerIntent: intent, episodeQuotes: facts.buyerRequest ? [facts.buyerRequest] : [] })
 }

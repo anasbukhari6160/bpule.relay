@@ -14,7 +14,7 @@
 import { NextResponse } from 'next/server'
 import { getAuthContext } from '@/lib/auth/organization'
 import { createServiceSupabase } from '@/lib/supabase/service'
-import { LABEL_VERSION, validateLabel } from '@/lib/admin/training-data'
+import { LABEL_VERSION, validateLabel, validateQuickLabel } from '@/lib/admin/training-data'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,6 +25,39 @@ export async function POST(request: Request) {
 
   let body: Record<string, unknown>
   try { body = await request.json() } catch { return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 }) }
+
+  const mode = body.mode === 'quick' ? 'quick' : 'detailed'
+  if (mode === 'quick') {
+    const v = validateQuickLabel(body)
+    if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 })
+    const l = v.label
+    const client = createServiceSupabase()
+    const { data, error } = await client
+      .from('scoring_labels')
+      .insert({
+        organization_id: auth.orgId,
+        opportunity_key: l.opportunityKey,
+        lead_id: l.leadId ?? null,
+        captured_prospect_id: l.capturedProspectId ?? null,
+        platform: 'linkedin',
+        decision_run_id: l.decisionRunId ?? null,
+        labeler_rep_id: auth.repId,
+        label_version: LABEL_VERSION,
+        observed: l.observed ?? {},
+        prospect_quality: l.prospectQuality ?? null,
+        likely_opportunity: l.likelyOpportunity ?? null,
+        quick_action: l.quickAction ?? null,
+        best_sender_profile_id: l.bestSenderProfileId ?? null,
+        decision_correct: l.decisionCorrect ?? null,
+        reason: l.reason ?? null,
+        evidence_lines: [],
+      })
+      .select('id, created_at')
+      .single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, id: data.id, createdAt: data.created_at, labelVersion: LABEL_VERSION, mode: 'quick' }, { status: 201 })
+  }
+
   const v = validateLabel(body)
   if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 })
   const l = v.label

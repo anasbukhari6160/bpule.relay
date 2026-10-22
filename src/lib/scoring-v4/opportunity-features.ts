@@ -17,8 +17,7 @@
  * (`featureVector`) is the input to the trained candidate scorers.
  */
 
-import type { SourceFacts, SourceFactsSummary } from '@/lib/intelligence-v3/source-facts-model'
-import { readSourceFacts } from '@/lib/intelligence-v3/source-facts-model'
+import type { SourceFactsSummary } from '@/lib/intelligence-v3/source-facts-model'
 import type { VerifiedBuyerIntent, RelationshipRole, BuyerIntentLevel } from '@/lib/intelligence-v3/buyer-intent'
 import type { V3BoundedDecision, V3LeadDecisionPacket, CommercialPotentialLevel, BuildIntensity } from '@/lib/intelligence-v3/types'
 import { isSoftwareServicesSeller } from '@/lib/intelligence-v3/dimensions'
@@ -131,11 +130,7 @@ const ACCESS_RAW: Record<AccessLevel, number> = { DIRECT: 1, CONNECTION: 0.7, IN
 /** Funding events that belong to someone else's organisation. */
 const THIRD_PARTY_FUNDING = /\b(?:portfolio\s+compan(?:y|ies)|our\s+(?:customers?|clients?)|one\s+of\s+(?:our|my)\s+(?:customers?|clients?)|(?:we|i)\s+(?:invested|led|backed)|congrats|congratulations|proud\s+investor|via\s+@|repost)/i
 
-function isFullFacts(f: SourceFacts | SourceFactsSummary): f is SourceFacts {
-  return (f as SourceFacts).technologyContext !== undefined && (f as SourceFacts).signals !== undefined
-}
-
-function companyMaturityFrom(facts: SourceFacts): CompanyMaturity {
+function companyMaturityFrom(facts: SourceFactsSummary): CompanyMaturity {
   const size = facts.companySizeCategory
   if (size === 'enterprise') return 'ENTERPRISE'
   if (size === 'mid') return 'ESTABLISHED'
@@ -146,7 +141,7 @@ function companyMaturityFrom(facts: SourceFacts): CompanyMaturity {
   return 'UNKNOWN'
 }
 
-function technicalComplexityFrom(facts: SourceFacts, stack: CapabilityFamily[]): TechnicalComplexity {
+function technicalComplexityFrom(facts: SourceFactsSummary, stack: CapabilityFamily[]): TechnicalComplexity {
   const tc = facts.technologyContext
   const breadth = stack.length
   if (tc.stackComplexity === 'complex' || breadth >= 4) return 'HIGH'
@@ -155,7 +150,7 @@ function technicalComplexityFrom(facts: SourceFacts, stack: CapabilityFamily[]):
   return 'NONE'
 }
 
-function buildIntensityFrom(facts: SourceFacts): BuildIntensity {
+function buildIntensityFrom(facts: SourceFactsSummary): BuildIntensity {
   let score = 0
   if (facts.currentProductActivity) score += 3
   if (facts.fundingEvidence) score += 2
@@ -217,11 +212,10 @@ export function resolveFitLevel(params: {
 }
 
 export interface BuildFeaturesInput {
-  facts: SourceFacts | SourceFactsSummary
+  /** The canonical facts, read once and stored. Complete; no raw text is read here. */
+  facts: SourceFactsSummary
   intent: VerifiedBuyerIntent
   decision: V3BoundedDecision | null
-  /** Raw source; used to re-read full facts when only a summary is stored. */
-  rawText?: string | null
   platform?: Platform
   orgCapabilityFamilies?: readonly CapabilityFamily[]
   resolved?: V3LeadDecisionPacket['resolved'] | null
@@ -231,31 +225,23 @@ export interface BuildFeaturesInput {
 
 export function buildOpportunityFeatures(input: BuildFeaturesInput): OpportunityFeatures {
   const platform = input.platform ?? 'linkedin'
-  const facts: SourceFacts | null = isFullFacts(input.facts)
-    ? input.facts
-    : input.rawText && input.rawText.length >= 40 ? readSourceFacts(input.rawText) : null
   const summary = input.facts
-  const summaryAuthority: { level: AuthorityLevel; decisionAuthority: number } = isFullFacts(summary)
-    ? { level: summary.authorityEvidence.level, decisionAuthority: summary.authorityEvidence.decisionAuthority }
-    : { level: summary.authority, decisionAuthority: summary.decisionAuthority }
   const intent = input.intent
   const decision = input.decision
   const orgFamilies = input.orgCapabilityFamilies ?? DEFAULT_ORG_CAPABILITY_FAMILIES
 
   // ── Capability families ──────────────────────────────────────────────
   const needTerms = summary.capabilityNeeds ?? []
-  const requestContext = [summary.buyerRequest ?? '', facts?.helpRequest ?? ''].join('\n')
+  const requestContext = [summary.buyerRequest ?? '', summary.helpRequest ?? ''].join('\n')
   const needMatches = mapToCapabilities(needTerms, requestContext)
-  const stackTerms = facts
-    ? [...facts.technologyContext.languages, ...facts.technologyContext.frameworks, ...facts.technologyContext.platforms, ...facts.technologyContext.domains, ...facts.proofCandidates]
-    : []
-  const stackMatches = mapToCapabilities(stackTerms, facts ? [facts.currentIndustryLine ?? '', facts.person.title ?? ''].join('\n') : '')
+  const stackTerms = [...summary.technologyContext.languages, ...summary.technologyContext.frameworks, ...summary.technologyContext.platforms, ...summary.technologyContext.domains, ...summary.proofCandidates]
+  const stackMatches = mapToCapabilities(stackTerms, [summary.currentIndustryLine ?? '', summary.person.title ?? ''].join('\n'))
   const needs = needMatches.map((m) => m.family)
   const stack = stackMatches.map((m) => m.family).filter((f) => !needs.includes(f))
   const needOverlap = capabilityOverlap(needs, orgFamilies)
   const stackOverlap = capabilityOverlap(stack, orgFamilies)
 
-  const softwareServicesSeller = facts ? isSoftwareServicesSeller(facts) : false
+  const softwareServicesSeller = isSoftwareServicesSeller(summary)
   const supplySide = intent.relationshipRole === 'SELLER' || intent.relationshipRole === 'RECRUITER' || intent.relationshipRole === 'CANDIDATE'
   const supplySideWithoutBuy = supplySide && !intent.verifiedBuyerRequest
     && (intent.relationshipRole !== 'SELLER' || softwareServicesSeller)
@@ -268,16 +254,16 @@ export function buildOpportunityFeatures(input: BuildFeaturesInput): Opportunity
   })
 
   // ── Account value ────────────────────────────────────────────────────
-  const buildIntensity = facts ? buildIntensityFrom(facts) : (summary.currentProductActivity ? 'MEDIUM' : 'NONE')
-  const companyMaturity = facts ? companyMaturityFrom(facts) : 'UNKNOWN'
-  const technicalComplexity = facts ? technicalComplexityFrom(facts, [...needs, ...stack]) : (needs.length + stack.length >= 2 ? 'MODERATE' : needs.length + stack.length === 1 ? 'LOW' : 'NONE')
+  const buildIntensity = buildIntensityFrom(summary)
+  const companyMaturity = companyMaturityFrom(summary)
+  const technicalComplexity = technicalComplexityFrom(summary, [...needs, ...stack])
   let outsourcing = 0.3
-  if (facts) {
-    const size = facts.companySizeCategory
+  {
+    const size = summary.companySizeCategory
     outsourcing = size === 'startup' ? 0.7 : size === 'small' ? 0.6 : size === 'mid' ? 0.5 : size === 'enterprise' ? 0.4 : 0.35
-    if (facts.currentHiringActivity) outsourcing = Math.min(1, outsourcing + 0.15)
-    if (facts.currentProductActivity && !facts.sellerActivity) outsourcing = Math.min(1, outsourcing + 0.15)
-    if (facts.founderOrBuilder && facts.currentProductActivity && !facts.sellerActivity) outsourcing = Math.min(1, outsourcing + 0.1)
+    if (summary.currentHiringActivity) outsourcing = Math.min(1, outsourcing + 0.15)
+    if (summary.currentProductActivity && !summary.sellerActivity) outsourcing = Math.min(1, outsourcing + 0.15)
+    if (summary.founderOrBuilder && summary.currentProductActivity && !summary.sellerActivity) outsourcing = Math.min(1, outsourcing + 0.1)
     if (softwareServicesSeller && !intent.verifiedBuyerRequest) outsourcing = Math.min(outsourcing, 0.15)
     if (intent.relationshipRole === 'CANDIDATE') outsourcing = 0.05
     if (intent.relationshipRole === 'RECRUITER' && !intent.verifiedBuyerRequest) outsourcing = Math.min(outsourcing, 0.15)
@@ -310,7 +296,7 @@ export function buildOpportunityFeatures(input: BuildFeaturesInput): Opportunity
 
   // ── Evidence quality ─────────────────────────────────────────────────
   const completeness = summary.sourceCompleteness.score / 100
-  const positiveFacts = [summary.buyerRequest, summary.currentHiringActivity, summary.budgetEvidence?.line, summary.timelineEvidence?.line, facts?.fundingEvidence, facts?.currentIndustryLine].filter(Boolean).length
+  const positiveFacts = [summary.buyerRequest, summary.currentHiringActivity, summary.budgetEvidence?.line, summary.timelineEvidence?.line, summary.fundingEvidence, summary.currentIndustryLine].filter(Boolean).length
   const corroboration = Math.min(1, positiveFacts / 3)
   const freshness = activityRecency === 'FRESH' ? 1 : activityRecency === 'RECENT' ? 0.8 : activityRecency === 'AGING' ? 0.5 : activityRecency === 'STALE' ? 0.25 : 0.4
   const consistency = intent.contradictions.length === 0 ? 1 : Math.max(0.2, 1 - 0.3 * intent.contradictions.length)
@@ -321,7 +307,7 @@ export function buildOpportunityFeatures(input: BuildFeaturesInput): Opportunity
 
   // Funding must belong to the prospect's own organisation. A raise by a
   // portfolio company, a customer or a client is someone else's event.
-  const fundingLine = facts?.fundingEvidence ?? null
+  const fundingLine = summary.fundingEvidence ?? null
   const fundingSignal = Boolean(fundingLine) && !THIRD_PARTY_FUNDING.test(fundingLine ?? '')
 
   return {
@@ -339,18 +325,18 @@ export function buildOpportunityFeatures(input: BuildFeaturesInput): Opportunity
       contradictions: intent.contradictions.length,
       modelBuyerProbability: intent.claims.modelBuyerProbability ?? null,
     },
-    externalNeed: intent.verifiedExternalNeed || Boolean(facts?.externalNeed),
+    externalNeed: intent.verifiedExternalNeed || Boolean(summary.externalNeed),
     accountValue: {
       companyMaturity,
       buildIntensity,
       technicalComplexity,
       fundingSignal,
       hiringCurrent: Boolean(summary.currentHiringActivity),
-      hiringUrgent: Boolean(facts?.hiringUrgent),
-      hiringCount: facts?.hiringCount ?? 0,
+      hiringUrgent: Boolean(summary.hiringUrgent),
+      hiringCount: summary.hiringCount,
       currentProductActivity: summary.currentProductActivity,
-      growthSignals: facts?.signals.company.growthSignals.length ?? 0,
-      companySize: facts?.companySizeCategory ?? 'unknown',
+      growthSignals: summary.signals.company.growthSignals.length,
+      companySize: summary.companySizeCategory,
       outsourcingPlausibility: Math.round(outsourcing * 100) / 100,
       v3Level,
       v3Raw,
@@ -368,9 +354,9 @@ export function buildOpportunityFeatures(input: BuildFeaturesInput): Opportunity
     },
     currentIndustry: summary.currentIndustry,
     authority: {
-      level: facts?.authorityEvidence.level ?? summaryAuthority.level,
-      decisionAuthority: facts?.authorityEvidence.decisionAuthority ?? summaryAuthority.decisionAuthority,
-      technicalAuthority: facts?.authorityEvidence.technicalAuthority ?? 0,
+      level: summary.authorityEvidence.level,
+      decisionAuthority: summary.authorityEvidence.decisionAuthority,
+      technicalAuthority: summary.authorityEvidence.technicalAuthority,
     },
     buyerTiming,
     activityRecency,
@@ -386,21 +372,20 @@ export function buildOpportunityFeatures(input: BuildFeaturesInput): Opportunity
       recruiterProfile: summary.recruiterProfile,
       candidateSeeking: summary.candidateSeeking,
     },
-    founderOrBuilder: Boolean(facts?.founderOrBuilder ?? (summaryAuthority.level === 'FOUNDER')),
+    founderOrBuilder: Boolean(summary.founderOrBuilder),
     episodeClosed: input.episodeClosed ?? false,
     fallbackUsed: input.fallbackUsed ?? false,
   }
 }
 
-/** Build features from a stored decision packet (and its raw source when available). */
-export function featuresFromPacket(packet: V3LeadDecisionPacket, rawText?: string | null, opts: { platform?: Platform; orgCapabilityFamilies?: readonly CapabilityFamily[] } = {}): OpportunityFeatures | null {
+/** Build features from a stored decision packet. The packet carries the complete facts. */
+export function featuresFromPacket(packet: V3LeadDecisionPacket, opts: { platform?: Platform; orgCapabilityFamilies?: readonly CapabilityFamily[] } = {}): OpportunityFeatures | null {
   if (!packet.sourceFacts || !packet.buyerIntent) return null
   const selected = packet.episodes.find((e) => e.id === packet.selectedEpisodeId) ?? null
   return buildOpportunityFeatures({
     facts: packet.sourceFacts,
     intent: packet.buyerIntent,
     decision: packet.decision,
-    rawText,
     platform: opts.platform,
     orgCapabilityFamilies: opts.orgCapabilityFamilies,
     resolved: packet.resolved ?? null,

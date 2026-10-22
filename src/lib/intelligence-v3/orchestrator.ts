@@ -36,7 +36,7 @@ export interface V3OrchestratorOptions {
   /** Skip the model entirely and use the deterministic decision. */
   deterministicOnly?: boolean
   /** Pre-read SourceFacts for this source. */
-  sourceFacts?: SourceFacts
+  sourceFacts: SourceFacts
   /** Where the source events came from, for the packet trace. */
   eventSource?: 'model' | 'deterministic' | 'none'
   /** Organization capability set for fit. */
@@ -85,7 +85,7 @@ export interface V3OrchestratorResult {
  */
 export async function runV3Decision(
   v2Intelligence: V2BridgeInput,
-  options: V3OrchestratorOptions = {},
+  options: V3OrchestratorOptions,
 ): Promise<V3OrchestratorResult> {
   const startTime = Date.now()
   const refDate = options.referenceDate ?? new Date()
@@ -236,7 +236,6 @@ export async function runV3Decision(
     providerResult,
     productionScore: options.productionScore,
     productionAction: options.productionAction,
-    v2Canonical: options.v2Canonical,
     rawText: v2Intelligence?.rawInput,
     sourceFacts: options.sourceFacts,
     orgCapabilities: options.orgCapabilities,

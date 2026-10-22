@@ -75,8 +75,8 @@ describe('V3.2 Scoring Engine', () => {
         organizationId: null, organizationName: 'Ledgerline', needOwnerPersonId: null, needOwnerType: 'ORGANIZATION_NEED', explicitRequest: true, requestedCapabilities: [], applicationChannels: [], evidenceRefs: [], eventRefs: [], status: 'CURRENT', detectedAt: new Date().toISOString(), lastActivityAt: null, ageDays: 3,
       }
       const decision = { ...MODEL_BUYER, needOwnerType: 'ORGANIZATION_NEED' as const, messageEligible: 0.8, providerConfidence: 0.8 }
-      const base = scoreEpisode({ episode, decision, rawText: BUYER, sourceFacts: facts, buyerIntent: intent })
-      const withSender = scoreEpisode({ episode, decision, rawText: BUYER, sourceFacts: facts, buyerIntent: intent, senderCapabilities: ['react', 'node', 'aws'], proofRelevance: 1.0, evidenceQuality: 1.0 })
+      const base = scoreEpisode({ episode, decision, sourceFacts: facts, buyerIntent: intent })
+      const withSender = scoreEpisode({ episode, decision, sourceFacts: facts, buyerIntent: intent, senderCapabilities: ['react', 'node', 'aws'], proofRelevance: 1.0, evidenceQuality: 1.0 })
       expect(withSender.score).toBe(base.score)
       expect(withSender.dimensions.map((d) => d.contribution)).toEqual(base.dimensions.map((d) => d.contribution))
     })
