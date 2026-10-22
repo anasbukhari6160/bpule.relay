@@ -78,7 +78,7 @@ export function DecisionTraceView({ trace }: DecisionTraceViewProps) {
                 {node.evidence.length > 0 && (
                   <div className="mt-1 space-y-0.5">
                     {node.evidence.slice(0, 2).map((e, j) => (
-                      <p key={j} className="text-[10px] text-stone italic truncate">"{e}"</p>
+                      <p key={j} className="text-[10px] text-stone italic truncate">&quot;{e}&quot;</p>
                     ))}
                   </div>
                 )}

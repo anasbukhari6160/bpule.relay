@@ -7,7 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 function getClient() {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { createServiceSupabase } = require('@/lib/supabase/service')
   return createServiceSupabase()
 }

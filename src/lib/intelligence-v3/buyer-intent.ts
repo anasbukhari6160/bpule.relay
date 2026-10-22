@@ -193,7 +193,7 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     if (after.length > 0) return { line: after[after.length - 1].line }
     return null
   }
-  let externalServiceRequest = pickCurrent(requestCandidates)
+  const externalServiceRequest = pickCurrent(requestCandidates)
 
   // A stated opening ("We have 6 open positions") is a hiring fact too, under
   // the same provenance rules (current, own organization, not a repost).

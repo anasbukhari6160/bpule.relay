@@ -29,7 +29,7 @@ export function SignalFeed({ items, onRefresh, onDismiss, loading }: SignalFeedP
         <div className="flex items-center gap-2">
           <Bell className="size-3.5 text-stone" />
           <h3 className="text-[11px] font-medium uppercase tracking-[0.12em] text-stone">
-            What's changed
+            What&apos;s changed
           </h3>
         </div>
         <p className="mt-2 text-[12px] text-graphite">No new signals. High-value leads will appear here when something changes.</p>
@@ -43,7 +43,7 @@ export function SignalFeed({ items, onRefresh, onDismiss, loading }: SignalFeedP
         <div className="flex items-center gap-2">
           <Bell className="size-3.5 text-orange" />
           <h3 className="text-[11px] font-medium uppercase tracking-[0.12em] text-stone">
-            What's changed
+            What&apos;s changed
           </h3>
           {visible.length > 0 && (
             <span className="rounded-full bg-orange/10 px-1.5 py-0.5 text-[9px] font-medium text-orange">

@@ -162,7 +162,7 @@ Output ONLY JSON:
 
   costTracking.total += Number(result.trace?.estimatedCostUsd ?? 0)
 
-  let data = result.data as Record<string, unknown>
+  const data = result.data as Record<string, unknown>
   if (!data || typeof data !== 'object') {
     throw new Error('AI returned invalid data structure')
   }

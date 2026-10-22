@@ -103,7 +103,7 @@ export function checkContentQuality(
   let novelty = 5
   let technicalDepth = 5
   let credibility = 5
-  let trendRelevance = options?.trendGrounded ? 5 : 3
+  const trendRelevance = options?.trendGrounded ? 5 : 3
   let personaFit = 5
   let nonGenericness = 5
 

@@ -332,7 +332,8 @@ export function buildCommandCenterFromActivity(input: {
     accByRep.set(acc.rep_id, list)
   }
 
-  let working = 0, onTrack = 0, atRisk = 0, behind = 0, blocked = 0, closed = 0
+  let working = 0, onTrack = 0, behind = 0, closed = 0
+  const atRisk = 0, blocked = 0
   const teamRows: NonNullable<AccountabilityDashboardData['commandCenter']>['team'] = []
   const attentionItems: NonNullable<AccountabilityDashboardData['commandCenter']>['attentionItems'] = []
 

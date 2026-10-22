@@ -1262,7 +1262,7 @@ export class SupabaseStore implements ScoutStore {
     }
     if (idempotencyKey) insertPayload.idempotency_key = idempotencyKey
 
-    let { data: inserted, error: insertError } = await insertMessageReturningId(this.client, insertPayload)
+    const { data: inserted, error: insertError } = await insertMessageReturningId(this.client, insertPayload)
     if (insertError && idempotencyKey && (insertError as { code?: string }).code === '23505') {
       // TRUE concurrent duplicate: the pre-check above (SELECT before
       // INSERT) cannot see an in-flight, not-yet-committed insert from a

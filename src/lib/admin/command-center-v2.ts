@@ -664,7 +664,7 @@ export async function loadRepQueueSnapshot(
   const actions: Array<RepQueueSnapshot['topActions'][number] & { _sort: number }> = []
   let pendingReplies = 0
   let overdueFollowups = 0
-  let untouchedReferrals = 0
+  const untouchedReferrals = 0
   let staleLeads = 0
 
   for (const lead of leads || []) {
