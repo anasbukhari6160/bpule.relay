@@ -41,7 +41,7 @@ export interface StatedTimeline extends SourceLine {
 const NEGATION_BEFORE = /\b(?:no|not|without|never)\s+(?:an?\s+|any\s+)?$/i
 
 const EXTERNAL_PROVIDER =
-  /\b(?:agenc(?:y|ies)|vendors?|outsourc\w*|external\s+(?:software\s+|development\s+|engineering\s+|dev\s+)?(?:team|partner|agency|provider|company|firm)s?|(?:development|software|engineering|technology)\s+partners?|staff\s+augmentation|dev(?:elopment)?\s+shops?|software\s+(?:house|consultancy|firm)s?|consultanc(?:y|ies)|contractors?|freelancers?|developers?)\b/i
+  /\b(?:agenc(?:y|ies)|vendors?|outsourc\w*|external\s+(?:software\s+|development\s+|engineering\s+|dev\s+|devops\s+)?(?:team|partner|agency|provider|company|firm)s?|(?:development|software|engineering|technology|devops)\s+partners?|staff\s+augmentation|dev(?:elopment)?\s+shops?|software\s+(?:house|consultancy|firm)s?|consultanc(?:y|ies)|contractors?|freelancers?|developers?)\b/i
 
 const REQUEST_CONTEXT =
   /\b(?:looking\s+for|seeking|searching\s+for|need(?:s|ed)?(?:\s+a\s+(?:developer|agency|contractor|vendor|freelancer))?|hire|hiring|engage|want(?:s|ed)?\s+to\s+(?:hire|work\s+with|engage)|invit(?:e|ing)|request(?:ing)?\s+(?:proposals?|quotes?)|rfp|should\s+(?:contact|reach|submit|send|apply)|send\s+(?:us\s+)?(?:a\s+)?(?:proposal|quote)|submit\s+(?:a\s+)?(?:proposal|quote))\b/i
@@ -153,9 +153,37 @@ function firstAffirmedMatch(line: string, re: RegExp): RegExpExecArray | null {
 /** "developer tools", "developer advocate", "freelancer friends": the noun is not a provider being sought. */
 const PROVIDER_NOUN_AS_MODIFIER = /\b(?:developer|developers|freelancer|freelancers|contractor|contractors|vendor|vendors|agency|agencies|consultancy)\s+(?:tools?|advocate|advocacy|experience|community|conference|friends?|relations|lock-?in|market|ecosystem|portal|renovation|fees?|list)\b/i
 
+/**
+ * First-person procurement verbs: the sender's own organization is evaluating
+ * or sourcing external providers. These are buyer-side only — a conditional
+ * ("If your team is evaluating...") or third-party framing must NOT match.
+ * The "we are" prefix is the key guard against seller false positives.
+ */
+const FIRST_PERSON_PROCUREMENT =
+  /\bwe(?:'|’)?re\s+(?:currently\s+)?(?:evaluating|assessing|considering|reviewing|sourcing|scouting|procuring)\b|\bwe\s+(?:are\s+)?(?:evaluating|assessing|considering|reviewing|sourcing|scouting|procuring)\b/i
+
+/** A named or first-person delegate explicitly tasked with sourcing a provider. */
+const DELEGATED_PROCUREMENT =
+  /\b(?:i|we|[\p{Lu}][\p{L}'’.-]+)\s+(?:(?:have|has)\s+been|was|am|are)?\s*(?:assigned|asked|tasked|authorized|authorised)\s+to\s+(?:find|source|evaluate|select|engage|hire)\b/iu
+
 function isExternalServiceLine(line: string): boolean {
   if (hasThirdPartySubject(line) || isAdviceOrHypothetical(line) || isNonProviderRequest(line)) return false
   if (DEVELOPER_REQUEST.test(line) && !INTERNAL_HIRING_CONTEXT.test(line) && !PROVIDER_NOUN_AS_MODIFIER.test(line)) return true
+  // First-person procurement: "We are evaluating external agencies" — buyer-side
+  // only. Requires a first-person "we are" prefix so seller conditionals like
+  // "If your team is evaluating..." do not match.
+  if (FIRST_PERSON_PROCUREMENT.test(line)) {
+    const procIdx = line.search(FIRST_PERSON_PROCUREMENT)
+    const tail = line.slice(procIdx, procIdx + 100)
+    const provider = firstAffirmedMatch(tail, EXTERNAL_PROVIDER)
+    if (provider && !PROVIDER_NOUN_AS_MODIFIER.test(tail)) return true
+  }
+  if (DELEGATED_PROCUREMENT.test(line)) {
+    const delegatedIdx = line.search(DELEGATED_PROCUREMENT)
+    const tail = line.slice(delegatedIdx, delegatedIdx + 120)
+    const provider = firstAffirmedMatch(tail, EXTERNAL_PROVIDER)
+    if (provider && !PROVIDER_NOUN_AS_MODIFIER.test(tail)) return true
+  }
   const request = line.match(REQUEST_CONTEXT)
   if (!request) return false
   // The provider noun must be the object of the request: within the clause
@@ -295,6 +323,17 @@ export function isSellerOwnedLine(line: string): boolean {
   return SELLER_OWNERSHIP.some((re) => re.test(line)) || mlMatches(ML_SELLER_OWNERSHIP, line)
 }
 
+/** A current prospect-owned commercial fact, not seller, third-party, hypothetical or injected text. */
+export function isBuyerOwnedCommercialFactLine(line: string): boolean {
+  return Boolean(
+    line
+      && !isSellerOwnedLine(line)
+      && !hasThirdPartySubject(line)
+      && !isAdviceOrHypothetical(line)
+      && !isInstructionLine(line),
+  )
+}
+
 export interface SellerOwnership {
   isSeller: boolean
   /** Verbatim seller-owned lines, in source order. */
@@ -408,7 +447,7 @@ export function extractStatedBudget(rawText: string): StatedBudget | null {
     if (!money) continue
     return {
       line,
-      amount: money[0].replace(/\s+/g, ' ').trim(),
+      amount: money[0].replace(/\s+/g, ' ').replace(/[.,]+$/, '').trim(),
       approved: /\b(?:approved|allocated|confirmed|secured|signed[- ]off)\b/i.test(line),
     }
   }
@@ -424,8 +463,57 @@ function unitDays(unit: string): number {
   return 30
 }
 
+/**
+ * Guard: is this line establishing the prospect's OWN project timeline?
+ *
+ * Returns false for dates/durations that are NOT buyer-owned:
+ * - Seller delivery promises ("We can deliver in 4 weeks", "our team ships in 2 sprints")
+ * - Third-party deadlines ("our client needs this by June", "the board meets in March")
+ * - Hypothetical/conditional timelines ("if you started next month", "suppose we begin in Q2")
+ * - Instructional examples ("for example, a 3-week sprint", "typically takes 2 months")
+ * - Recruiter timelines ("the role must be filled by September")
+ *
+ * Returns true when the prospect is describing their own project's timeline:
+ * - "We plan to start in February", "our deadline is March 2027"
+ * - "We need this by Q1 2027", "implementation should take 12 weeks"
+ * - "I want to begin next month", "we're targeting a June launch"
+ */
+function isBuyerTimelineLine(line: string): boolean {
+  if (!line.trim()) return false
+
+  // --- Reject seller delivery promises ---
+  if (/\bwe\s+(?:can|could|will|usually|typically|offer)\s+(?:deliver|complete|finish|ship|turn\s+around|have\s+it\s+ready)\b/i.test(line)) return false
+  if (/\bour\s+(?:team|company|studio)\s+(?:delivers?|completes?|ships?|finishes?|turns?\s+around)\b/i.test(line)) return false
+  if (/\b(?:delivery|turnaround|completion)\s+time\s+(?:is|would\s+be)\b/i.test(line)) return false
+
+  // --- Reject third-party deadlines ---
+  if (/\b(?:our|my)\s+(?:client|customer|boss|manager|director|board|stakeholder|partner)\s+(?:needs?|wants?|requires?|said|expects?|mandated)\b/i.test(line)) return false
+  if (/\b(?:they|them|their)\s+(?:need|want|require|expect|said|deadline)\b/i.test(line)) return false
+
+  // --- Reject hypothetical/conditional ---
+  if (/\b(?:if\s+(?:you|we|they)\s+(?:were|are|can|could|should|want)|suppose|imagine|assuming|say\s+you|in\s+theory|hypothetically)\b/i.test(line)) return false
+
+  // --- Reject instructional/examples ---
+  if (/\b(?:for\s+example|typically|normally|usually|in\s+general|as\s+a\s+rule|on\s+average|a\s+typical)\b/i.test(line)) return false
+
+  // --- Reject recruiter timelines ---
+  if (/\b(?:role|position|vacancy|hiring|recruitment)\s+(?:must\s+be\s+filled|closes?|deadline|target|timeline)\b/i.test(line)) return false
+
+  return true
+}
+
 export function extractStatedTimeline(rawText: string): StatedTimeline | null {
   for (const line of lines(rawText)) {
+    // Only attribute timelines that the prospect owns. Skip seller delivery
+    // promises, third-party deadlines, hypotheticals, and instructional examples.
+    if (!isBuyerTimelineLine(line)) continue
+    // "X should take Y weeks/months" — common buyer duration statement.
+    const takeDuration = line.match(/\b(?:should|would|will|could)\s+take\s+(?:about\s+|approximately\s+|around\s+|~\s*)?(\d+|a\s+few\s+|a\s+couple\s*(?:of\s+)?|several)\s*(day|week|month)s?\b/i)
+    if (takeDuration) {
+      const raw = takeDuration[1].toLowerCase().replace(/\s+/g, ' ').trim()
+      const n = /^\d+$/.test(raw) ? Number(raw) : WORD_NUMBERS[raw.replace(/\s+of$/, '').replace(/\s+/g, '')] ?? 3
+      return { line, days: n * unitDays(takeDuration[2]), label: `take ${takeDuration[1].trim()} ${takeDuration[2]}` }
+    }
     const within = line.match(/\b(?:within|in\s+the\s+next|over\s+the\s+next)\s+(\d+|a|an|one|two|three|four|five|six|few|couple(?:\s+of)?)\s*(days?|weeks?|months?)\b/i)
     if (within) {
       const n = /^\d+$/.test(within[1]) ? Number(within[1]) : WORD_NUMBERS[within[1].toLowerCase().replace(/\s+of$/, '')] ?? 1
@@ -455,6 +543,44 @@ const CONTACT_INSTRUCTION =
 export function findContactInstruction(rawText: string): SourceLine | null {
   const line = lines(rawText).find((l) => CONTACT_INSTRUCTION.test(l))
   return line ? { line } : null
+}
+
+/**
+ * Extract a concise project need description from the source.
+ *
+ * Finds the first line that describes what the prospect wants built —
+ * patterns like "looking for X to build Y", "need a Z", "evaluating partners
+ * for W". Returns a trimmed, single-sentence summary or null when no
+ * project description is found.
+ *
+ * Generalized: works for any project type, not hardcoded to fixtures.
+ */
+export function extractProjectNeed(rawText: string): string | null {
+  if (!rawText) return null
+  const all = lines(rawText)
+
+  // Pattern 1: "looking for/seeking/need a [provider] to [build/create/develop] [project]"
+  const buildMatch = all.find((l) => /\b(?:looking\s+for|seeking|need|want|require)\s+(?:a\s+|an\s+)?(?:\w+\s+){0,4}(?:to|for)\s+(?:build|create|develop|design|implement|deliver)\s+/i.test(l))
+  if (buildMatch) {
+    const sentence = buildMatch.split(/[.!?]/)[0].trim()
+    return sentence.length <= 200 ? sentence : sentence.slice(0, 197) + '…'
+  }
+
+  // Pattern 2: "evaluating/reviewing [partners/agencies] for [project]"
+  const evalMatch = all.find((l) => /\b(?:evaluating|assessing|considering|reviewing|sourcing|searching\s+for)\s+(?:a\s+|an\s+)?(?:\w+\s+){0,6}(?:for|to)\s+/i.test(l))
+  if (evalMatch) {
+    const sentence = evalMatch.split(/[.!?]/)[0].trim()
+    return sentence.length <= 200 ? sentence : sentence.slice(0, 197) + '…'
+  }
+
+  // Pattern 3: "need/require a [project description]"
+  const needMatch = all.find((l) => /\b(?:we\s+)?(?:need|require|want)\s+(?:a\s+|an\s+)?(?:new\s+|custom\s+|centralized\s+)?\w+(?:\s+\w+){2,8}\b/i.test(l) && !/\b(?:job|role|position|developer|engineer)\b/i.test(l))
+  if (needMatch) {
+    const sentence = needMatch.split(/[.!?]/)[0].trim()
+    return sentence.length <= 200 ? sentence : sentence.slice(0, 197) + '…'
+  }
+
+  return null
 }
 
 /** A source line containing any of the given terms (case-insensitive, whole word). */
@@ -538,6 +664,9 @@ export function extractExplicitDates(rawText: string): ExplicitDateEvidence {
   const found: string[] = []
 
   all.forEach((line) => {
+    // Only attribute dates/durations that the prospect owns.
+    if (!isBuyerTimelineLine(line)) return
+
     const date = line.match(ABSOLUTE_DATE)?.[0]?.replace(/\s+/g, ' ').trim() ?? null
     if (date) {
       found.push(line)

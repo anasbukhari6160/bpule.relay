@@ -507,8 +507,17 @@ export function readSourceFacts(rawText: string, options: ReadSourceFactsOptions
 
   // ── Timing / activity ─────────────────────────────────────────────────
   const recentPostAgeDays = mostRecentPostAgeDays(text)
-  const timelineEvidence = extractStatedTimeline(text)
-  const explicitDates = extractExplicitDates(text)
+  const timelineCandidate = extractStatedTimeline(text)
+  const timelineEvidence = buyer.externalServiceRequest
+    && timelineCandidate
+    && !sellerSet.has(timelineCandidate.line)
+    && !THIRD_PARTY.test(timelineCandidate.line)
+    ? timelineCandidate
+    : null
+  const dateCandidates = extractExplicitDates(text)
+  const explicitDates = buyer.externalServiceRequest
+    ? dateCandidates
+    : { ...dateCandidates, buyerStartDate: null, deadline: null, durationDays: null }
 
   // ── Authority ─────────────────────────────────────────────────────────
   const authorityEvidence = resolveAuthority(title, [...header, ...(options.affiliationRoles ?? [])])

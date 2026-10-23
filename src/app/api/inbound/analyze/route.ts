@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createScoutStore } from '@/lib/store'
 import { scanForSecrets } from '@/lib/ai/secrets'
-import { produceCanonicalIntelligence } from '@/lib/intelligence-v2/orchestrator'
-import { produceV3Intelligence } from '@/lib/intelligence-v3/bridge'
-import { V3_CANONICAL } from '@/lib/intelligence-v3/config'
-import { hasProvider } from '@/lib/ai/config'
-import { extractTrailingSignature, profileInfoFromSignature } from '@/lib/inbound/signature'
+import { isDemoMode } from '@/lib/ai/config'
+import { extractTrailingSignature } from '@/lib/inbound/signature'
+import { extractIntroduction, sanitizeCompanyName, sanitizeContactName, preferFullName } from '@/lib/intelligence-v2/extraction-pipeline'
 import { loadSenderProfiles, parsePacket, routeLead } from '@/lib/relay/routing-context'
 import { qualifyCanonicalScore, displayScoreForCanonical } from '@/lib/scoring/qualification'
-import type { InboundInput } from '@/lib/domain/types'
+import { analyzeInboundInput, buildInboundSensitiveText } from '@/lib/inbound/analysis'
+import { validateInboundAnalysisBody } from '@/lib/inbound/validation'
 
 export const maxDuration = 120
 
@@ -27,66 +26,55 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Not signed in.' }, { status: 401 })
   }
 
-  let body: InboundInput
+  let rawBody: unknown
   try {
-    body = await req.json()
+    rawBody = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 })
   }
 
-  body.source = body.source ?? 'other'
-
-  if (!body.message?.trim()) {
-    return NextResponse.json({ error: 'Message is required.' }, { status: 400 })
+  const validated = validateInboundAnalysisBody(rawBody)
+  if (!validated.ok) {
+    return NextResponse.json({ error: validated.error }, { status: 400 })
   }
+  const body = validated.value
 
-  const secretScan = scanForSecrets(body.message)
+  const secretScan = scanForSecrets(buildInboundSensitiveText(body))
   if (secretScan.blocked) {
     return NextResponse.json({ error: 'Message contains sensitive credentials. Remove them before analysis.' }, { status: 400 })
   }
 
   try {
     const profiles = await store.getAssignedProfiles()
-    // A trailing "– Jonas, CTO at Fenwick Pay" is the sender's identity; lift it
-    // into a profile-shaped block so the reader finds the name, role and company
-    // instead of collapsing the whole message into the title (QA RQA-020).
     const signature = extractTrailingSignature(typeof body.message === 'string' ? body.message : '')
-    const signatureContext = signature ? profileInfoFromSignature(signature) : ''
-    const rawText = [signatureContext, body.message, body.profileInfo, body.jobInfo, body.context].filter((s): s is string => typeof s === 'string' && s.trim().length > 0).join('\n\n')
-
-    let canonical
-    if (V3_CANONICAL) {
-      const v3Result = await produceV3Intelligence(rawText, {})
-      canonical = v3Result.intelligence
-    } else {
-      const canonicalResult = await produceCanonicalIntelligence(rawText, { onStatus: () => {} })
-      canonical = canonicalResult.intelligence
-    }
+    const analysis = await analyzeInboundInput(body)
+    const canonical = analysis.canonical
+    const rawText = analysis.rawText
 
     const packet = parsePacket(canonical)
     const band = qualifyCanonicalScore(canonical.canonicalScore)
-    const buyerIntent = packet?.buyerIntent
+    const buyerIntent = analysis.buyerIntent ?? packet?.buyerIntent
 
     // One sender ranking, same engine as every other surface.
-    let bestProfileId: string | null = null
-    let profileMatches: Array<{ id: string; label: string; matchScore: number; topProof: string | null; reasons: string[] }> = []
-    try {
-      const senders = await loadSenderProfiles(store.getSupabaseClient(), profiles[0]?.organizationId ?? '', store.getCurrentRepId())
-      const routing = routeLead(
-        { company: canonical.intelligence.company.name, contactName: canonical.intelligence.person.fullName, contactTitle: canonical.intelligence.person.title, rawInput: rawText },
-        packet,
-        senders,
-      )
-      const accessible = routing.rankings.filter((r) => r.accessibleToRep && profiles.some((p) => p.id === r.senderId))
-      bestProfileId = accessible[0]?.senderId ?? profiles[0]?.id ?? null
-      profileMatches = profiles.map((p) => {
-        const r = routing.rankings.find((x) => x.senderId === p.id)
-        return { id: p.id, label: p.label ?? p.headline ?? 'Unknown', matchScore: r?.profileMatch ?? 0, topProof: r?.primaryProof ?? null, reasons: r?.reasons ?? [] }
-      })
-    } catch (err) {
-      console.warn('[inbound/analyze] sender routing skipped:', err instanceof Error ? err.message : err)
-      bestProfileId = profiles[0]?.id ?? null
-      profileMatches = profiles.map((p) => ({ id: p.id, label: p.label ?? p.headline ?? 'Unknown', matchScore: 0, topProof: null, reasons: [] }))
+    let bestProfileId: string | null = profiles[0]?.id ?? null
+    let profileMatches = profiles.map((p) => ({ id: p.id, label: p.label ?? p.headline ?? 'Unknown', matchScore: 0, topProof: null as string | null, reasons: [] as string[] }))
+    if (!isDemoMode()) {
+      try {
+        const senders = await loadSenderProfiles(store.getSupabaseClient(), store.organizationId, store.getCurrentRepId())
+        const routing = routeLead(
+          { company: canonical.intelligence.company.name, contactName: canonical.intelligence.person.fullName, contactTitle: canonical.intelligence.person.title, rawInput: rawText },
+          packet,
+          senders,
+        )
+        const accessible = routing.rankings.filter((r) => r.accessibleToRep && profiles.some((p) => p.id === r.senderId))
+        bestProfileId = accessible[0]?.senderId ?? profiles[0]?.id ?? null
+        profileMatches = profiles.map((p) => {
+          const r = routing.rankings.find((x) => x.senderId === p.id)
+          return { id: p.id, label: p.label ?? p.headline ?? 'Unknown', matchScore: r?.profileMatch ?? 0, topProof: r?.primaryProof ?? null, reasons: r?.reasons ?? [] }
+        })
+      } catch (err) {
+        console.warn('[inbound/analyze] sender routing skipped:', err instanceof Error ? err.message : err)
+      }
     }
     const bestProfile = profiles.find((p) => p.id === bestProfileId) ?? null
     const bestMatch = profileMatches.find((m) => m.id === bestProfileId) ?? null
@@ -146,21 +134,45 @@ export async function POST(req: NextRequest) {
       extracted_url: canonical.intelligence.person.linkedinUrl ?? canonical.rawSource.sourceUrl,
     }
 
+    // Identity priority: trailing signature > introduction prose > canonical
+    // intelligence. The signature is the sender's explicit identity claim.
+    // Explicit introduction patterns can identify the sender inside prose.
+    // are explicit self-identifications in prose. The canonical intelligence is
+    // the pipeline's heuristic scan, which is least reliable for identity.
+    //
+    // NAME RESOLUTION: prefer the fuller name. If the introduction gives
+    // If the introduction has a full name and the signature has only the same
+    // first name, the fuller form is more useful.
+    const introduction = extractIntroduction(typeof body.message === 'string' ? body.message : '')
+    const rawName = signature?.name ?? introduction?.name ?? canonical.intelligence.person.fullName
+    const resolvedName = preferFullName(rawName, introduction?.name ?? null)
+    const extractedContactName = sanitizeContactName(resolvedName)
+    const extractedContactTitle = signature?.title ?? introduction?.role ?? canonical.intelligence.person.title
+    // Company: prefer signature, then introduction, then canonical — but ALWAYS
+    // sanitize the result. The AI model may return a greeting or person name as
+    // the company, so this guard is the final safety net.
+    const extractedCompany = sanitizeCompanyName(
+      signature?.company ?? introduction?.company ?? canonical.intelligence.company.name,
+    )
+
     return NextResponse.json({
       intelligence,
       extracted: {
-        company: canonical.intelligence.company.name,
-        contactName: canonical.intelligence.person.fullName,
-        contactTitle: canonical.intelligence.person.title,
+        company: extractedCompany,
+        contactName: extractedContactName,
+        contactTitle: extractedContactTitle,
         url: canonical.intelligence.person.linkedinUrl ?? canonical.rawSource.sourceUrl,
       },
-      canonical,
+      canonical: analysis.canonicalIntelligence,
       buyerIntent: buyerIntent ?? null,
       qualification: band.qualification,
+      scoreVersion: analysis.scoreVersion,
+      scoredAt: analysis.scoredAt,
+      scoreBreakdown: analysis.scoreBreakdown,
       versions: packet?.versions ?? null,
       profiles: profileMatches,
       bestProfileId,
-      demoMode: !hasProvider(),
+      demoMode: isDemoMode(),
     })
   } catch (err) {
     console.error('[inbound/analyze] failed:', err)

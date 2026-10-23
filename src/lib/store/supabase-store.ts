@@ -244,9 +244,12 @@ function isMissingColumnError(err: unknown): boolean {
 }
 
 const LEAD_LIST_COLUMNS =
-  'id, organization_id, owner_rep_id, company, company_key, contact_name, contact_title, title_raw, location_raw, url, role_category, market_region, extraction_confidence, extraction_profile, signal_type, signal_evidence, verbatim_quote, score, verdict, status, play_id, tags, direction, source, inbound_message, inbound_raw, sender_profile_id, revenue_identity_id, canonical_score, score_version, scored_at, score_breakdown, display_qualification:canonical_intelligence->>qualification, display_intelligence_version:canonical_intelligence->>intelligenceVersion, remote_eligibility, connection_accepted_at, locked_until, locked_reason, archived, archived_at, decision_provider, decision_model, decision_run_id, selected_episode_id, profile_match_score, profile_match_version, best_profile_id, best_profile_match_score, intelligence_input_hash, fallback_reason, created_at'
+  'id, organization_id, owner_rep_id, company, company_key, contact_name, contact_title, title_raw, location_raw, url, role_category, market_region, extraction_confidence, extraction_profile, signal_type, signal_evidence, verbatim_quote, score, verdict, status, play_id, tags, direction, source, inbound_message, inbound_raw, sender_profile_id, revenue_identity_id, canonical_score, score_version, scored_at, score_breakdown, buyer_intent:canonical_intelligence->buyerIntent, display_qualification:canonical_intelligence->>qualification, display_intelligence_version:canonical_intelligence->>intelligenceVersion, remote_eligibility, connection_accepted_at, locked_until, locked_reason, archived, archived_at, decision_provider, decision_model, decision_run_id, selected_episode_id, profile_match_score, profile_match_version, best_profile_id, best_profile_match_score, intelligence_input_hash, fallback_reason, created_at'
 
-function mapLead(r: Row): Lead {
+export function mapLead(r: Row): Lead {
+  const canonical = (r.canonical_intelligence as Record<string, unknown> | null) ?? null
+  const packet = canonical?.v3DecisionPacket as Record<string, unknown> | undefined
+  const nestedBuyerIntent = canonical?.buyerIntent ?? packet?.buyerIntent
   return {
     id: r.id as string,
     organizationId: r.organization_id as string,
@@ -280,12 +283,19 @@ function mapLead(r: Row): Lead {
     canonicalScore: (r.canonical_score as number) ?? null,
     scoreVersion: (r.score_version as string) ?? null,
     scoredAt: (r.scored_at as string) ?? null,
-    canonicalIntelligence: (r.canonical_intelligence as Record<string, unknown>) ?? null,
+    canonicalIntelligence: canonical,
     displayQualification: (r.display_qualification as string)
       ?? ((r.canonical_intelligence as Record<string, unknown> | null)?.qualification as string)
       ?? null,
     displayIntelligenceVersion: (r.display_intelligence_version as string)
-      ?? ((r.canonical_intelligence as Record<string, unknown> | null)?.intelligenceVersion as string)
+      ?? (canonical?.intelligenceVersion as string)
+      ?? null,
+    buyerIntent: (r.buyer_intent as Record<string, unknown>)
+      ?? (nestedBuyerIntent as Record<string, unknown>)
+      ?? null,
+    qualification: (r.qualification as string)
+      ?? (canonical?.qualification as string)
+      ?? (r.display_qualification as string)
       ?? null,
     rawSourceData: (r.raw_source_data as Record<string, unknown>) ?? null,
     scoreBreakdown: (r.score_breakdown as Record<string, unknown>) ?? null,
@@ -667,6 +677,20 @@ export class SupabaseStore implements ScoutStore {
       }
     }
 
+    const canonicalIntelligence = input.canonicalIntelligence
+      || input.buyerIntent
+      || input.qualification
+      ? {
+          ...(input.canonicalIntelligence ?? {}),
+          buyerIntent: input.buyerIntent
+            ?? input.canonicalIntelligence?.buyerIntent
+            ?? null,
+          qualification: input.qualification
+            ?? input.canonicalIntelligence?.qualification
+            ?? null,
+        }
+      : null
+
     const insertRow = {
       organization_id: this.orgId,
       owner_rep_id: this.rep.id,
@@ -698,7 +722,7 @@ export class SupabaseStore implements ScoutStore {
       canonical_score: input.canonicalScore ?? null,
       score_version: input.scoreVersion ?? null,
       scored_at: input.scoredAt ?? null,
-      canonical_intelligence: input.canonicalIntelligence ?? null,
+      canonical_intelligence: canonicalIntelligence,
       raw_source_data: input.rawSourceData ?? null,
       score_breakdown: input.scoreBreakdown ?? null,
       remote_eligibility: input.remoteEligibility ?? null,
@@ -730,7 +754,7 @@ export class SupabaseStore implements ScoutStore {
       const code = (inserted.error as { code?: string }).code
       if (code === '23505') {
         const existing = (await this.fetchLeadsAll()).find(
-          (lead) => lead.companyKey === key && lead.status !== 'dead',
+          (lead) => lead.companyKey === key && lead.status !== 'dead' && !lead.archived,
         )
         return {
           blocked: true,
@@ -5007,7 +5031,7 @@ export class SupabaseStore implements ScoutStore {
     }
     let { data, error } = await this.client
       .from('conversation_states')
-      .upsert(row)
+      .upsert(row, { onConflict: 'lead_id' })
       .select('*')
       .single()
     // Columns from newer migrations may not exist yet: drop them and retry,
@@ -5024,12 +5048,12 @@ export class SupabaseStore implements ScoutStore {
           [DRAFT_FALLBACK_KEY]: row.composer_draft,
         },
       }
-      const retry = await this.client.from('conversation_states').upsert(withoutConversationColumns).select('*').single()
+      const retry = await this.client.from('conversation_states').upsert(withoutConversationColumns, { onConflict: 'lead_id' }).select('*').single()
       data = retry.data
       error = retry.error
       if (error && /commercial_state|42703|PGRST204/i.test(error.message ?? '')) {
         const { commercial_state: _c, ...legacyRow } = withoutConversationColumns
-        const legacy = await this.client.from('conversation_states').upsert(legacyRow).select('*').single()
+        const legacy = await this.client.from('conversation_states').upsert(legacyRow, { onConflict: 'lead_id' }).select('*').single()
         data = legacy.data
         error = legacy.error
       }

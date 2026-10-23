@@ -117,6 +117,8 @@ export interface NewLeadInput {
   scoreVersion?: string | null
   scoredAt?: string | null
   canonicalIntelligence?: Record<string, unknown> | null
+  buyerIntent?: Record<string, unknown> | null
+  qualification?: string | null
   rawSourceData?: Record<string, unknown> | null
   scoreBreakdown?: Record<string, unknown> | null
   remoteEligibility?: Record<string, unknown> | null

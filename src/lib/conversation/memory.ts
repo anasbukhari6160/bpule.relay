@@ -11,7 +11,8 @@ import {
 } from './types'
 import { clip, renderTurns } from './thread'
 import { deriveDealStage } from './stage'
-import { extractStatedBudget, extractStatedTimeline } from '@/lib/intelligence-v3/source-facts'
+import { extractExplicitDates, extractProjectNeed, extractStatedTimeline, isBuyerOwnedCommercialFactLine } from '@/lib/intelligence-v3/source-facts'
+import { readBuyerSourceFacts } from '@/lib/intelligence-v3/buyer-intent'
 
 /**
  * Conversation memory: what Relay remembers about a deal between messages.
@@ -290,18 +291,46 @@ export async function refreshMemory(
   }
 
   // Facts the lead's own post already states count until the client says otherwise.
-  const source = `${lead.signalEvidence ?? ''}\n${lead.rawInput ?? ''}`
+  // For inbound leads, the opening message lives on lead.inboundMessage (not in
+  // signalEvidence/rawInput which are null), so include it as a fact source.
+  const source = [lead.signalEvidence, lead.rawInput, lead.inboundMessage].filter(Boolean).join('\n')
+  const buyerFacts = readBuyerSourceFacts(source)
+  const verifiedBuyerRequest = buyerFacts.externalServiceRequest
   if (!memory.facts.budget) {
-    const budget = extractStatedBudget(source)
+    const budget = verifiedBuyerRequest ? buyerFacts.statedBudget : null
     if (budget) {
       memory.facts = { ...memory.facts, budget: `${budget.amount}${budget.approved ? ' approved' : ''} (from their post)` }
       changed = true
     }
   }
   if (!memory.facts.timeline) {
-    const timeline = extractStatedTimeline(source)
-    if (timeline) {
+    const timeline = verifiedBuyerRequest ? extractStatedTimeline(source) : null
+    if (timeline && isBuyerOwnedCommercialFactLine(timeline.line)) {
       memory.facts = { ...memory.facts, timeline: `${timeline.label} (from their post)` }
+      changed = true
+    }
+  }
+  // Absolute dates (month/year, quarters, exact calendar dates) are not matched
+  // by extractStatedTimeline (relative durations only). Fall back to the
+  // canonical explicit-dates reader so "February 2027", "Q1 2027", "March 15"
+  // surface in the Deal panel.
+  if (!memory.facts.timeline && verifiedBuyerRequest) {
+    const dates = extractExplicitDates(source)
+    const absLabel = dates.buyerStartDate ?? dates.deadline
+    if (absLabel) {
+      const qualifier = dates.buyerStartDate ? 'start' : dates.deadline ? 'deadline' : 'stated'
+      memory.facts = { ...memory.facts, timeline: `${absLabel} (${qualifier}, from their post)` }
+      changed = true
+    }
+  }
+
+  // Derive project need from the inbound message when not already set.
+  // This extracts the core project description so the Deal panel shows a
+  // meaningful need even without AI analysis.
+  if (!memory.facts.need && verifiedBuyerRequest) {
+    const need = extractProjectNeed(verifiedBuyerRequest.line) ?? verifiedBuyerRequest.line
+    if (need) {
+      memory.facts = { ...memory.facts, need }
       changed = true
     }
   }

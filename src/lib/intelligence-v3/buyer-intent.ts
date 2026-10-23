@@ -176,7 +176,7 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
       && usable(line, idx) && verifyBudgetProvenance(line).valid) {
       statedBudget = {
         line,
-        amount: line.match(MONEY)?.[0].replace(/\s+/g, ' ').trim() ?? null,
+        amount: line.match(MONEY)?.[0].replace(/\s+/g, ' ').replace(/[.,]+$/, '').trim() ?? null,
         approved: /\b(?:approved|allocated|confirmed|secured|signed[- ]off)\b/i.test(line),
       }
     }
@@ -211,6 +211,7 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     || (employmentHiring && terminal && all.indexOf(employmentHiring.line) > terminal.index),
   )
   const effectiveTerminal = reopened ? null : terminal
+  const verifiedBudget = externalServiceRequest && !effectiveTerminal ? statedBudget : null
 
   const hiring = employmentHiring as SourceLine | null
   const header = all.slice(0, 8).join('\n')
@@ -219,7 +220,7 @@ export function readBuyerSourceFacts(rawText: string): BuyerSourceFacts {
     helpRequest,
     employmentHiring,
     hiringUrgent: Boolean(hiring && HIRING_URGENT.test(hiring.line)),
-    statedBudget,
+    statedBudget: verifiedBudget,
     sellerLines: seller.lines,
     recruiter: isRecruiterProfile(text),
     candidateSeeking: CANDIDATE.test(text) || mlMatches(ML_CANDIDATE_SEEKING, text),

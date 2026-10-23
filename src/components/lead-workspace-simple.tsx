@@ -227,6 +227,22 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
   // A connection logged without a note has no text but still happened.
   const visibleMessages = messages.filter((m) => m.sentText || m.direction === 'inbound' || (m.type === 'connection' && m.sentAt)).sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? ''))
 
+  // Inbound leads store the opening message on the lead itself (lead.inboundMessage)
+  // rather than as a message row. Surface it as the first timeline entry so the
+  // History tab reflects what the Conversation tab already shows.
+  const inboundFirstEntry = lead.inboundMessage?.trim()
+    ? {
+        id: 'inbound-first',
+        type: 'inbound_first' as const,
+        direction: 'inbound' as const,
+        sentText: lead.inboundMessage.trim(),
+        sentAt: lead.createdAt ?? null,
+      }
+    : null
+  const timelineEntries = inboundFirstEntry
+    ? [inboundFirstEntry, ...visibleMessages]
+    : visibleMessages
+
   // The Won/Lost outcome is an event, not a message; show it as its own timeline
   // row so History records the outcome (QA RQA-015).
   const outcomeEntry = lead.status === 'won'
@@ -592,7 +608,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
         <summary className="px-5 py-3 cursor-pointer flex items-center gap-2 select-none hover:bg-bone-raised/40 transition-colors">
           <MessageSquare className="size-4 text-cobalt" />
           <span className="text-sm font-medium text-ink">History</span>
-          <span className="rounded-full bg-line/60 px-1.5 py-0.5 text-[10px] font-medium text-stone">{visibleMessages.length}</span>
+          <span className="rounded-full bg-line/60 px-1.5 py-0.5 text-[10px] font-medium text-stone">{timelineEntries.length}</span>
           <span className="ml-auto text-stone group-open:hidden"><ChevronDown className="size-4" /></span>
           <span className="ml-auto text-stone hidden group-open:inline"><ChevronUp className="size-4" /></span>
         </summary>
@@ -610,11 +626,11 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
               <p className="text-[13px] text-ink">{outcomeEntry.sentText}</p>
             </div>
           )}
-          {visibleMessages.length === 0 ? (
+          {timelineEntries.length === 0 ? (
             <p className="py-8 text-center text-[13px] text-stone">No messages yet. Generate one above.</p>
           ) : (
             <div className="divide-y divide-line/30">
-              {visibleMessages.map((msg) => (
+              {timelineEntries.map((msg) => (
                 <div key={msg.id} className="px-5 py-3">
                   <div className="flex items-center gap-2 text-[10px] text-stone mb-1">
                     <span className={cn('rounded px-1 py-0.5 text-[9px] font-medium uppercase',
@@ -622,7 +638,7 @@ export function LeadWorkspace({ lead: initialLead, dailyLimit, todaySends }: Pro
                     )}>
                       {msg.direction === 'inbound' ? '← Received' : '→ Sent'}
                     </span>
-                    <span className="capitalize">{msg.type}</span>
+                    <span className="capitalize">{msg.type === 'inbound_first' ? 'Received' : msg.type}</span>
                     {msg.sentAt && <span>· {timeAgo(msg.sentAt)}</span>}
                   </div>
                   <p className="text-[13px] text-ink whitespace-pre-wrap">{msg.sentText || (msg.type === 'connection' ? 'Connection request sent (no note).' : '(empty)')}</p>

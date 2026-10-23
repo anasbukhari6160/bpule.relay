@@ -42,6 +42,8 @@ export interface ExtractionPipelineOptions {
   strictLiveMode?: boolean
   /** Lead this extraction is about, when one already exists. */
   leadId?: string | null
+  /** Skip provider calls and use the deterministic extraction paths only. */
+  deterministicOnly?: boolean
 }
 
 export interface ExtractionPipelineResult {
@@ -280,9 +282,25 @@ async function runPassA(
   onStatus?: (msg: string) => void,
   strictLiveMode?: boolean,
   leadId?: string | null,
+  deterministicOnly?: boolean,
 ): Promise<PassAOutput> {
   onStatus?.('Analyzing prospect')
   const startTime = Date.now()
+
+  if (deterministicOnly) {
+    callLog.push({
+      provider: 'deterministic',
+      model: 'code',
+      task: 'extract_pass_a',
+      latencyMs: Date.now() - startTime,
+      fallback: false,
+    })
+    const deterministic = demoPassA(rawText)
+    deterministic.person.fullName = sanitizePersonName(deterministic.person.fullName)
+    deterministic.person.firstName = sanitizePersonName(deterministic.person.firstName)
+    deterministic.person.title = sanitizePersonTitle(deterministic.person.title)
+    return constrainNonBuyerPassA(deterministic, rawText)
+  }
 
   try {
     const result = await generate<unknown>({
@@ -319,7 +337,14 @@ async function runPassA(
       latencyMs: Date.now() - startTime,
       fallback: true,
     })
-    return constrainNonBuyerPassA(demoPassA(rawText), rawText)
+    // The AI path runs sanitizePersonName inside stabilizePassA; the demo
+    // fallback does not, so apply it here too so the same greeting/sentence
+    // filters protect both paths.
+    const demo = demoPassA(rawText)
+    demo.person.fullName = sanitizePersonName(demo.person.fullName)
+    demo.person.firstName = sanitizePersonName(demo.person.firstName)
+    demo.person.title = sanitizePersonTitle(demo.person.title)
+    return constrainNonBuyerPassA(demo, rawText)
   }
 }
 
@@ -876,6 +901,7 @@ async function runPassC(
   onStatus?: (msg: string) => void,
   strictLiveMode?: boolean,
   leadId?: string | null,
+  deterministicOnly?: boolean,
 ): Promise<Pick<NormalizedIntelligence, 'probableNeed' | 'opportunityTrigger' | 'timingSignal' | 'risks' | 'unknowns'>> {
   // Pass C is only needed for risks/unknowns when deterministic fallback is insufficient.
   const hasSignals = passA.opportunity.signals.length > 0
@@ -885,7 +911,7 @@ async function runPassC(
     deterministicPassC.probableNeed !== null &&
     deterministicPassC.opportunityTrigger !== null
 
-  if (deterministicSufficient) {
+  if (deterministicSufficient || deterministicOnly) {
     callLog.push({
       provider: 'deterministic',
       model: 'code',
@@ -1219,6 +1245,231 @@ const LINKEDIN_NAME_BLOCKLIST = [
 
 const GREETING_WORDS = /^(?:hi|hey|hello|dear|greetings|good\s+(?:morning|afternoon|evening|day)|hallo|hola|bonjour|salut|team|there|all|everyone|sir|madam|ma'am)$/i
 
+/** Per-word greeting/address vocabulary for multi-word greeting detection. */
+const ALL_GREETING_WORDS = /^(?:hi|hey|hello|hey|dear|greetings|good|good morning|good afternoon|good evening|good day|hallo|hola|bonjour|salut|team|there|all|everyone|folks|people|guys|sir|madam|ma'am|morning|afternoon|evening|day|there|thanks|regards|best|cheers|sincerely|please|dear)$/i
+
+/**
+ * A capitalized person/company token — first letter uppercase, at least 2 chars.
+ * Single uppercase letters (like "I" or "A") are rejected because they are
+ * almost always sentence fragments, not name or company tokens.
+ *
+ * Uses Unicode property escapes (\p{Lu} uppercase letter, \p{L} any letter) so
+ * international names (José, Müller, Михаил, O'Brien) are accepted. The 'u'
+ * flag enables Unicode mode.
+ */
+const NAME_TOKEN = /^[\p{Lu}][\p{Ll}\p{L}'.-]+$/u
+
+/**
+ * Pull 1-4 consecutive capitalized words starting at `startIdx` from `words`.
+ * Returns the joined name and the index of the next word after the name.
+ * Stops at lowercase words, sentence boundaries, contractions, or 4 tokens.
+ */
+function takeCapitalizedName(words: string[], startIdx: number): { name: string; nextIdx: number } {
+  const tokens: string[] = []
+  let i = startIdx
+  while (i < words.length && tokens.length < 4) {
+    const raw = words[i]
+    const w = raw.replace(/^[("'“]+|[,:;"'”.!?\)]+$/g, '')
+    if (!NAME_TOKEN.test(w)) break
+    // Reject common contractions that start with a capital letter (I'm, I've, I'd,
+    // It's, We're, They've). These are never name tokens.
+    if (/^(?:I'm|I've|I'd|I'll|It's|We're|We've|We'll|They're|They've|They'll|He's|She's|Who's|What's|Here's|There's|That's)$/i.test(w)) break
+    tokens.push(w)
+    i++
+    if (/[,;:.!?]$/.test(raw)) break
+  }
+  return { name: tokens.join(' '), nextIdx: i }
+}
+
+/**
+ * Extract sender identity from explicit self-introduction prose such as
+ * "My name is …", "I'm … from …", or "I lead our product engineering
+ * department". These patterns appear inside sentences that
+ * the line-based name scanner (`extractName`) skips because the line does not
+ * look like a standalone name header.
+ *
+ * Uses token-based parsing (not fragile Unicode regex) to stay robust across
+ * locales and avoid fixture-specific behavior.
+ *
+ * Returns the first confident match — name and/or role/company — or null.
+ */
+export function extractIntroduction(text: string): { name: string | null; role: string | null; company: string | null } | null {
+  if (!text) return null
+
+  // Word-token array for pattern scanning.
+  const words = text.split(/\s+/)
+
+  // --- Pattern 1: "My name is [name]" / "My name's [name]" ---
+  for (let i = 0; i < words.length - 2; i++) {
+    const w0 = words[i].toLowerCase().replace(/[^a-z'-]/g, '')
+    const w1 = words[i + 1].toLowerCase().replace(/[^a-z'-]/g, '')
+    const w2 = words[i + 2].toLowerCase().replace(/[^a-z'-]/g, '')
+    if ((w0 === 'my' && (w1 === 'name' || w1 === "name's" || w1 === 'names') && (w2 === 'is' || w2 === 'was'))) {
+      const { name, nextIdx } = takeCapitalizedName(words, i + 3)
+      if (looksLikePersonName(name)) {
+        const rest = words.slice(nextIdx).join(' ')
+        const { role, company } = extractRoleAndCompanyFromTail(rest)
+        return { name, role, company }
+      }
+    }
+  }
+
+  // --- Pattern 2: "This is [name] from [company]" ---
+  for (let i = 0; i < words.length - 2; i++) {
+    const w0 = words[i]
+    const w1 = words[i + 1].toLowerCase().replace(/[^a-z'-]/g, '')
+    if (/^This$/i.test(w0) && (w1 === 'is' || w1 === 'was')) {
+      const { name, nextIdx } = takeCapitalizedName(words, i + 2)
+      if (looksLikePersonName(name)) {
+        const rest = words.slice(nextIdx).join(' ')
+        const { role, company } = extractRoleAndCompanyFromTail(rest)
+        return { name, role, company }
+      }
+    }
+  }
+
+  // --- Pattern 3: "I'm [name]" / "I am [name]" ---
+  for (let i = 0; i < words.length - 1; i++) {
+    const rawWord = words[i]
+    const w0 = rawWord.toLowerCase()
+    // Match "I'm", "I'am" (typo), or "I" (for "I am")
+    const isContraction = /^(i'm|i'am|i’m)$/.test(w0)
+    const isPronoun = w0 === 'i'
+    if (!isContraction && !isPronoun) continue
+    if (isPronoun && (words[i + 1] ?? '').toLowerCase().replace(/[^a-z]/g, '') !== 'am') continue
+    // "I am" vs "I'm" — the name starts 1 or 2 tokens after position i
+    const startIdx = isContraction ? i + 1 : i + 2
+    if (startIdx >= words.length) continue
+    // Skip articles/adverbs that aren't part of the name
+    const firstWord = (words[startIdx] || '').toLowerCase().replace(/[^a-z]/g, '')
+    if (['a', 'an', 'the', 'looking', 'currently', 'available', 'here', 'writing'].includes(firstWord)) {
+      continue
+    }
+    const { name, nextIdx } = takeCapitalizedName(words, startIdx)
+    if (looksLikePersonName(name)) {
+      const rest = words.slice(nextIdx).join(' ')
+      const { role, company } = extractRoleAndCompanyFromTail(rest)
+      return { name, role, company }
+    }
+  }
+
+  // --- Pattern 4: "Myself [name]" ---
+  for (let i = 0; i < words.length - 1; i++) {
+    const w0 = words[i].toLowerCase().replace(/[^a-z'-]/g, '')
+    if (w0 === 'myself') {
+      const { name } = takeCapitalizedName(words, i + 1)
+      if (looksLikePersonName(name)) {
+        return { name, role: null, company: null }
+      }
+    }
+  }
+
+  // --- Pattern 5: "I lead / head / manage [department]" / "I work as [role]" (role only) ---
+  for (let i = 0; i < words.length - 2; i++) {
+    const w0 = words[i].toLowerCase().replace(/[^a-z'-]/g, '')
+    const w1 = words[i + 1].toLowerCase().replace(/[^a-z'-]/g, '')
+    if (w0 === 'i' && ['lead', 'head', 'manage', 'oversee', 'run', 'work'].includes(w1)) {
+      // For "work as", skip the "as" to get to the role
+      const roleStart = w1 === 'work' ? i + 3 : i + 2
+      if (w1 === 'work' && (words[i + 2] || '').toLowerCase().replace(/[^a-z]/g, '') !== 'as') continue
+      let raw = words.slice(roleStart).join(' ').split(/\s*[,.;()]\s*/)[0].trim()
+      // Strip leading articles (a, an, the) from the role.
+      raw = raw.replace(/^(?:a|an|the)\s+/i, '').trim()
+      if (raw) {
+        // Strip leading possessive pronouns (our, the, my) from the role.
+        const roleStripped = raw.replace(/^(?:our|the|my)\s+/i, '').trim()
+        // Split role from an optional "at [company]" suffix.
+        const rawLower = roleStripped.toLowerCase()
+        const atIdx = rawLower.indexOf(' at ')
+        const roleRaw = atIdx >= 0 ? roleStripped.slice(0, atIdx).trim() : roleStripped
+        const company = atIdx >= 0 ? roleStripped.slice(atIdx + 4).split(/\s*[,.;()]\s*/)[0].trim() || null : null
+        const role = roleRaw.split(/\s+/).map((w) => (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')
+        return { name: null, role, company }
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Given the tail of a sentence after a name, extract role and company if the
+ * prose states them — e.g. "from [company]", "I work as X at Y".
+ */
+function extractRoleAndCompanyFromTail(rest: string): { role: string | null; company: string | null } {
+  const lower = rest.toLowerCase()
+  let company: string | null = null
+  let role: string | null = null
+
+  // ", VP Engineering at Aurora Commerce" after an explicit name.
+  const roleAt = rest.match(/^[\s,;:–—-]*([\p{L}][\p{L}\p{N}&/.+ -]{1,80}?)\s+at\s+([\p{Lu}\p{N}][^.!?\n]{0,79})/u)
+  if (roleAt) {
+    role = sanitizePersonTitle(roleAt[1].trim())
+    company = sanitizeCompanyName(roleAt[2].trim())
+  }
+
+  // "from [Company]" — the first capitalized run after "from".
+  // Try " from " (mid-sentence) first, then "from" at the very start of `rest`.
+  let fromIdx = lower.indexOf(' from ')
+  let fromLen = 6
+  if (fromIdx < 0 && lower.startsWith('from ')) {
+    fromIdx = 0
+    fromLen = 5
+  }
+  if (fromIdx >= 0) {
+    const after = rest.slice(fromIdx + fromLen)
+    const afterWords = after.split(/\s+/)
+    const tokens: string[] = []
+    for (const w of afterWords) {
+      const clean = w.replace(/^[("'“]+|[,:;"'”.!?\)]+$/g, '')
+      if (!NAME_TOKEN.test(clean)) break
+      tokens.push(clean)
+    }
+    if (tokens.length > 0) {
+      company = tokens.join(' ')
+    }
+  }
+
+  // "work as / am / 'm [role] at [company]"
+  const workAsMatch = lower.match(/work as\s+(.+?)\s+at\s+/)
+  if (workAsMatch?.[1]) {
+    role = workAsMatch[1].split(/\s+/).map((w) => (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')
+    const atIdx = lower.indexOf(' at ', lower.indexOf('work as'))
+    if (atIdx >= 0) {
+      const after = rest.slice(atIdx + 4)
+      const afterWords = after.split(/\s+/)
+      const tokens: string[] = []
+      for (const w of afterWords) {
+        const clean = w.replace(/^[("'“]+|[,:;"'”.!?\)]+$/g, '')
+        if (!NAME_TOKEN.test(clean)) break
+        tokens.push(clean)
+      }
+      if (tokens.length > 0) company = tokens.join(' ')
+    }
+  }
+
+  return { role: role || null, company: company || null }
+}
+
+/**
+ * Reusable guard: is `value` a plausible person name? 1-4 capitalized tokens,
+ * no sentence fragments, no role/company keywords, no greeting words.
+ */
+function looksLikePersonName(candidate: string): boolean {
+  if (!candidate) return false
+  const cleaned = candidate.replace(/[\s,.;:!?]+$/u, '').trim()
+  if (!cleaned) return false
+  const words = cleaned.split(/\s+/).filter(Boolean)
+  if (words.length === 0 || words.length > 4) return false
+  if (!words.every((w) => NAME_TOKEN.test(w))) return false
+  if (GREETING_WORDS.test(cleaned)) return false
+  if (/\b(?:i'?m|i am|we are|we're|looking|currently|available|offering|need|want)\b/i.test(cleaned)) return false
+  // Reject role/company phrases that happen to be capitalized.
+  const ROLE_COMPANY_WORDS = /\b(?:founder|ceo|cto|cfo|director|manager|lead|engineer|developer|consultant|president|partner|owner|specialist|analyst|designer|architect|officer|coordinator|head|vp|chief|officer|associate|assistant|intern|consultancy|solutions|technologies|systems|services|group|holdings|ventures|enterprises|company|corporation|inc|ltd|llc|gmbh)\b/i
+  if (ROLE_COMPANY_WORDS.test(cleaned)) return false
+  return true
+}
+
 /**
  * A person name is one to four name tokens. Greetings ("Hi,"), labels and
  * sentence fragments are not names; the field stays blank instead.
@@ -1229,6 +1480,10 @@ export function sanitizePersonName(value: string | null | undefined): string | n
   if (!trimmed) return null
   const words = trimmed.split(/\s+/)
   if (words.length > 4) return null
+  // A multi-word greeting ("Good afternoon", "Good evening") must be rejected
+  // as a whole phrase before the per-word check below (which only catches
+  // single-word greetings — "Good" alone is not in GREETING_WORDS).
+  if (GREETING_WORDS.test(trimmed)) return null
   if (words.length <= 2 && words.every((w) => GREETING_WORDS.test(w.replace(/[,.!]$/, '')))) return null
   if (GREETING_WORDS.test(words[0]) && words.length === 1) return null
   // A name has no sentence words in it: "I'm", "with", "looking for".
@@ -1246,6 +1501,11 @@ export function sanitizePersonTitle(value: string | null | undefined): string | 
   if (typeof value !== 'string') return null
   let text = value.trim().replace(/^(?:headline|title|current\s*role)\s*:\s*/i, '')
   if (!text) return null
+  // Profile headlines commonly append positioning copy after a pipe. Bound
+  // the headline before prose-length rejection, while preserving an employer
+  // qualifier such as "CTO at [company]" or "Partner @ [company]".
+  text = text.split('|')[0]?.trim() ?? text
+  if (!text) return null
   const firstPerson = text.match(/^(?:(?:hi|hey|hello)[,!]?\s*)?(?:i\s*(?:'m|am)|we\s*(?:'re|are)|i\s+work\s+as)\s+(?:an?\s+|the\s+)?(.+)$/i)
   if (firstPerson?.[1]) {
     text = firstPerson[1]
@@ -1257,7 +1517,11 @@ export function sanitizePersonTitle(value: string | null | undefined): string | 
   // Drops anything that still reads as prose: trailing connectives or a
   // sentence longer than a headline.
   if (/\b(?:with|and|or|the|a|an|to|of|for|in)$/i.test(text)) text = text.replace(/\s+\b(?:with|and|or|the|a|an|to|of|for|in)$/i, '').trim()
-  if (/^(?:hi|hey|hello)\b/i.test(text)) return null
+  // Reject greetings ("Hi,", "Hello,", "Hi there", "Good morning") — only a
+  // real role is a title. Check both single-word and multi-word greetings.
+  if (GREETING_WORDS.test(text.replace(/[,.!]$/, ''))) return null
+  const titleWords = text.split(/\s+/).filter(Boolean).map((w) => w.replace(/[,.!]$/, '').toLowerCase())
+  if (titleWords.length <= 3 && titleWords.every((w) => ALL_GREETING_WORDS.test(w))) return null
   if (text.split(/\s+/).length > 14) return null
   return text || null
 }
@@ -1269,6 +1533,10 @@ function extractName(lines: string[]): string | null {
     if (/^(job|description|skills|posted|budget|client|company)\b/i.test(trimmed)) continue
     // Skip LinkedIn UI chrome and action labels
     if (LINKEDIN_NAME_BLOCKLIST.some((word) => trimmed.toLowerCase() === word || trimmed.toLowerCase().startsWith(word + ' '))) continue
+    // Skip greetings ("Hi,", "Hello,", "Good morning") — never a person's name.
+    // Applies the same GREETING_WORDS set used by sanitizePersonName so the demo
+    // fallback path (which does not run sanitizePersonName) is also protected.
+    if (GREETING_WORDS.test(trimmed.replace(/^[,\s]+|[,.\s!]+$/g, ''))) continue
     const explicitName = trimmed.match(/^name:\s*(.+)$/i)
     if (explicitName?.[1]) return explicitName[1].trim()
     // Skip section headers, labels, and all-caps structural labels
@@ -1414,6 +1682,133 @@ export function isPlausibleCompanyName(candidate: string | null | undefined): bo
   // "Lahore, Pakistan" is where they are, not who they work for.
   if (looksLikePlace(c) || isKnownPlaceName(c)) return false
   return true
+}
+
+/**
+ * Reject obviously invalid company names — greetings, person names, sentence
+ * fragments — that the extraction pipeline or AI model may incorrectly assign.
+ * Returns null for invalid values, or the cleaned candidate otherwise.
+ *
+ * This is the canonical company guard: every company value that reaches the
+ * Inbound UI MUST pass through here, regardless of which extraction path
+ * produced it (signature, introduction, AI model, or demo fallback).
+ */
+export function sanitizeCompanyName(candidate: string | null | undefined): string | null {
+  if (typeof candidate !== 'string') return null
+  const trimmed = candidate.trim()
+  if (!trimmed) return null
+
+  // Reject values that are ONLY punctuation/whitespace after trimming.
+  if (!trimmed || /^[\s,;.!?]+$/.test(trimmed)) return null
+
+  // Strip trailing/leading whitespace, commas, and sentence punctuation for
+  // further validation, but keep the original to detect trailing-fragment
+  // issues (a sentence-ending period can mark extraction bleed even when the
+  // stripped form looks valid).
+  const cleaned = trimmed.replace(/^[,\s]+|[,\s.!?]+$/g, '').trim()
+  if (!cleaned) return null
+
+  // If the original (pre-strip) ended with sentence-ending punctuation that
+  // isn't a legal suffix, reject it because the period is a sentence boundary,
+  // not part of the name.
+  if (/[.!?]$/.test(trimmed) && !/\b(?:inc|ltd|co|corp|llc|l\.l\.c|s\.a|b\.v)\.$/i.test(trimmed)) return null
+
+  // Reject greetings — both single-word ("Hello") and multi-word ("Hi there",
+  // "Dear team", "Hey folks", "Greetings everyone"). A greeting phrase is one
+  // where every word is a greeting/address word with no company-like content.
+  const cleanedLower = cleaned.toLowerCase()
+  if (GREETING_WORDS.test(cleanedLower)) return null
+  const cleanedWords = cleanedLower.split(/\s+/).filter(Boolean)
+  const ALL_GREETING_WORDS = /^(?:hi|hey|hello|hey there|dear|greetings|good|good morning|good afternoon|good evening|good day|hallo|hola|bonjour|salut|team|there|all|everyone|folks|people|guys|sir|madam|ma'am|morning|afternoon|evening|day)$/i
+  if (cleanedWords.length <= 3 && cleanedWords.every((w) => ALL_GREETING_WORDS.test(w))) return null
+
+  // Reject single-word companies that are role keywords, pronouns, or
+  // sentence starters — these are almost never real companies.
+  const words = cleaned.split(/\s+/).filter(Boolean)
+  if (words.length === 1) {
+    const w = words[0].toLowerCase()
+    if (/^(hi|hey|hello|dear|greetings|good|team|there|thanks|please|regards|cheers|sincerely|best)$/.test(w)) return null
+    if (/^(ceo|cto|cfo|coo|cpo|vp|founder|director|manager|lead|engineer|developer|architect|consultant|partner|president|officer|recruiter|owner|head)$/.test(w)) return null
+    if (/^(the|a|an|this|that|these|those|our|my|your|his|her|their|its)$/.test(w)) return null
+    if (/^(i|you|he|she|it|we|they|me|him|her|us|them)$/.test(w)) return null
+  }
+
+  // Reject multi-word values that are clearly person names — specifically
+  // 1-2 capitalized tokens with no company indicators. Longer capitalized
+  // phrases (3-4 words) can be company names and are kept. A short capitalized
+  // phrase is left to the primary extractors because it may be a person or a
+  // company.
+  // Note: we do NOT reject single capitalized words here (e.g. "CometHire" is
+  // a valid one-word company). The primary extractors are responsible for not
+  // producing person names as companies. This guard only catches clearly
+  // invalid values (greetings, fragments, places).
+
+  // Reject values ending with a sentence fragment — a trailing single uppercase
+  // letter or a pronoun/sentence starter. These indicate the extractor bled
+  // into the next sentence.
+  const lastWord = words[words.length - 1]
+  if (words.length >= 2 && /^[A-Z]$/.test(lastWord)) return null
+  if (words.length >= 2 && /^(?:I|We|You|He|She|It|They|Me|Him|Her|Us|Them)$/i.test(lastWord)) return null
+
+  // Reject known places.
+  if (looksLikePlace(cleaned) || isKnownPlaceName(cleaned)) return null
+
+  return cleaned
+}
+
+/**
+ * Reject obviously invalid person names — greetings, company names, role
+ * titles — that the extraction pipeline or AI model may incorrectly assign.
+ * Returns null for invalid values, or the cleaned candidate otherwise.
+ */
+export function sanitizeContactName(candidate: string | null | undefined): string | null {
+  if (typeof candidate !== 'string') return null
+  const trimmed = candidate.trim()
+  if (!trimmed) return null
+
+  // Strip leading/trailing punctuation and whitespace.
+  const cleaned = trimmed.replace(/^[,\s]+|[,\s.!?]+$/g, '').trim()
+  if (!cleaned) return null
+
+  // Reject greetings.
+  if (GREETING_WORDS.test(cleaned)) return null
+
+  // Reject greetings — both single-word ("Hello") and multi-word ("Hello Team",
+  // "Dear all", "Good morning"). A greeting phrase is one where every word is
+  // a greeting/address word.
+  const words = cleaned.split(/\s+/).filter(Boolean)
+  const cleanedLower = cleaned.toLowerCase()
+  if (GREETING_WORDS.test(cleanedLower)) return null
+  if (words.length <= 3 && words.every((w) => ALL_GREETING_WORDS.test(w))) return null
+
+  // Must look like a person name: 1-4 capitalized tokens.
+  if (!words.every((w) => NAME_TOKEN.test(w.replace(/^[("'“]+|[,:;"'”.!?\)]+$/g, '')))) return null
+  if (words.length > 4) return null
+
+  return cleaned
+}
+
+/**
+ * Prefer the fuller of two candidate names that refer to the same sender.
+ * If `fuller` contains `partial` as a substring (case-insensitive), prefer
+ * `fuller`. Otherwise return whichever is non-null.
+ */
+export function preferFullName(partial: string | null, fuller: string | null): string | null {
+  if (!partial) return fuller ?? null
+  if (!fuller) return partial ?? null
+  const partialLower = partial.toLowerCase().trim()
+  const fullerLower = fuller.toLowerCase().trim()
+  // If the fuller name contains the partial, the fuller is preferred.
+  if (fullerLower.includes(partialLower)) return fuller
+  // If the partial contains the fuller, the partial is actually the fuller name.
+  if (partialLower.includes(fullerLower)) return partial
+  // Only prefer the longer name if its first token matches (same person).
+  // This prevents an unrelated longer name from overriding a correct shorter one.
+  const partialFirst = partialLower.split(/\s+/)[0]
+  const fullerFirst = fullerLower.split(/\s+/)[0]
+  if (partialFirst === fullerFirst && fuller.length > partial.length) return fuller
+  // Otherwise keep the original (partial) — it came from the more reliable source.
+  return partial
 }
 
 /** Whether the text reads as a job advertisement / hiring post. */
@@ -2102,11 +2497,15 @@ export function prospectAttributableText(rawText: string, prospectName?: string 
 
 function demoPassA(rawText: string): PassAOutput {
   const lines = splitLines(rawText)
-  const name = extractName(lines)
+  const name = extractName(lines) ?? extractIntroduction(rawText)?.name ?? null
   const title = extractTitle(lines)
   const location = extractLocation(lines, rawText)
   const company = extractCompany(lines, title, rawText)
   const identity = separateRoleFromEmployer(rawText, title, company)
+  // If the line-based scan found no company but an introduction prose line did,
+  // prefer the introduction's company.
+  const intro = extractIntroduction(rawText)
+  const companyFinal = company ?? intro?.company ?? null
   const sizeInfo = extractCompanySize(rawText)
   const clientName = extractClientName(lines)
   const linkedinUrl = extractUrls(rawText).find((u) => u.toLowerCase().includes('linkedin.com/in/')) ?? null
@@ -2129,14 +2528,14 @@ function demoPassA(rawText: string): PassAOutput {
     person: {
       fullName: name ?? clientName ?? null,
       firstName: (name ?? clientName)?.split(/\s+/)[0] ?? null,
-      title: identity.title,
+      title: identity.title ?? intro?.role ?? null,
       seniority: null,
       location,
       linkedinUrl,
       otherUrls,
     },
     company: {
-      name: identity.company,
+      name: identity.company ?? companyFinal,
       domain: null,
       linkedinUrl: null,
       industry: null,
@@ -2273,7 +2672,7 @@ export async function runIntelligencePipeline(
   })
 
   // Pass A: Extract
-  const passA = await runPassA(rawText, sourceUrls, callLog, opts.onStatus, opts.strictLiveMode, opts.leadId)
+  const passA = await runPassA(rawText, sourceUrls, callLog, opts.onStatus, opts.strictLiveMode, opts.leadId, opts.deterministicOnly)
 
   // Pass B: Normalize
   opts.onStatus?.('Normalizing extraction')
@@ -2344,7 +2743,7 @@ export async function runIntelligencePipeline(
   }
 
   // Pass C: Intelligence
-  const passC = await runPassC(passA, partialIntelligence, callLog, opts.onStatus, opts.strictLiveMode, opts.leadId)
+  const passC = await runPassC(passA, partialIntelligence, callLog, opts.onStatus, opts.strictLiveMode, opts.leadId, opts.deterministicOnly)
 
   // Remote eligibility override for non-buyer relationships: a recruiter,
   // partner, or networking contact is not a job opportunity, so "remote

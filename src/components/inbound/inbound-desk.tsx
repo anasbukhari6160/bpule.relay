@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -139,7 +139,17 @@ function SavedMessage({ item, onCompose }: { item: InboundQueueItem; onCompose: 
   )
 }
 
-function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
+interface AnalysisInputSnapshot {
+  message: string
+  source: LeadSource
+  context: string
+}
+
+function snapshotKey(snapshot: AnalysisInputSnapshot): string {
+  return JSON.stringify(snapshot)
+}
+
+export function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
   const [message, setMessage] = useState('')
   const [source, setSource] = useState<LeadSource>('linkedin')
   const [company, setCompany] = useState('')
@@ -153,15 +163,78 @@ function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
   const [error, setError] = useState<string | null>(null)
   const [intelligence, setIntelligence] = useState<InboundIntelligence | null>(null)
   const [savedId, setSavedId] = useState<string | null>(null)
+  const latestInput = useRef<AnalysisInputSnapshot>({ message: '', source: 'linkedin', context: '' })
+  const completedAnalysisKey = useRef<string | null>(null)
+  const requestToken = useRef(0)
+  const activeAnalysis = useRef<AbortController | null>(null)
+  const activeSave = useRef<AbortController | null>(null)
+  const saveInFlight = useRef(false)
+  const saveIdempotencyKey = useRef<string | null>(null)
+  const manuallyEdited = useRef({ company: false, contactName: false, contactTitle: false, url: false })
 
-  const canAnalyze = message.trim().length > 0 && !analyzing
+  const canAnalyze = message.trim().length > 0 && !analyzing && !saving
   const saveBlocked = useMemo(() => !company.trim(), [company])
+
+  function invalidateAnalysis(next: AnalysisInputSnapshot, clearManualIdentity: boolean) {
+    if (snapshotKey(next) === snapshotKey(latestInput.current)) return
+    latestInput.current = next
+    requestToken.current += 1
+    activeAnalysis.current?.abort()
+    activeAnalysis.current = null
+    activeSave.current?.abort()
+    activeSave.current = null
+    completedAnalysisKey.current = null
+    saveIdempotencyKey.current = null
+    setAnalyzing(false)
+    setSaving(false)
+    setIntelligence(null)
+    setSavedId(null)
+    setError(null)
+
+    if (clearManualIdentity) {
+      manuallyEdited.current = { company: false, contactName: false, contactTitle: false, url: false }
+      setCompany('')
+      setContactName('')
+      setContactTitle('')
+      setUrl('')
+      return
+    }
+    if (!manuallyEdited.current.company) setCompany('')
+    if (!manuallyEdited.current.contactName) setContactName('')
+    if (!manuallyEdited.current.contactTitle) setContactTitle('')
+    if (!manuallyEdited.current.url) setUrl('')
+  }
+
+  function changeMessage(value: string) {
+    if (saveInFlight.current) return
+    invalidateAnalysis({ ...latestInput.current, message: value.trim() }, true)
+    setMessage(value)
+  }
+
+  function changeSource(value: LeadSource) {
+    if (saveInFlight.current) return
+    invalidateAnalysis({ ...latestInput.current, source: value }, false)
+    setSource(value)
+  }
+
+  function changeContext(value: string) {
+    if (saveInFlight.current) return
+    invalidateAnalysis({ ...latestInput.current, context: value.trim() }, false)
+    setContext(value)
+  }
 
   async function analyze() {
     if (!message.trim()) {
       setError('Paste the message first.')
       return
     }
+    const inputSnapshot = { ...latestInput.current, message: message.trim(), context: context.trim() }
+    latestInput.current = inputSnapshot
+    const inputKey = snapshotKey(inputSnapshot)
+    const thisRequest = ++requestToken.current
+    activeAnalysis.current?.abort()
+    const controller = new AbortController()
+    activeAnalysis.current = controller
     setAnalyzing(true)
     setError(null)
     setIntelligence(null)
@@ -171,37 +244,58 @@ function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: message.trim(),
-          source,
+          message: inputSnapshot.message,
+          source: inputSnapshot.source,
           company: company.trim() || null,
           contactName: contactName.trim() || null,
           contactTitle: contactTitle.trim() || null,
           url: url.trim() || null,
-          context: context.trim() || null,
+          context: inputSnapshot.context || null,
         }),
+        signal: controller.signal,
       })
       const data = await res.json().catch(() => ({}))
+      if (thisRequest !== requestToken.current) return
+      if (snapshotKey(latestInput.current) !== inputKey) return
       if (!res.ok) throw new Error(data.error ?? 'Analysis failed.')
+      completedAnalysisKey.current = inputKey
+      saveIdempotencyKey.current = crypto.randomUUID()
       setIntelligence(data.intelligence)
-      if (data.extracted?.company && !company) setCompany(data.extracted.company)
-      if (data.extracted?.contactName && !contactName) setContactName(data.extracted.contactName)
-      if (data.extracted?.contactTitle && !contactTitle) setContactTitle(data.extracted.contactTitle)
-      if (data.extracted?.url && !url) setUrl(data.extracted.url)
+      if (!manuallyEdited.current.company) setCompany(data.extracted?.company || '')
+      if (!manuallyEdited.current.contactName) setContactName(data.extracted?.contactName || '')
+      if (!manuallyEdited.current.contactTitle) setContactTitle(data.extracted?.contactTitle || '')
+      if (!manuallyEdited.current.url) setUrl(data.extracted?.url || '')
     } catch (err) {
+      if (thisRequest !== requestToken.current) return
+      if (err instanceof DOMException && err.name === 'AbortError') return
       const notice = err instanceof Error ? err.message : 'Analysis failed.'
       setError(notice)
       notifyError(notice)
     } finally {
-      setAnalyzing(false)
+      if (thisRequest === requestToken.current) {
+        activeAnalysis.current = null
+        setAnalyzing(false)
+      }
     }
   }
 
   async function save() {
+    if (saveInFlight.current) return
     if (!intelligence) return
     if (!company.trim()) {
       setError('Add the company before saving. The lead needs a name you can find later.')
       return
     }
+    const currentInputKey = snapshotKey(latestInput.current)
+    if (completedAnalysisKey.current !== currentInputKey) {
+      setError('The message inputs changed since the last analysis. Analyze again before saving.')
+      return
+    }
+    const idempotencyKey = saveIdempotencyKey.current ?? crypto.randomUUID()
+    saveIdempotencyKey.current = idempotencyKey
+    const controller = new AbortController()
+    saveInFlight.current = true
+    activeSave.current = controller
     setSaving(true)
     setError(null)
     try {
@@ -213,22 +307,30 @@ function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
           contactName: contactName.trim() || null,
           contactTitle: contactTitle.trim() || null,
           url: url.trim() || null,
-          message: message.trim(),
-          source,
-          context: context.trim() || null,
+          message: latestInput.current.message,
+          source: latestInput.current.source,
+          context: latestInput.current.context || null,
           assignedProfileId: intelligence.recommendedIdentity?.id ?? null,
+          idempotencyKey,
         }),
+        signal: controller.signal,
       })
       const data = await res.json().catch(() => ({}))
+      if (completedAnalysisKey.current !== currentInputKey || snapshotKey(latestInput.current) !== currentInputKey) return
       if (!res.ok) throw new Error(data.error ?? 'Failed to save the lead.')
       setSavedId(data.lead.id)
       onSaved(data.lead.id)
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
       const notice = err instanceof Error ? err.message : 'Failed to save the lead.'
       setError(notice)
       notifyError(notice, 'Lead was not created')
     } finally {
-      setSaving(false)
+      if (activeSave.current === controller) {
+        saveInFlight.current = false
+        activeSave.current = null
+        setSaving(false)
+      }
     }
   }
 
@@ -244,7 +346,8 @@ function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
           <button
             key={item.value}
             type="button"
-            onClick={() => setSource(item.value)}
+            onClick={() => changeSource(item.value)}
+            disabled={saving}
             className={cn(
               'rounded-full border px-2.5 py-1 text-[12px]',
               source === item.value ? 'border-ink bg-ink text-on-solid' : 'border-line text-graphite hover:text-ink',
@@ -257,28 +360,30 @@ function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
 
       <textarea
         value={message}
-        onChange={(event) => setMessage(event.target.value)}
+        onChange={(event) => changeMessage(event.target.value)}
         placeholder="Paste their message"
         aria-label="Their message"
+        disabled={saving}
         className="min-h-[140px] w-full resize-y rounded-xl border border-line bg-paper p-3 text-[14px] text-ink placeholder:text-stone/60 focus:border-orange focus:outline-none"
       />
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Company" value={company} onChange={setCompany} placeholder="Who they work for" />
-        <Field label="Name" value={contactName} onChange={setContactName} placeholder="Who wrote" />
-        <Field label="Role" value={contactTitle} onChange={setContactTitle} placeholder="Their title" />
-        <Field label="Link" value={url} onChange={setUrl} placeholder="Profile or post URL" />
+        <Field label="Company" value={company} disabled={saving} onChange={(value) => { manuallyEdited.current.company = true; setCompany(value) }} placeholder="Who they work for" />
+        <Field label="Name" value={contactName} disabled={saving} onChange={(value) => { manuallyEdited.current.contactName = true; setContactName(value) }} placeholder="Who wrote" />
+        <Field label="Role" value={contactTitle} disabled={saving} onChange={(value) => { manuallyEdited.current.contactTitle = true; setContactTitle(value) }} placeholder="Their title" />
+        <Field label="Link" value={url} disabled={saving} onChange={(value) => { manuallyEdited.current.url = true; setUrl(value) }} placeholder="Profile or post URL" />
       </div>
 
-      <button type="button" onClick={() => setShowContext((value) => !value)} className="text-[12px] text-stone hover:text-ink">
+      <button type="button" onClick={() => setShowContext((value) => !value)} disabled={saving} className="text-[12px] text-stone hover:text-ink">
         {showContext ? 'Hide extra context' : 'Add profile or job context'}
       </button>
       {showContext && (
         <textarea
           value={context}
-          onChange={(event) => setContext(event.target.value)}
+          onChange={(event) => changeContext(event.target.value)}
           placeholder="Anything else that should travel with this message"
           aria-label="Extra context"
+          disabled={saving}
           className="min-h-[80px] w-full resize-y rounded-xl border border-line bg-paper p-3 text-[14px] text-ink placeholder:text-stone/60 focus:border-orange focus:outline-none"
         />
       )}
@@ -329,7 +434,7 @@ function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
                 </Link>
               </>
             ) : (
-              <Button onClick={() => void save()} loading={saving} disabled={saveBlocked}>
+              <Button onClick={() => void save()} loading={saving} disabled={saveBlocked || saving}>
                 Save as a lead
               </Button>
             )}
@@ -341,13 +446,14 @@ function Intake({ onSaved }: { onSaved: (leadId: string) => void }) {
   )
 }
 
-function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+function Field({ label, value, onChange, placeholder, disabled = false }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; disabled?: boolean }) {
   return (
     <label className="block">
       <span className="text-[11px] text-stone">{label}</span>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
         placeholder={placeholder}
         className="mt-1 h-10 w-full rounded-xl border border-line bg-paper px-3 text-[14px] text-ink placeholder:text-stone/60 focus:border-orange focus:outline-none"
       />

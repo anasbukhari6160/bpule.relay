@@ -840,7 +840,21 @@ export function buildMockStore(ctx: StoreContext): ScoutStore {
         // Canonical decision travels with the lead in demo mode too, so the
         // lead page shows the same score the prospect page showed.
         canonicalScore: input.canonicalScore ?? null,
-        canonicalIntelligence: input.canonicalIntelligence ?? null,
+        canonicalIntelligence: input.canonicalIntelligence
+          || input.buyerIntent
+          || input.qualification
+          ? {
+              ...(input.canonicalIntelligence ?? {}),
+              buyerIntent: input.buyerIntent
+                ?? input.canonicalIntelligence?.buyerIntent
+                ?? null,
+              qualification: input.qualification
+                ?? input.canonicalIntelligence?.qualification
+                ?? null,
+            }
+          : null,
+        buyerIntent: input.buyerIntent ?? null,
+        qualification: input.qualification ?? null,
         scoreBreakdown: input.scoreBreakdown ?? null,
         scoreVersion: input.scoreVersion ?? null,
         scoredAt: input.scoredAt ?? null,

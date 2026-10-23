@@ -104,6 +104,10 @@ export interface Lead {
    */
   displayQualification?: string | null
   displayIntelligenceVersion?: string | null
+  /** V3 buyer-intent evidence persisted with the lead for deal-panel display. */
+  buyerIntent?: Record<string, unknown> | null
+  /** Qualification band (STRONG/WORTH_PURSUING/MAYBE/LOW/SKIP) from the analysis. */
+  qualification?: string | null
   rawSourceData?: Record<string, unknown> | null
   scoreBreakdown?: Record<string, unknown> | null
   remoteEligibility?: Record<string, unknown> | null
